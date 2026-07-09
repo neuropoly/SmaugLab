@@ -1,4 +1,5 @@
 import warnings
+import torch
 from kornia.augmentation import RandomGamma
 
 from kornia.augmentation._2d.base import RigidAffineAugmentationBase2D
@@ -181,31 +182,39 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
             extra_args = {}
 
         if isinstance(module, (K.GeometricAugmentationBase2D,)):
+            orig_dtype = input.dtype
             input = module.transform_masks(
-                input,
+                input.to(torch.float32),
                 params=cls.get_instance_module_param(param),
                 flags=module.flags,
                 transform=module.transform_matrix,
                 **extra_args,
-            )
+            ).to(orig_dtype)
 
         elif isinstance(module, (K.RigidAffineAugmentationBase3D,)):
+            # kornia ≥0.7.x validates that mask input is float before spatial transform.
+            # Cast to float32, transform (nearest-neighbour interp for MASK keys), cast back.
             flags = module.flags | {"data_keys": [DataKey.MASK]}
+            orig_dtype = input.dtype
             input = module.transform_masks(
-                input,
+                input.to(torch.float32),
                 params=cls.get_instance_module_param(param),
                 flags=flags,
                 transform=module.transform_matrix,
                 **extra_args,
-            )
+            ).to(orig_dtype)
 
         elif isinstance(module, K.RandomTransplantation):
             input = module(input, params=cls.get_instance_module_param(param), data_keys=[DataKey.MASK], **extra_args)
 
         elif isinstance(module, (_AugmentationBase)):
+            orig_dtype = input.dtype
             input = module.transform_masks(
-                input, params=cls.get_instance_module_param(param), flags=module.flags, **extra_args
-            )
+                input.to(torch.float32),
+                params=cls.get_instance_module_param(param),
+                flags=module.flags,
+                **extra_args,
+            ).to(orig_dtype)
 
         elif isinstance(module, K.ImageSequential) and not module.is_intensity_only():
             input = module.transform_masks(input, params=cls.get_sequential_module_param(param), extra_args=extra_args)

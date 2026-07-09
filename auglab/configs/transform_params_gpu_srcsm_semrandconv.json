@@ -1,0 +1,51 @@
+{
+    "__doc__": "SRCSM (SemRandConv-3D) faithful augmentation recipe, wired through AugLab's GPU/Kornia path (nnUNetTrainerDAExtGPU) for backbone parity with PALETTE. Reproduces Thaler et al. IEEE Access 2025 (github.com/imigraz/SRCSM_Domain_Generalization) MR training recipe. This ONE config is shared across all datasets: num_labels is null here and is filled in per dataset by nnUNetTrainerDAExtGPU from the nnU-Net label_manager (= background + #foreground task classes: CHAOS/BraTS=5, ON-Harmony=32, open-ms=2). A non-null value here would override that. See __notes__.",
+
+    "SemRandConvGPU": {
+        "probability": 1.0,
+        "num_labels": null,
+        "per_label": true,
+        "smoothing": true,
+        "random_shift": 0.2,
+        "random_scale": 0.4,
+        "clamp_min": -1.0,
+        "clamp_max": null,
+        "robust_quantiles": [0.05, 0.95],
+        "smooth_kernel_size": 5,
+        "smooth_sigma": 1.0,
+        "num_filters_base": 2,
+        "kernel_candidates": [1, 3],
+        "leaky_slope": 0.1,
+        "zscore_output": true
+    },
+
+    "AffineTransform": {
+        "degrees": 20.05,
+        "translate": [0.125, 0.125, 0.125],
+        "scale": [0.72, 1.32],
+        "shear": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "resample": "bilinear",
+        "probability": 1.0
+    },
+
+    "nnUNetSpatialTransform": {
+        "p_elastic_deform": 1.0,
+        "p_rotation": 0,
+        "p_scaling": 0,
+        "patch_center_dist_from_border": 0,
+        "random_crop": false
+    },
+
+    "__notes__": {
+        "rcnet_p1": "SRCSM applies RCNet every training step (main.py train_step calls get_new_randnet_model_image unconditionally) => probability=1.0. per_label+smoothing = their use_randnet_per_label + use_randnet_per_label_smoothing defaults for MR.",
+        "intensity": "SRCSM's ONLY intensity augmentation is ShiftScaleClamp(random_shift=0.2, random_scale=0.4, clamp_min=-1, clamp_max=None), reproduced INSIDE SemRandConvGPU (robust-normalise -> ShiftScaleClamp -> RCNet). No generic AugLab intensity transforms (Gamma/Brightness/Contrast/Noise/Blur) are added, because SRCSM uses none. This is intentional and faithful.",
+        "normalisation": "SemRandConvGPU re-derives SRCSM's normalize_robust [-1,1] domain internally (domain-invariant because RCNet is positive-homogeneous degree-1) and ends with a foreground z-score so output matches the nnU-Net backbone input domain. This gives true backbone parity with PALETTE without altering RCNet texture.",
+        "spatial_rotation": "EXACT: SRCSM rotation.Random([0.35,0.35,0.35]) rad = +-20.05 deg/axis, mapped to GPU AffineTransform degrees=20.05 (RandomAffine3DCustom interprets degrees in degrees; a scalar => yaw/pitch/roll each from (-d,+d)).",
+        "spatial_scale": "APPROX: SRCSM composes scale.RandomUniform(0.2) [isotropic 1+U(-0.2,0.2)] with scale.Random([0.1,0.1,0.1]) [per-axis 1+U(-0.1,0.1)]; net per-axis range ~[0.72,1.32]. RandomAffine3DCustom samples one uniform per axis over [0.72,1.32], which matches the support but not the exact product-of-two-uniforms density.",
+        "spatial_translation": "APPROX: SRCSM translation.Random([20,20,20]) is +-20 mm in PHYSICAL space; RandomAffine3DCustom translate is a fraction of patch size. 0.125 assumes ~1mm spacing and ~160-voxel patch (20/160). Adjust per dataset spacing/patch if exact mm matching is required.",
+        "spatial_elastic": "APPROX: SRCSM deformation.Output(grid=[8,8,8], magnitude=15) is an MDAT b-spline field; AugLab exposes only p_elastic_deform on the CPU batchgeneratorsv2 SpatialTransform, whose elastic magnitude/scale use batchgeneratorsv2 defaults (NOT SRCSM's mag=15). Enabled at p=1.0 as the closest available approximation. This is the primary irreducible harness gap in the faithful mapping.",
+        "spatial_split": "Rotation+translation+scale run on the GPU AffineTransform (config-exact ranges); elastic runs on the CPU SpatialTransform (only elastic mechanism available). Rotation is forced onto GPU because the CPU SpatialTransform rotation range is locked to nnU-Net's dataset default (rotation_for_DA), not settable to +-0.35 rad. Two resamples (CPU elastic + GPU affine) vs SRCSM's single composed sitk resample is a minor interpolation-smoothing difference.",
+        "mirroring": "SRCSM uses NO flipping; AugLab GPU trainer force-disables mirroring. No FlipTransform block, consistent with both.",
+        "num_labels_per_dataset": "CHAOS-MR: 5 (bg+liver+Rkidney+Lkidney+spleen). Set to bg+#foreground-classes for each benchmark (AMOS 4-organ subset: 5; BraTS-2024: bg+tumour-subregions; open-ms: bg+lesion=2). num_labels must include background and match the SRCSM train script's num_labels for that task."
+    }
+}

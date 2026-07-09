@@ -12,6 +12,8 @@ from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussia
 RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU, RandomClampGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU, RandomCropTransformGPU
 from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU, RandomV19ContrastGPU, RandomV26_6_2ContrastGPU
+from auglab.transforms.gpu.palette_noisefill import RandomV26_6_2NoiseFillContrastGPU
+from auglab.transforms.gpu.srcsm_semrandconv import SemRandConvGPU
 from auglab.transforms.gpu.domain_transfer import RandomDomainTransferGPU
 from auglab.transforms.synthseg.transforms import RandomSynthSegGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
@@ -20,7 +22,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
     """
     Module to perform data augmentation on GPU.
     """
-    def __init__(self, json_path: str):
+    def __init__(self, json_path: str, num_labels: Optional[int] = None):
         # Load transform parameters from JSON
         config_path = os.path.join(json_path)
         with open(config_path, 'r') as f:
@@ -30,6 +32,13 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             self.transform_params = config['GPU']
         else:
             self.transform_params = config
+
+        # Dataset-derived num_labels fallback for the SRCSM (SemRandConvGPU) transform.
+        # SRCSM's num_labels is exactly "background + #foreground task classes", which the
+        # nnU-Net trainer already knows from its label_manager — so it is supplied here by
+        # the trainer instead of hardcoded per-dataset in the config JSON (which would be
+        # brittle). Only used when the config leaves num_labels null; a config value wins.
+        self._srcsm_num_labels_override = num_labels
 
         transforms = self._build_transforms()
         super().__init__(*transforms, data_keys=["input", "mask"], same_on_batch=True) # Same_on_batch to ensure mask are aligned with images correctly (custom) see AugmentationSequentialOpsCustom in base.py
@@ -101,6 +110,28 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                     label_remap_prob=v26_6_2_params.get("label_remap_prob", 0.5),
                     min_label_voxels=v26_6_2_params.get("min_label_voxels", 4),
                     label_classes=v26_6_2_params.get("label_classes", None),
+                )
+            )
+
+        # PALETTE-NoiseFill: Level-3 ablation — PALETTE partition + SynthSeg-style Gaussian fill
+        v26_6_2_nf_params = self.transform_params.get('ImageContrastV26_6_2NoiseFillGPUTransform')
+        if v26_6_2_nf_params is not None:
+            transforms.append(
+                RandomV26_6_2NoiseFillContrastGPU(
+                    p=v26_6_2_nf_params.get("probability", 1.0),
+                    c_choices=v26_6_2_nf_params.get("c_choices", [2, 3, 4, 5, 6]),
+                    s_choices=v26_6_2_nf_params.get("s_choices", [2, 3, 4, 5, 6, 7, 8, 9, 10]),
+                    blur_sigmas=v26_6_2_nf_params.get("blur_sigmas", [0.0, 0.0, 0.0, 0.3, 0.5, 0.8]),
+                    dark_threshold=v26_6_2_nf_params.get("dark_threshold", 0.01),
+                    n_kmeans_subsample=v26_6_2_nf_params.get("n_kmeans_subsample", 10000),
+                    skip_parcellation_prob=v26_6_2_nf_params.get("skip_parcellation_prob", 0.10),
+                    skip_sub_parc_prob=v26_6_2_nf_params.get("skip_sub_parc_prob", 0.40),
+                    alpha_magnitude_range=v26_6_2_nf_params.get("alpha_magnitude_range", [0.5, 2.0]),
+                    label_remap_prob=v26_6_2_nf_params.get("label_remap_prob", 0.5),
+                    min_label_voxels=v26_6_2_nf_params.get("min_label_voxels", 4),
+                    label_classes=v26_6_2_nf_params.get("label_classes", None),
+                    noise_std_range=v26_6_2_nf_params.get("noise_std_range", [0.05, 0.25]),
+                    label_fill_noise=v26_6_2_nf_params.get("label_fill_noise", False),
                 )
             )
 
@@ -364,6 +395,31 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             transforms.append(ZscoreNormalizationGPU(
                 p=zscore_params.get('probability', 0)
             ))
+
+
+        # SRCSM (SemRandConv-3D) competitor: robust-norm + ShiftScaleClamp + per-label RCNet,
+        # applied every step (p=1.0). Faithful port of Thaler et al. IEEE Access 2025.
+        srcsm_params = self.transform_params.get('SemRandConvGPU')
+        if srcsm_params is not None:
+            transforms.append(
+                SemRandConvGPU(
+                    p=srcsm_params.get("probability", 1.0),
+                    num_labels=srcsm_params.get("num_labels", None) or self._srcsm_num_labels_override,
+                    per_label=srcsm_params.get("per_label", True),
+                    smoothing=srcsm_params.get("smoothing", True),
+                    random_shift=srcsm_params.get("random_shift", 0.2),
+                    random_scale=srcsm_params.get("random_scale", 0.4),
+                    clamp_min=srcsm_params.get("clamp_min", -1.0),
+                    clamp_max=srcsm_params.get("clamp_max", None),
+                    robust_quantiles=srcsm_params.get("robust_quantiles", [0.05, 0.95]),
+                    smooth_kernel_size=srcsm_params.get("smooth_kernel_size", 5),
+                    smooth_sigma=srcsm_params.get("smooth_sigma", 1.0),
+                    num_filters_base=srcsm_params.get("num_filters_base", 2),
+                    kernel_candidates=srcsm_params.get("kernel_candidates", [1, 3]),
+                    leaky_slope=srcsm_params.get("leaky_slope", 0.1),
+                    zscore_output=srcsm_params.get("zscore_output", True),
+                )
+            )
 
         return transforms
 

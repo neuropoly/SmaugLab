@@ -145,14 +145,15 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
             # Optionally retain original stats (vectorized per sample)
             if self.retain_stats:
-                flat = img_batch.view(N, -1)
+                flat = img_batch.reshape(N, -1)  # img_batch (single-channel index) can be
+                # non-contiguous, which .view() rejects — mirrors the contrast.py fix.
                 orig_mean = flat.mean(dim=1)
                 # Use unbiased=False to avoid NaNs for tiny tensors
                 orig_std = flat.std(dim=1, unbiased=False)
 
             # Normalize entire batch to [0,1] per sample
-            img_min = img_batch.view(N, -1).min(dim=1)[0].view(N, *([1] * (img_batch.dim()-1)))
-            img_max = img_batch.view(N, -1).max(dim=1)[0].view(N, *([1] * (img_batch.dim()-1)))
+            img_min = img_batch.reshape(N, -1).min(dim=1)[0].view(N, *([1] * (img_batch.dim()-1)))
+            img_max = img_batch.reshape(N, -1).max(dim=1)[0].view(N, *([1] * (img_batch.dim()-1)))
             denom = (img_max - img_min).clamp_min(1e-6)
             x_batch = (img_batch - img_min) / denom
 
@@ -184,10 +185,11 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                         dilated = F.max_pool2d(dilated.unsqueeze(0), 3, 1, 1).squeeze(0)
                 dilated_excl = (dilated > 0) & (~masks)
 
-                # Flatten for stats
-                x_flat = x.view(1, -1)  # (1, S)
-                mask_flat = masks.view(R, -1)
-                dil_flat = dilated_excl.view(R, -1)
+                # Flatten for stats. reshape (not view): x/masks/dilated_excl can be
+                # non-contiguous depending on the upstream transform path.
+                x_flat = x.reshape(1, -1)  # (1, S)
+                mask_flat = masks.reshape(R, -1)
+                dil_flat = dilated_excl.reshape(R, -1)
 
                 # Region counts
                 counts = mask_flat.sum(dim=1).clamp_min(1)
@@ -557,7 +559,7 @@ def _minmax_norm(x: torch.Tensor, eps: float = 1e-8
                     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Per-sample min-max normalise to [0, 1]. Returns (normed, min, max)."""
     B = x.shape[0]
-    x_flat = x.view(B, -1)
+    x_flat = x.reshape(B, -1)  # reshape: x can be non-contiguous
     vmin = x_flat.min(dim=1).values.view(B, 1, 1, 1, 1)
     vmax = x_flat.max(dim=1).values.view(B, 1, 1, 1, 1)
     return (x - vmin) / (vmax - vmin + eps), vmin, vmax

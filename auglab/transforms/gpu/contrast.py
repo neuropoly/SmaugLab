@@ -558,7 +558,9 @@ class RandomGammaGPU(ImageOnlyTransform):
             # Compute min and range per batch element for the current channel
             # Flatten spatial dimensions to compute min/max per batch element
             batch_size = channel_data.shape[0]
-            flat_data = channel_data.view(batch_size, -1)  # [N, spatial_flattened]
+            flat_data = channel_data.reshape(batch_size, -1)  # [N, spatial_flattened]; reshape:
+            # channel_data (from indexing a single channel) can be non-contiguous, which .view()
+            # rejects — seen intermittently on open-ms volumes depending on upstream transform path.
             minm = flat_data.min(dim=1, keepdim=self.keepdim)[0]  # [N, 1]
             maxm = flat_data.max(dim=1, keepdim=self.keepdim)[0]  # [N, 1]
             rnge = maxm - minm

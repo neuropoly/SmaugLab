@@ -166,7 +166,14 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)
         json_path = os.environ.get("AUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
-        self.transforms = AugTransformsGPU(json_path=json_path).to(self.device)
+        # SRCSM (SemRandConvGPU) needs num_labels = background + #foreground task classes.
+        # Derive it from the dataset's label_manager (region- or label-based) so it is
+        # correct per dataset without hardcoding it in the config JSON. Harmless for every
+        # other GPU config (they carry no SemRandConvGPU block, so the value is ignored).
+        lm = self.label_manager
+        n_fg = len(lm.foreground_regions) if lm.has_regions else len(lm.foreground_labels)
+        srcsm_num_labels = 1 + n_fg
+        self.transforms = AugTransformsGPU(json_path=json_path, num_labels=srcsm_num_labels).to(self.device)
         print(f'Using AugLab GPU transforms with parameters from: {json_path}')
 
         # Copy json transfrom parameters to output folder
