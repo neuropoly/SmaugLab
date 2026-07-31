@@ -328,8 +328,9 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
 
         # transforms.append(ZscoreNormalization())
 
-        if deep_supervision_scales is not None:
-            transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
+        # NOTE: DownsampleSegForDSTransform is now handled in train_step for GPU augmentations
+        # if deep_supervision_scales is not None:
+        #     transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
         return ComposeTransforms(transforms)
 
     def train_step(self, batch: dict) -> dict:
@@ -375,6 +376,17 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             self.optimizer.step()
         return {'loss': l.detach().cpu().numpy()}
 
+            # Now target should be a single tensor, not a list
+            target = target.to(self.device, non_blocking=True)
+            # if isinstance(target, list):
+            #     target = [i.to(self.device, non_blocking=True) for i in target]
+            # else:
+            #     target = target.to(self.device, non_blocking=True)
+                # Create multi-scale targets for deep supervision after augmentation
+                deep_supervision_scales = self._get_deep_supervision_scales()
+                if deep_supervision_scales is not None:
+                    ds_transform = DownsampleSegForDSTransformCustom(ds_scales=deep_supervision_scales)
+                    target = ds_transform(target)
 
 class nnUNetTrainerDAExtHybrid(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
