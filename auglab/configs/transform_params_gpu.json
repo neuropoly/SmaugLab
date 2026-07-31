@@ -165,5 +165,9 @@
     },
     "ZscoreNormalizationTransform": {
         "probability": 0.00
+    },
+    "ValidationAugmentationCheckpoints": {
+        "comment": "Percentage of validation samples that will have training augmentations applied. A separate checkpoint will be saved during training for each percentage.",
+        "checkpoints": [0, 0.5, 1.0]
     }
 }
