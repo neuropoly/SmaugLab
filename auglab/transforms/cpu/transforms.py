@@ -255,7 +255,7 @@ class AugTransforms(ComposeTransforms):
         if transform_params.get('mirror_axes') is not None and len(transform_params['mirror_axes']) > 0:
             transforms.append(
                 MirrorTransform(
-                    allowed_axes=mirror_axes
+                    allowed_axes=transform_params.get('mirror_axes') 
                 )
             )
 

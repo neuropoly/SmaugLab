@@ -72,7 +72,7 @@ class nnUNetTrainerDAExt(nnUNetTrainer):
         # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)
         json_path = os.environ.get("AUGLAB_PARAMS_CPU_JSON", str(configs_path / "transform_params.json"))
-        transforms.append(AugTransforms(json_path=json_path))
+        transforms.append(AugTransforms(json_path=json_path, do_dummy_2d_data_aug=do_dummy_2d_data_aug, patch_size=patch_size, rotation_for_DA=rotation_for_DA, mirror_axes=mirror_axes))
 
         if do_dummy_2d_data_aug:
             ignore_axes = (0,)
