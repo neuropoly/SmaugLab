@@ -11,7 +11,7 @@ from kornia.core import Tensor
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU, RandomClampGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU, RandomCropTransformGPU
-from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU, RandomV19ContrastGPU, RandomV26_6_2ContrastGPU
+from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU, RandomV19ContrastGPU, RandomPALETTEGPU
 from auglab.transforms.gpu.domain_transfer import RandomDomainTransferGPU
 from auglab.transforms.synthseg.transforms import RandomSynthSegGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
@@ -88,7 +88,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         v26_6_2_params = self.transform_params.get('ImageContrastV26_6_2GPUTransform')
         if v26_6_2_params is not None:
             transforms.append(
-                RandomV26_6_2ContrastGPU(
+                RandomPALETTEGPU(
                     p=v26_6_2_params.get("probability", 1.0),
                     c_choices=v26_6_2_params.get("c_choices", [2, 3, 4, 5, 6]),
                     s_choices=v26_6_2_params.get("s_choices", [2, 3, 4, 5, 6, 7, 8, 9, 10]),
@@ -336,7 +336,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 one_dim=True,
                 same_on_batch=acq_params.get('same_on_batch', False)
         ))
-            
+
         crop_params = self.transform_params.get('CropTransform')
         if crop_params is not None:
             transforms.append(RandomCropTransformGPU(

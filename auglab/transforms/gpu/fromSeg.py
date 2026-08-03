@@ -11,7 +11,7 @@ import torch.distributed as dist
 from auglab.transforms.gpu.base import ImageOnlyTransform
 
 
-# ── V26_6 / V26_6_2 helpers ──────────────────────────────────────────────────
+# ── PALETTE AUG helpers ──────────────────────────────────────────────────
 
 def _kmeans_1d(values: torch.Tensor, C: int, n_iter: int = 10) -> torch.Tensor:
     """1-D K-means on foreground values. Returns (C,) centroids."""
@@ -255,89 +255,16 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
         return input
 
 
-
-class RandomV19ContrastGPU(ImageOnlyTransform):
+class RandomPALETTEGPU(ImageOnlyTransform):
     """
-    AugLab-compatible GPU augmentation that applies V19 Stochastic Semantic
-    Decoupling to produce a stochastic guidance map in place of the input.
+    AugLab GPU augmentation implementing PALETTE synthesis.
 
-    Args:
-        label_classes: Integer label indices to decouple stochastically.
-            Defaults to BraTS convention [1, 2, 3] (NCR, ED, ET).
-            Pass your dataset's foreground class indices if they differ.
-        num_bins: Histogram bins for the internal DifferentiableHistogram3D.
-        p: Probability of applying the transform (standard Kornia convention).
-    """
-
-    def __init__(
-        self,
-        label_classes: Optional[List[int]] = None,
-        num_bins: int = 64,
-        p: float = 0.5,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(p=p, **kwargs)
-        self._hist = DifferentiableHistogram3D(num_bins=num_bins, value_range=(0.0, 1.0))
-        self._generator = V19LabelConditionedTextureGenerator(label_classes=label_classes)
-
-    # ------------------------------------------------------------------
-    # Core AugLab contract
-    # ------------------------------------------------------------------
-
-    def apply_transform(
-        self,
-        input: torch.Tensor,
-        params: Dict[str, Any],
-        flags: Dict[str, Any],
-        transform: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """
-        Args:
-            input:  Image tensor [B, C, D, H, W], float32, values in [0, 1].
-            params: AugLab parameter dict. If a segmentation mask was registered
-                    via AugLab's DataKey.MASK / 'seg' entry, it appears here.
-                    Supported formats:
-                      - One-hot [B, C_seg, D, H, W] with C_seg > 1
-                      - Integer index [B, 1, D, H, W] (passed through directly)
-            flags:  AugLab flags dict (unused but required by the interface).
-
-        Returns:
-            guidance_map: [B, C, D, H, W] stochastic synthesis output, same
-                          shape and dtype as input.
-        """
-        seg_raw: Optional[torch.Tensor] = params.get("seg", None)
-
-        labels: Optional[torch.Tensor] = None
-        if seg_raw is not None and seg_raw.ndim == 5 and seg_raw.shape[1] > 1:
-            # One-hot [B, C_seg, D, H, W] → integer index [B, 1, D, H, W]
-            labels = collapse_onehot_to_index(seg_raw)
-        elif seg_raw is not None and seg_raw.ndim == 5 and seg_raw.shape[1] == 1:
-            # Already a single-channel integer index mask — use directly.
-            labels = seg_raw.long()
-
-        # normalize image to [0,1]
-        data_norm, vmin, vmax = _minmax_norm(input)
-
-        _target_hist, guidance_map, _dup = self._generator(
-            input_images=data_norm,
-            hist_module=self._hist,
-            labels=labels,
-        )
-        # normalize back with z-score normalization
-        guidance_map = _zscore_renorm(_minmax_denorm(guidance_map, vmin, vmax))
-        return guidance_map
-
-
-class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
-    """
-    AugLab GPU augmentation implementing V26_6_2 synthesis.
-
-    Pipeline (mirrors src/synthesis/v26_6_2_synthesis.py, self-contained):
+    Pipeline (mirrors src/synthesis/PALETTE_synthesis.py, self-contained):
       1. Min-max normalise input to [0, 1] per sample.
-      2. V26_6 whole-image synthesis: 1-D K-means intensity parcellation →
+      2. PALETTE whole-image synthesis: 1-D K-means intensity parcellation →
          Voronoi spatial sub-parcellation → per-region signed-alpha affine remap
          y = μ + α·(x − mean_region), optional Gaussian blur.
-      3. Per-anatomical-label affine remap (V26_6_2 step): for each foreground
+      3. Per-anatomical-label affine remap (PALETTE step): for each foreground
          label, with probability `label_remap_prob`, independently remap that
          label's voxels with a fresh (μ, α).
       4. Optional second Gaussian blur, then foreground z-score.
@@ -428,7 +355,7 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
             torch.arange(W, device=device, dtype=torch.float32),
             indexing="ij"), dim=-1).reshape(N, 3)
 
-        # ── Step 1: V26_6 K-means + Voronoi per-region affine remap ──────────
+        # ── Step 1: PALETTE K-means + Voronoi per-region affine remap ──────────
         synth_list = []
         for i in range(B):
             flat = images_01[i]
@@ -483,7 +410,7 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
             synth_01 = _gaussian_blur_3d(synth_01, sigma)
             synth = synth_01.reshape(B, N)
 
-        # ── Step 2: per-anatomical-label affine remap (V26_6_2) ───────────────
+        # ── Step 2: per-anatomical-label affine remap (PALETTE) ───────────────
         if labels is not None:
             if labels.shape[2:] != (D, H, W):
                 labels = F.interpolate(labels.float(), size=(D, H, W), mode="nearest").long()
@@ -613,120 +540,6 @@ def collapse_onehot_to_index(seg_raw: torch.Tensor) -> torch.Tensor:
     labels = torch.argmax(seg_raw, dim=1, keepdim=True).long() + 1   # 0-based → 1-based
     labels = torch.where(foreground_mask, labels, torch.zeros_like(labels))
     return labels
-
-class HistogramModuleLike(Protocol):
-    num_bins: int
-    min_value: float
-    max_value: float
-
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        ...
-
-class BaseTargetGenerator(nn.Module):
-    """Strategy interface for guidance and target histogram generation."""
-
-    def forward(
-        self,
-        input_images: torch.Tensor,
-        num_bins: int,
-        num_chunks: int,
-        dark_threshold: float,
-        hist_module: HistogramModuleLike,
-        return_guidance_map: bool = True,
-        labels: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        raise NotImplementedError
-
-
-class V19LabelConditionedTextureGenerator(BaseTargetGenerator):
-    """
-    V19 Stochastic Semantic Decoupling: Merges geometric label-priors with
-    texture-preserving latent space.
-    """
-
-    def __init__(self, label_classes: Optional[List[int]] = None):
-        super().__init__()
-        self.label_classes: List[int] = label_classes if label_classes is not None else [1, 2, 3]
-
-    def __call__(
-        self,
-        input_images: torch.Tensor,
-        hist_module: nn.Module,
-        labels: Optional[torch.Tensor] = None,
-        **kwargs
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        images = input_images
-        B, C, D, H, W = images.shape
-        device = images.device
-        dtype = images.dtype
-
-        # Step A: Base v18_6 Background Synthesis
-        mask = images > 0.01
-
-        y = images.clone()
-
-        with torch.autocast(device_type="cuda" if device.type == "cuda" else "cpu", enabled=False):
-            images_f = images.float()
-
-            mu_base = _shared_rand((B, 8), device=device, dtype=torch.float32)
-            alpha_base = _shared_rand((B, 8), device=device, dtype=torch.float32) * 1.5 + 0.5
-
-            q_edges = torch.linspace(0, 1, 9, device=device)
-
-            c_i = torch.bucketize(images_f, q_edges) - 1
-            c_i = torch.clamp(c_i, 0, 7)
-
-            mu_c = mu_base.view(B, 8, 1, 1, 1).expand(B, 8, D, H, W).gather(1, c_i)
-            alpha_c = alpha_base.view(B, 8, 1, 1, 1).expand(B, 8, D, H, W).gather(1, c_i)
-            # v19_c bias fix: center the affine shift on the chunk midpoint rather than
-            # the lower edge, so alpha × offset is symmetric around 0 within each chunk.
-            q_c_lower = q_edges[:-1].view(1, 8, 1, 1, 1).expand(B, 8, D, H, W).gather(1, c_i)
-            q_c_upper = q_edges[1:].view(1, 8, 1, 1, 1).expand(B, 8, D, H, W).gather(1, c_i)
-            q_c_center = (q_c_lower + q_c_upper) * 0.5
-
-            y_base = mu_c + alpha_c * (images_f - q_c_center)
-            y = torch.where(mask, y_base.to(dtype), y)
-
-        # Step B: Stochastic Semantic Decoupling
-        if labels is not None:
-            with torch.autocast(device_type="cuda" if device.type == "cuda" else "cpu", enabled=False):
-                if labels.dim() == 4:
-                    labels = labels.unsqueeze(1)
-                if any(dim <= 0 for dim in labels.shape[2:]):
-                    labels = None
-                else:
-                    if labels.shape[2:] != images.shape[2:]:
-                        labels = F.interpolate(labels.float(), size=images.shape[2:], mode="nearest")
-                    labels = labels.to(device=device)
-                    y_f = y.float()
-                    images_f = images.float()
-
-                    for c in self.label_classes:
-                        decouple = _shared_rand((B, 1, 1, 1, 1), device=device, dtype=torch.float32) > 0.5
-
-                        mu_path = _shared_rand((B, 1, 1, 1, 1), device=device, dtype=torch.float32)
-                        alpha_path = _shared_rand((B, 1, 1, 1, 1), device=device, dtype=torch.float32) * 1.5 + 0.5
-
-                        class_mask = (labels == c)
-
-                        class_sum = (images_f * class_mask).sum(dim=(1, 2, 3, 4), keepdim=True)
-                        class_count = class_mask.sum(dim=(1, 2, 3, 4), keepdim=True)
-                        class_count_safe = torch.clamp(class_count, min=1.0)
-                        mean_c = class_sum / class_count_safe
-
-                        y_override = mu_path + alpha_path * (images_f - mean_c)
-
-                        valid_override = class_mask & decouple & (class_count > 0)
-                        y_f = torch.where(valid_override, y_override, y_f)
-
-                    y = y_f.to(dtype)
-
-        # Step C: Masking & Clamping
-        y = torch.clamp(y, 0.0, 1.0)
-        y = torch.where(mask, y, torch.zeros_like(y))
-
-        target_hist = hist_module(y)
-        return target_hist, y, y
 
 
 class DifferentiableHistogram3D(nn.Module):
