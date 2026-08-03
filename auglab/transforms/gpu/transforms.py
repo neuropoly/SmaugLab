@@ -11,7 +11,9 @@ from kornia.core import Tensor
 from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
 RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU, RandomClampGPU
 from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU, RandomCropTransformGPU
-from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU
+from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU, RandomPALETTEGPU
+from auglab.transforms.gpu.domain_transfer import RandomDomainTransferGPU
+from auglab.transforms.synthseg.transforms import RandomSynthSegGPU
 from auglab.transforms.gpu.base import AugmentationSequentialCustom
 
 class AugTransformsGPU(AugmentationSequentialCustom):
@@ -57,7 +59,69 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 p=affine_params.get('probability', 0)
             ))
 
+        # SynthSeg generative augmentation: replace the image with a GMM synthesis
+        # of the segmentation (intensity-only here, so the mask stays consistent;
+        # geometric transforms above deform the labels first). All SynthSeg
+        # generator parameters are read straight from the config block.
+        synthseg_params = self.transform_params.get('SynthSeg')
+        if synthseg_params is not None:
+            synthseg_kwargs = {k: v for k, v in synthseg_params.items() if k != 'probability'}
+            transforms.append(RandomSynthSegGPU(
+                p=synthseg_params.get('probability', 1.0),
+                **synthseg_kwargs,
+            ))
+
         ## Transfer augmentations (TA)
+        #########################
+        # Replace image with V26_6_2 contrast (K-means + Voronoi + per-label remap)
+        palette_params = self.transform_params.get("RandomPALETTETransform")
+        if palette_params is not None:
+            transforms.append(
+                RandomPALETTEGPU(
+                    p=palette_params.get("probability", 1.0),
+                    c_choices=palette_params.get("c_choices", [2, 3, 4, 5, 6]),
+                    s_choices=palette_params.get("s_choices", [2, 3, 4, 5, 6, 7, 8, 9, 10]),
+                    blur_sigmas=palette_params.get("blur_sigmas", [0.0, 0.0, 0.0, 0.3, 0.5, 0.8]),
+                    dark_threshold=palette_params.get("dark_threshold", 0.01),
+                    n_kmeans_subsample=palette_params.get("n_kmeans_subsample", 10000),
+                    skip_parcellation_prob=palette_params.get("skip_parcellation_prob", 0.10),
+                    skip_sub_parc_prob=palette_params.get("skip_sub_parc_prob", 0.40),
+                    alpha_magnitude_range=palette_params.get("alpha_magnitude_range", [0.5, 2.0]),
+                    label_remap_prob=palette_params.get("label_remap_prob", 0.5),
+                    min_label_voxels=palette_params.get("min_label_voxels", 4),
+                    label_classes=palette_params.get("label_classes", None),
+                )
+            )
+
+        # Domain transfer: randomly re-render the image as another sequence/cluster (TA)
+        # Accept either the class-name key or the descriptive key.
+        domain_params = self.transform_params.get('RandomDomainTransferGPU') \
+            or self.transform_params.get('DomainTransferTransform')
+        if domain_params is not None:
+            transforms.append(
+                RandomDomainTransferGPU(
+                    bank_path=domain_params.get("bank_path", None),
+                    source_label=domain_params["source_label"],
+                    targets=domain_params.get("targets", None),
+                    include_self=domain_params.get("include_self", False),
+                    any_source=domain_params.get("any_source", False),
+                    sigma=domain_params.get("sigma", 2.0),
+                    apply_to_channel=domain_params.get("apply_to_channel", [0]),
+                    zscore_io=domain_params.get("zscore_io", "auto"),
+                    pct=domain_params.get("pct", 1.0),
+                    blend_targets=domain_params.get("blend_targets", 1),
+                    blend_concentration=domain_params.get("blend_concentration", 1.0),
+                    p_class_mix=domain_params.get("p_class_mix", 0.0),
+                    bias_field_std=domain_params.get("bias_field_std", 0.0),
+                    bias_scale=domain_params.get("bias_scale", 0.03),
+                    p_spatial_mix=domain_params.get("p_spatial_mix", 0.0),
+                    spatial_mix_scale=domain_params.get("spatial_mix_scale", 0.03),
+                    spatial_mix_gain=domain_params.get("spatial_mix_gain", 3.0),
+                    p=domain_params.get("probability", 0.0),
+                    same_on_batch=domain_params.get("same_on_batch", False),
+                )
+            )
+
         # Inverse transform (max - pixel_value)
         inverse_params = self.transform_params.get('InverseTransform')
         if inverse_params is not None:
@@ -93,6 +157,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 in_seg=redistribute_params.get('in_seg', 0.2),
                 retain_stats=redistribute_params.get('retain_stats', False),
                 p=redistribute_params.get('probability', 0),
+                std_noise_range=redistribute_params.get('std_noise_range', [0.1, 0.3]),
+                dilation_iterations_range=redistribute_params.get('dilation_iterations_range', [1, 3]),
             ))
 
         # Scharr filter
@@ -259,7 +325,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 one_dim=True,
                 same_on_batch=acq_params.get('same_on_batch', False)
         ))
-            
+
         crop_params = self.transform_params.get('CropTransform')
         if crop_params is not None:
             transforms.append(RandomCropTransformGPU(
@@ -395,22 +461,22 @@ if __name__ == "__main__":
     augmentor = AugTransformsGPU(json_path)
 
     # Load images and masks tensors
-    img_path = '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/data-multi-subject/sub-amu02/anat/sub-amu02_T1w.nii.gz'
+    img_path = '/home/ge.polymtl.ca/p118739/data/datasets/data-multi-subject/sub-amu02/anat/sub-amu02_T1w.nii.gz'
     img = Image(img_path).change_orientation('RSP')
     img = resample_nib(img, new_size=[1,1,1], new_size_type='mm', interpolation='linear')
     img_tensor = torch.from_numpy(img.data.copy()).to(torch.float32)
 
-    seg_path = '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/data-multi-subject/derivatives/labels/sub-amu02/anat/sub-amu02_T1w_label-spine_dseg.nii.gz'
+    seg_path = '/home/ge.polymtl.ca/p118739/data/datasets/data-multi-subject/derivatives/labels/sub-amu02/anat/sub-amu02_T1w_label-spine_dseg.nii.gz'
     seg = Image(seg_path).change_orientation('RSP')
     seg = resample_nib(seg, new_size=[1,1,1], new_size_type='mm', interpolation='nn')
     seg_tensor_all = torch.from_numpy(seg.data.copy())
     
-    img2_path = '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/spider-challenge-2023/sub-002/anat/sub-002_acq-lowresSag_T2w.nii.gz'
+    img2_path = '/home/ge.polymtl.ca/p118739/data/datasets/spider-challenge-2023/sub-002/anat/sub-002_acq-lowresSag_T2w.nii.gz'
     img2 = Image(img2_path).change_orientation('RSP')
     img2 = resample_nib(img2, new_size=[1,1,1], new_size_type='mm', interpolation='linear')
     img2_tensor = torch.from_numpy(img2.data.copy()).to(torch.float32)
 
-    seg2_path = '/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/spider-challenge-2023/derivatives/labels/sub-002/anat/sub-002_acq-lowresSag_T2w_label-spine_dseg.nii.gz'
+    seg2_path = '/home/ge.polymtl.ca/p118739/data/datasets/spider-challenge-2023/derivatives/labels/sub-002/anat/sub-002_acq-lowresSag_T2w_label-spine_dseg.nii.gz'
     seg2 = Image(seg2_path).change_orientation('RSP')
     seg2 = resample_nib(seg2, new_size=[1,1,1], new_size_type='mm', interpolation='nn')
     seg2_tensor_all = torch.from_numpy(seg2.data.copy())

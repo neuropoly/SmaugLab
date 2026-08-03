@@ -1,4 +1,5 @@
 [![arXiv](https://img.shields.io/badge/Preprint-arXiv:2605.03098-orange)](https://arxiv.org/abs/2605.03098)
+[![Python Versions](https://img.shields.io/pypi/pyversions/spineps)](https://pypi.org/project/spineps/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 # AugLab
@@ -136,3 +137,16 @@ Scripts developped in this repository use JSON files to specify image and segmen
 
 To track parameters used during data augmentation, JSON files are also used: see this [example](https://github.com/neuropoly/AugLab/blob/16653a84e031c40e25a72e946c2724494606b21c/auglab/configs/transform_params.json)
 
+
+## Citation
+
+If you use AugLab, please make sure to cite the following paper:
+
+```
+@article{molinier2026one,
+  title={One Sequence to Segment Them All: Efficient Data Augmentation for CT and MRI Cross-Domain 3D Spine Segmentation},
+  author={Molinier, Nathan and M{\"o}ller, Hendrik and Dagonneau, Thomas and Curto-Vilalta, Anna and Graf, Robert and Atad, Matan and Rueckert, Daniel and Kirschke, Jan S and Cohen-Adad, Julien},
+  journal={arXiv preprint arXiv:2605.03098},
+  year={2026}
+}
+```
