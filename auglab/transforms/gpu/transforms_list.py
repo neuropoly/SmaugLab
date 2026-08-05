@@ -174,17 +174,17 @@ class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
         ]
         function_params = self.transform_params.get("FunctionTransform")
         if function_params is not None:
-            for func in func_list:
-                ta_transforms.append(
-                    RandomFunctionGPU(
-                        func=func,
-                        p=function_params.get("probability", 0),
-                        in_seg=function_params.get("in_seg", 0.0),
-                        out_seg=function_params.get("out_seg", 0.0),
-                        mix_in_out=function_params.get("mix_in_out", False),
-                        retain_stats=function_params.get("retain_stats", False),
-                    )
+            ta_transforms.extend(
+                RandomFunctionGPU(
+                    func=func,
+                    p=function_params.get("probability", 0),
+                    in_seg=function_params.get("in_seg", 0.0),
+                    out_seg=function_params.get("out_seg", 0.0),
+                    mix_in_out=function_params.get("mix_in_out", False),
+                    retain_stats=function_params.get("retain_stats", False),
                 )
+                for func in func_list
+            )
 
         # Bias field artifact
         bias_field_params = self.transform_params.get("BiasFieldTransform")
@@ -499,17 +499,17 @@ class AugTransformsGPURandomOrderTA(AugmentationSequentialCustom):
         ]
         function_params = self.transform_params.get("FunctionTransform")
         if function_params is not None:
-            for func in func_list:
-                ta_transforms.append(
-                    RandomFunctionGPU(
-                        func=func,
-                        p=function_params.get("probability", 0),
-                        in_seg=function_params.get("in_seg", 0.0),
-                        out_seg=function_params.get("out_seg", 0.0),
-                        mix_in_out=function_params.get("mix_in_out", False),
-                        retain_stats=function_params.get("retain_stats", False),
-                    )
+            ta_transforms.extend(
+                RandomFunctionGPU(
+                    func=func,
+                    p=function_params.get("probability", 0),
+                    in_seg=function_params.get("in_seg", 0.0),
+                    out_seg=function_params.get("out_seg", 0.0),
+                    mix_in_out=function_params.get("mix_in_out", False),
+                    retain_stats=function_params.get("retain_stats", False),
                 )
+                for func in func_list
+            )
 
         # Bias field artifact
         bias_field_params = self.transform_params.get("BiasFieldTransform")
@@ -769,6 +769,7 @@ if __name__ == "__main__":
     import importlib
 
     from auglab import configs
+    from auglab.transforms.gpu.transforms import AugTransformsGPU
     from auglab.utils.image import Image, resample_nib
 
     configs_path = importlib.resources.files(configs)

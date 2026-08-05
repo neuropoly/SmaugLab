@@ -77,13 +77,13 @@ class AugTransforms(ComposeTransforms):
         ]
         func_params = transform_params.get("FunctionTransform")
         if func_params is not None:
-            for func in func_list:
-                transforms.append(
-                    RandomTransform(
-                        FunctionTransform(function=func, retain_stats=transform_params.get("retain_stats", False)),
-                        apply_probability=func_params.get("probability", 0),
-                    )
+            transforms.extend(
+                RandomTransform(
+                    FunctionTransform(function=func, retain_stats=transform_params.get("retain_stats", False)),
+                    apply_probability=func_params.get("probability", 0),
                 )
+                for func in func_list
+            )
 
         # Histogram manipulations
         hist_params = transform_params.get("HistogramEqualTransform")

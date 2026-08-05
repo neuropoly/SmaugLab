@@ -345,17 +345,17 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         ]
         function_params = self.transform_params.get("FunctionTransform")
         if function_params is not None:
-            for func in func_list:
-                transforms.append(
-                    RandomFunctionGPU(
-                        func=func,
-                        p=function_params.get("probability", 0),
-                        in_seg=function_params.get("in_seg", 0.0),
-                        out_seg=function_params.get("out_seg", 0.0),
-                        mix_in_out=function_params.get("mix_in_out", False),
-                        retain_stats=function_params.get("retain_stats", False),
-                    )
+            transforms.extend(
+                RandomFunctionGPU(
+                    func=func,
+                    p=function_params.get("probability", 0),
+                    in_seg=function_params.get("in_seg", 0.0),
+                    out_seg=function_params.get("out_seg", 0.0),
+                    mix_in_out=function_params.get("mix_in_out", False),
+                    retain_stats=function_params.get("retain_stats", False),
                 )
+                for func in func_list
+            )
 
         # Shape transforms (Cropping and Simulating low resolution)
         lowres_params = self.transform_params.get("SimulateLowResTransform")

@@ -347,9 +347,9 @@ class SynthSegGenerator(nn.Module):
         sizes = (D, H, W)
         starts = []
         for dim, target in zip(sizes, output_shape):
-            target = min(int(target), dim)
-            start = int(torch.randint(0, dim - target + 1, (1,))) if dim > target else 0
-            starts.append((start, target))
+            size = min(int(target), dim)
+            start = int(torch.randint(0, dim - size + 1, (1,))) if dim > size else 0
+            starts.append((start, size))
         (sd, td), (sh, th), (sw, tw) = starts
         return labels[:, :, sd : sd + td, sh : sh + th, sw : sw + tw]
 

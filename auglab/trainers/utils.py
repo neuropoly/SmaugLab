@@ -27,12 +27,15 @@ class DownsampleSegForDSTransformCustom:
             List of downsampled tensors, each with shape [batch, channels, spatial_dims...]
         """
         results = []
-        for s in self.ds_scales:
-            if not isinstance(s, (tuple, list)):
+        for ds_scale in self.ds_scales:
+            if not isinstance(ds_scale, (tuple, list)):
                 # If single scale value, apply to all spatial dimensions
-                s = [s] * (segmentation.ndim - 2)  # -2 for batch and channel dims
+                s = [ds_scale] * (segmentation.ndim - 2)  # -2 for batch and channel dims
             else:
-                assert len(s) == segmentation.ndim - 2, f"Scale length {len(s)} doesn't match spatial dims {segmentation.ndim - 2}"
+                assert len(ds_scale) == segmentation.ndim - 2, (
+                    f"Scale length {len(ds_scale)} doesn't match spatial dims {segmentation.ndim - 2}"
+                )
+                s = ds_scale
 
             if all(i == 1 for i in s):
                 # No downsampling needed

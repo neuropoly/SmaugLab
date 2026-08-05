@@ -167,6 +167,10 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 "unit_tests/**" = ["INP001", "PLR2004"]
 # Standalone scripts, not part of the installed package.
 "scripts/**" = ["INP001"]
+# The trainers mirror nnU-Net's upstream signatures verbatim, including its
+# `device: torch.device = torch.device("cuda")` default. Diverging would break
+# the drop-in contract with nnUNetTrainer.
+"auglab/trainers/**" = ["B008"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 20

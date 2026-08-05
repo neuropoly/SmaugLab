@@ -112,12 +112,17 @@ def augment_mp(
     ofolder,
     augmentations_per_image=5,
     overwrite=False,
-    max_workers=mp.cpu_count(),
+    max_workers=None,
     quiet=False,
 ):
     """
     Wrapper function to handle multiprocessing.
     """
+    # Resolved here rather than in the signature so the default reflects the
+    # machine running the call, not the machine that imported the module.
+    if max_workers is None:
+        max_workers = mp.cpu_count()
+
     # Convert to Path object
     data_json_path = Path(data_json_path)
     transforms_json_path = Path(transforms_json_path)

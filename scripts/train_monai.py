@@ -277,7 +277,7 @@ def main():
         if epoch in [int(sch * args.nb_epochs) for sch in args.schedule]:
             lr = adjust_learning_rate(optimizer, lr, gamma=args.gamma)
 
-        print("\nEpoch: %d | LR: %.8f" % (epoch + 1, lr))
+        print(f"\nEpoch: {epoch + 1:d} | LR: {lr:.8f}")
 
         # train for one epoch
         train_loss, train_dsc = train(train_loader, gpu_transforms, model, loss_func, optimizer, scaler, device)

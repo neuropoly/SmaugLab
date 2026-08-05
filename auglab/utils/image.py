@@ -203,14 +203,16 @@ class Image:
         # Using bool for nibabel headers is unsupported, so use uint8 instead:
         # `nibabel.spatialimages.HeaderDataError: data dtype "bool" not supported`
         dtype_data = self.data.dtype
-        if dtype_data == bool:
+        if dtype_data == bool:  # noqa: E721 -- numpy dtype equality against a scalar type, not a type() comparison
             dtype_data = np.uint8
 
         dtype_header = self.hdr.get_data_dtype()
         if dtype_header != dtype_data:
             logger.warning(
-                f"Image header specifies datatype '{dtype_header}', but array is of type "
-                f"'{dtype_data}'. Header metadata will be overwritten to use '{dtype_data}'."
+                "Image header specifies datatype '%s', but array is of type '%s'. Header metadata will be overwritten to use '%s'.",
+                dtype_header,
+                dtype_data,
+                dtype_data,
             )
             self.hdr.set_data_dtype(dtype_data)
 
@@ -353,7 +355,7 @@ class SlicerOneAxis:
         return self.im.data[self._slice(idx)]
 
 
-def get_dimension(im_file, verbose=1):
+def get_dimension(im_file, verbose=1):  # noqa: ARG001 -- verbose kept for API parity with spinalcordtoolbox
     """
     Copied from https://github.com/spinalcordtoolbox/spinalcordtoolbox/
 
@@ -592,7 +594,8 @@ def change_type(im_src, dtype, im_dst=None):
             if (min_in < min_out) or (max_in > max_out):
                 # This condition is important for binary images since we do not want to scale them
                 logger.warning(
-                    f"To avoid intensity overflow due to convertion to +{dtype.name}+, intensity will be rescaled to the maximum quantization scale"
+                    "To avoid intensity overflow due to convertion to +%s+, intensity will be rescaled to the maximum quantization scale",
+                    dtype.name,
                 )
                 # rescale intensity
                 data_rescaled = im_src.data * (max_out - min_out) / (max_in - min_in)
@@ -776,7 +779,7 @@ def resample_nib(
         # Generate 3d affine transformation: R
         affine = img.affine[:4, :4]
         affine[3, :] = np.array([0, 0, 0, 1])  # satisfy to nifti convention. Otherwise it grabs the temporal
-        logger.debug("Affine matrix: \n" + str(affine))
+        logger.debug("Affine matrix: \n%s", affine)
         R = np.eye(4)
         for i in range(3):
             try:
@@ -786,7 +789,7 @@ def resample_nib(
                     f"Destination size is zero for dimension {i}. You are trying to resample to an "
                     "unrealistic dimension. Check your NIFTI pixdim values to make sure they are "
                     "not corrupted."
-                )
+                ) from None
 
         affine_r = np.dot(affine, R)
         reference = (shape_r, affine_r)

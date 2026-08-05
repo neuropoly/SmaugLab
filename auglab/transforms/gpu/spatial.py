@@ -448,11 +448,8 @@ class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
         out = input.clone()
         # For each batch element, build list of spatial dims to flip (D,H,W -> dims 2,3,4)
         for b in range(batch_size):
-            flip_dims = []
             # fb expected as length-3 tensor for (z,y,x)
-            for axis in range(3):
-                if axis in self.flip_axis:
-                    flip_dims.append(1 + axis)
+            flip_dims = [1 + axis for axis in range(3) if axis in self.flip_axis]
 
             if len(flip_dims) > 0:
                 out[b] = torch.flip(input[b], dims=tuple(flip_dims))

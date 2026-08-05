@@ -10,12 +10,13 @@ from torch.nn import functional as F
 from auglab.transforms.gpu.base import ImageOnlyTransform
 
 
-def _choose_region_mode(p_in: float, p_out: float, seg_mask: torch.Tensor | None) -> str:
+def _choose_region_mode(p_in: float, p_out: float, seg_mask: torch.Tensor | None) -> str:  # noqa: ARG001 -- seg_mask kept for signature symmetry with _apply_region_mode
     """Sample where to apply the transform: 'in', 'out', or 'all'.
 
     - p_in, p_out are probabilities in [0,1].
-    - If seg_mask is None, or both probs are 0, return 'all'.
-    - If p_in + p_out > 1, renormalize so p_all=0.
+    - If both probs are 0, or both fire at once, return 'all'.
+    - seg_mask is accepted but unused here; _apply_region_mode treats a None
+      mask as 'all' regardless of the mode chosen.
     """
     p_in = float(max(0.0, min(1.0, p_in)))
     p_out = float(max(0.0, min(1.0, p_out)))
@@ -305,7 +306,7 @@ def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torc
 
     # padding = (left, right, top, bottom)
     img = F.pad(img, padding, mode="reflect")
-    if dim == 2:
+    if dim == 2:  # noqa: SIM108 -- the 2d/3d split reads better spelled out than as a ternary
         img = F.conv2d(img, kernel, groups=img.shape[-(1 + dim)])
     else:  # dim == 3
         img = F.conv3d(img, kernel, groups=img.shape[-(1 + dim)])
@@ -541,10 +542,8 @@ class RandomGammaGPU(ImageOnlyTransform):
         # Apply gamma transform
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
-            if self.invert_image:
-                channel_data = -input[:, c]  # [N, ...spatial...]
-            else:
-                channel_data = input[:, c]  # [N, ...spatial...]
+            # [N, ...spatial...]
+            channel_data = -input[:, c] if self.invert_image else input[:, c]
             orig_full = input[:, c].clone()
 
             if self.retain_stats:
@@ -1048,7 +1047,7 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
                         count += 1
         elif dim == 2:
             for xo in range(self.order + 1):
-                for yo in range(self.order + 1 - xo):
+                for _yo in range(self.order + 1 - xo):
                     count += 1
         else:
             raise ValueError("Only 2D or 3D spatial dims supported for bias field")

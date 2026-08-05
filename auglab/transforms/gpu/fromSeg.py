@@ -492,7 +492,7 @@ _SHARED_RNG_COUNTER = 0
 
 
 def _next_shared_seed() -> int:
-    global _SHARED_RNG_COUNTER
+    global _SHARED_RNG_COUNTER  # noqa: PLW0603 -- module-level counter is the point: it makes successive seeds distinct
     _SHARED_RNG_COUNTER += 1
     seed = (int(torch.initial_seed()) + _SHARED_RNG_COUNTER) % (2**63 - 1)
     if dist.is_available() and dist.is_initialized():
