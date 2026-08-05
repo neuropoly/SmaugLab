@@ -6,6 +6,7 @@ from typing import Union
 
 import numpy as np
 import torch
+from batchgenerators.utilities.file_and_folder_operations import join
 from batchgeneratorsv2.helpers.scalar_type import RandomScalar
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
 from batchgeneratorsv2.transforms.nnunet.random_binary_operator import ApplyRandomBinaryOperatorTransform
@@ -19,9 +20,12 @@ from batchgeneratorsv2.transforms.utils.pseudo2d import Convert2DTo3DTransform, 
 from batchgeneratorsv2.transforms.utils.random import RandomTransform
 from batchgeneratorsv2.transforms.utils.remove_label import RemoveLabelTansform
 from batchgeneratorsv2.transforms.utils.seg_to_regions import ConvertSegmentationToRegionsTransform
+from nnunetv2.training.loss.dice import get_tp_fp_fn_tn
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+from nnunetv2.utilities.collate_outputs import collate_outputs
 from nnunetv2.utilities.helpers import dummy_context
 from torch import autocast
+from torch import distributed as dist
 
 from auglab import configs
 from auglab.trainers.utils import DownsampleSegForDSTransformCustom
@@ -158,6 +162,13 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         json_path = os.environ.get("AUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
         self.transforms = AugTransformsGPU(json_path=json_path).to(self.device)
         print(f"Using AugLab GPU transforms with parameters from: {json_path}")
+
+        # Load JSON parameters for validation augmentation checkpoints
+        with open(json_path) as f:
+            config = json.load(f)
+        self.validation_augmentation_checkpoints = config.get("ValidationAugmentationCheckpoints", {}).get("checkpoints", [0])
+        self.ema_dice_validation = [None] * len(self.validation_augmentation_checkpoints)
+        self.best_ema_dice_validation = [None] * len(self.validation_augmentation_checkpoints)
 
         # Copy json transfrom parameters to output folder
         shutil.copy(json_path, os.path.join(self.output_folder, "transform_params_gpu_used_for_training.json"))
@@ -299,8 +310,9 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
 
         # transforms.append(ZscoreNormalization())
 
-        if deep_supervision_scales is not None:
-            transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
+        # NOTE: DownsampleSegForDSTransform is now handled in train_step for GPU augmentations
+        # if deep_supervision_scales is not None:
+        #     transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
         return ComposeTransforms(transforms)
 
     def train_step(self, batch: dict) -> dict:
@@ -345,6 +357,155 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
             self.optimizer.step()
         return {"loss": l.detach().cpu().numpy()}
+
+    def validation_step(self, batch: dict, augmentation_prob: float) -> dict:
+        data = batch["data"]
+        target = batch["target"]
+
+        data = data.to(self.device, non_blocking=True)
+        # Now target should be a single tensor, not a list
+        target = target.to(self.device, non_blocking=True)
+        # if isinstance(target, list):
+        #     target = [i.to(self.device, non_blocking=True) for i in target]
+        # else:
+        #     target = target.to(self.device, non_blocking=True)
+
+        # Autocast can be annoying
+        # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
+        # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
+        # So autocast will only be active if we have a cuda device.
+        with autocast(self.device.type, enabled=True) if self.device.type == "cuda" else dummy_context():
+            # Apply GPU augmentations to full-resolution data/target
+            if torch.rand(1).item() < augmentation_prob:
+                data, target = self.transforms(data, target)
+
+            # Create multi-scale targets for deep supervision after augmentation
+            deep_supervision_scales = self._get_deep_supervision_scales()
+            if deep_supervision_scales is not None:
+                ds_transform = DownsampleSegForDSTransformCustom(ds_scales=deep_supervision_scales)
+                target = ds_transform(target)
+
+            output = self.network(data)
+            del data
+            l = self.loss(output, target)
+
+        # we only need the output with the highest output resolution (if DS enabled)
+        if self.enable_deep_supervision:
+            output = output[0]
+            target = target[0]
+
+        # the following is needed for online evaluation. Fake dice (green line)
+        axes = [0, *list(range(2, output.ndim))]
+
+        if self.label_manager.has_regions:
+            predicted_segmentation_onehot = (torch.sigmoid(output) > 0.5).long()
+        else:
+            # no need for softmax
+            output_seg = output.argmax(1)[:, None]
+            predicted_segmentation_onehot = torch.zeros(output.shape, device=output.device, dtype=torch.float32)
+            predicted_segmentation_onehot.scatter_(1, output_seg, 1)
+            del output_seg
+
+        if self.label_manager.has_ignore_label:
+            if not self.label_manager.has_regions:
+                mask = (target != self.label_manager.ignore_label).float()
+                # CAREFUL that you don't rely on target after this line!
+                target[target == self.label_manager.ignore_label] = 0
+            else:
+                mask = ~target[:, -1:] if target.dtype == torch.bool else 1 - target[:, -1:]
+                # CAREFUL that you don't rely on target after this line!
+                target = target[:, :-1]
+        else:
+            mask = None
+
+        tp, fp, fn, _ = get_tp_fp_fn_tn(predicted_segmentation_onehot, target, axes=axes, mask=mask)
+
+        tp_hard = tp.detach().cpu().numpy()
+        fp_hard = fp.detach().cpu().numpy()
+        fn_hard = fn.detach().cpu().numpy()
+        if not self.label_manager.has_regions:
+            # if we train with regions all segmentation heads predict some kind of foreground. In conventional
+            # (softmax training) there needs tobe one output for the background. We are not interested in the
+            # background Dice
+            # [1:] in order to remove background
+            tp_hard = tp_hard[1:]
+            fp_hard = fp_hard[1:]
+            fn_hard = fn_hard[1:]
+
+        return {"loss": l.detach().cpu().numpy(), "tp_hard": tp_hard, "fp_hard": fp_hard, "fn_hard": fn_hard}
+
+    def compute_validation_metrics(self, val_outputs: list[dict]):
+        """
+        Based on on_validation_epoch_end nnUNetTrainer
+        """
+        outputs_collated = collate_outputs(val_outputs)
+        tp = np.sum(outputs_collated["tp_hard"], 0)
+        fp = np.sum(outputs_collated["fp_hard"], 0)
+        fn = np.sum(outputs_collated["fn_hard"], 0)
+
+        if self.is_ddp:
+            world_size = dist.get_world_size()
+
+            tps = [None for _ in range(world_size)]
+            dist.all_gather_object(tps, tp)
+            tp = np.vstack([i[None] for i in tps]).sum(0)
+
+            fps = [None for _ in range(world_size)]
+            dist.all_gather_object(fps, fp)
+            fp = np.vstack([i[None] for i in fps]).sum(0)
+
+            fns = [None for _ in range(world_size)]
+            dist.all_gather_object(fns, fn)
+            fn = np.vstack([i[None] for i in fns]).sum(0)
+
+            losses_val = [None for _ in range(world_size)]
+            dist.all_gather_object(losses_val, outputs_collated["loss"])
+            loss_here = np.vstack(losses_val).mean()
+        else:
+            loss_here = np.mean(outputs_collated["loss"])
+
+        global_dc_per_class = [2 * i / (2 * i + j + k) for i, j, k in zip(tp, fp, fn)]
+        mean_fg_dice = np.nanmean(global_dc_per_class)
+        val_losses = loss_here
+        return mean_fg_dice, global_dc_per_class, val_losses
+
+    def run_training(self):
+        self.on_train_start()
+
+        for _epoch in range(self.current_epoch, self.num_epochs):
+            self.on_epoch_start()
+
+            self.on_train_epoch_start()
+            train_outputs = [self.train_step(next(self.dataloader_train)) for _batch_id in range(self.num_iterations_per_epoch)]
+            self.on_train_epoch_end(train_outputs)
+
+            with torch.no_grad():
+                self.on_validation_epoch_start()
+                val_outputs = [[]] * len(self.validation_augmentation_checkpoints)
+                for _batch_id in range(self.num_val_iterations_per_epoch):
+                    batch = next(self.dataloader_val)
+                    for prob_id, augmentation_prob in enumerate(self.validation_augmentation_checkpoints):
+                        val_outputs[prob_id].append(self.validation_step(batch, augmentation_prob))
+                for val_idx, val_output in enumerate(val_outputs):
+                    mean_fg_dice, global_dc_per_class, val_losses = self.compute_validation_metrics(val_output)
+                    self.ema_dice_validation[val_idx] = (
+                        self.ema_dice_validation[val_idx] * 0.9 + 0.1 * mean_fg_dice
+                        if self.ema_dice_validation[val_idx] is not None
+                        else mean_fg_dice
+                    )
+                    if val_idx == 0:
+                        self.logger.log("mean_fg_dice", mean_fg_dice, self.current_epoch)
+                        self.logger.log("dice_per_class_or_region", global_dc_per_class, self.current_epoch)
+                        self.logger.log("val_losses", val_losses, self.current_epoch)
+
+            self.on_epoch_end()
+            for val_idx, augmentation_prob in enumerate(self.validation_augmentation_checkpoints):
+                ema_dice = self.ema_dice_validation[val_idx]
+                if ema_dice is None or ema_dice > self.best_ema_dice_validation[val_idx]:
+                    self.best_ema_dice_validation[val_idx] = ema_dice
+                    self.save_checkpoint(join(self.output_folder, f"checkpoint_best_validation_aug_{augmentation_prob}.pth"))
+
+        self.on_train_end()
 
 
 class nnUNetTrainerDAExtHybrid(nnUNetTrainer):
