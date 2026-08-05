@@ -44,7 +44,7 @@
             "random_pick": true,
             "probability": 0
         },
-        
+
         "Comment2": "nnUNet default CPU augmentations",
         "SpatialTransform": {
             "patch_center_dist_from_border": 0,
