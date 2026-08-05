@@ -80,9 +80,12 @@ build-backend = "setuptools.build_meta"
 # setup in Hendrik-code/TPTBox: the released version is whatever the git tag says,
 # so pyproject and the tag can never disagree.
 #
-# Releases are tagged with a date, optionally prefixed: r20260615, v20260615,
-# or a bare 20260615. The default regex rejects the "r" prefix already in use.
-tag_regex = "^(?:[rvV])?(?P<version>\\d+(?:\\.\\d+)*)$"
+# Strip an optional r/v/release- prefix and hand everything else to
+# setuptools-scm, which validates it as PEP 440. Deliberately permissive: the
+# default regex rejects the "r" prefix already in use (r20260615), and a regex
+# that only accepts digits would silently fall back to 0.0.0 on a tag like
+# v1.0.0rc1. An unparseable tag now fails loudly instead.
+tag_regex = "^(?:[rvV]|release[-_])?(?P<version>.+)$"
 # Between tags, produce e.g. 20260616.dev19 rather than a PEP 440 local version,
 # because PyPI rejects local versions (+g<sha>) on upload.
 local_scheme = "no-local-version"
