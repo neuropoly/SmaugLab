@@ -70,7 +70,11 @@ build-backend = "setuptools.build_meta"
 include-package-data = true
 
 [tool.setuptools.package-data]
-'auglab' = ['data/**.json']
+# Keyed on the package that actually holds the files. The previous glob
+# ('auglab' = ['data/**.json']) matched nothing, so released wheels shipped
+# without any configs and the default transform_params_gpu.json path -- which
+# auglab resolves via importlib.resources -- did not exist for pip users.
+"auglab.configs" = ["*.json", "data/*.json"]
 
 [tool.ruff]
 line-length = 140
