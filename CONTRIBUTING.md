@@ -81,20 +81,37 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 ## Versioning
 
 The version comes from the git tag via
-[setuptools-scm](https://setuptools-scm.readthedocs.io/) — there is no version
-string to maintain in `pyproject.toml`. To release, tag a commit `r<date>`
-(e.g. `r20260801`) and publish a GitHub release; `publish.yml` does the rest.
+[poetry-dynamic-versioning](https://github.com/mtkennerly/poetry-dynamic-versioning),
+the same arrangement as [TPTBox](https://github.com/Hendrik-code/TPTBox). The
+`version = "0.0.0"` in `pyproject.toml` is a placeholder — **never bump it by
+hand**; it is substituted at build time.
 
-| Where you are | Version you get |
+To release, tag a commit and publish a GitHub release; `publish.yml` does the
+rest.
+
+| Tag | Version built |
 | --- | --- |
-| On tag `r20260801`, clean tree | `20260801` |
-| 19 commits past `r20260615` | `20260616.dev19` |
-| No git metadata (sdist, export) | `0.0.0` (fallback) |
+| `r20260801` | `20260801` |
+| `v20260801` / `20260801` | `20260801` |
+| `v1.2.3` | `1.2.3` |
+| `v1.0.0rc1` | `1.0.0rc1` |
+| `v2.0.0-beta1` | `2.0.0b1` (PEP 440 normalised) |
+| *(23 commits past `r20260615`)* | `20260616.dev23` |
 
-Tags may be prefixed `r`/`v` or bare; see `[tool.setuptools_scm].tag_regex`.
-Anything that builds or installs the package needs the tags to be present, so
-every workflow checkout uses `fetch-depth: 0` — a shallow clone has no tags and
-silently builds `0.0.0`. `publish.yml` refuses to upload that.
+An optional `r`/`v`/`release-` prefix is stripped; see
+`[tool.poetry-dynamic-versioning].pattern`. A `.post` tag is not supported and
+fails the build loudly rather than silently dropping the suffix.
+
+Two things to know:
+
+- Anything that builds or installs the package needs the **tags** present, so
+  every workflow checkout uses `fetch-depth: 0`. Building outside a git
+  checkout fails with *"Unable to detect version control system"* rather than
+  producing a wrong version. Published sdists are unaffected — the concrete
+  version is baked into their `pyproject.toml` at build time.
+- The build backend is poetry's, but **you do not need the `poetry` CLI or a
+  `poetry.lock`**. Optional dependencies are declared as extras rather than
+  poetry groups precisely so that `pip install -e ".[dev]"` keeps working.
 
 ## Dependency pins
 

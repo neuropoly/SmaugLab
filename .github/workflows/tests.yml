@@ -29,8 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # setuptools-scm derives the version from the git tag; a shallow
-          # clone has no tags and would build as 0.0.0.
+          # poetry-dynamic-versioning derives the version from the git tag;
+          # a shallow clone has no tags and would build as 0.0.0.
           fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}
@@ -79,8 +79,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # setuptools-scm derives the version from the git tag; a shallow
-          # clone has no tags and would build as 0.0.0.
+          # poetry-dynamic-versioning derives the version from the git tag;
+          # a shallow clone has no tags and would build as 0.0.0.
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -111,8 +111,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # setuptools-scm derives the version from the git tag; a shallow
-          # clone has no tags and would build as 0.0.0.
+          # poetry-dynamic-versioning derives the version from the git tag;
+          # a shallow clone has no tags and would build as 0.0.0.
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
