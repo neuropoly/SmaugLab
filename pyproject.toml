@@ -27,19 +27,32 @@ keywords = [
     'mri'
 ]
 dependencies = [
+    "batchgenerators",
     "batchgeneratorsv2",
     "kornia",
-    "torchio"
+    "nibabel",
+    "numpy",
+    "progress",
+    "scipy",
+    "torchio",
+    "torchvision",
 ]
 
 [project.optional-dependencies]
 nnunetv2 = ["nnunetv2"]
 all = [
     "monai[all]",
-    "progress",
-    "numpy",
     "tqdm",
     "wandb",
+]
+dev = [
+    "build",
+    "coverage>=7",
+    "pre-commit",
+    "pytest>=8",
+    "pytest-cov",
+    "ruff",
+    "twine",
 ]
 
 [project.scripts]
@@ -58,3 +71,142 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 'auglab' = ['data/**.json']
+
+[tool.ruff]
+line-length = 140
+indent-width = 4
+target-version = "py310"
+exclude = [
+    "*.ipynb",
+    ".eggs",
+    ".venv",
+    "*.egg-info",
+    "build",
+    "dist",
+    "venv",
+]
+
+[tool.ruff.lint]
+select = [
+    "A",
+    "ARG",
+    "B",
+    "BLE",
+    "C4",
+    "E",
+    "F",
+    "FLY",
+    "FURB",
+    "G",
+    "I",
+    "ICN",
+    "INT",
+    "N",
+    "NPY",
+    "PERF",
+    "PGH",
+    "PIE",
+    "PL",
+    "RUF",
+    "SIM",
+    "TID",
+    "TRY",
+    "UP",
+    "W",
+]
+
+ignore = [
+    "A001",    # builtin shadowed by a variable (pervasive: `input`, `filter`, `type`)
+    "A002",    # builtin shadowed by an argument (same, and part of the public API)
+    "ARG002",  # unused method argument (required by the batchgenerators/kornia interfaces)
+    "ARG004",  # unused static method argument (same reason)
+    "B905",    # zip() without strict=
+    "BLE001",  # blind `except Exception`
+    "E501",    # line too long (the formatter handles what it can)
+    "E741",    # ambiguous variable name (`l` for label is idiomatic here)
+    "F811",    # redefinition (triggered by the __main__ demo blocks)
+    "FURB171", # membership test against a single-item container
+    "N801",    # class name not CapWords (transform names mirror nnU-Net's)
+    "N802",    # function name not lowercase
+    "N803",    # argument name not lowercase (tensors are `X`, `Y`)
+    "N806",    # variable in function should be lowercase (same)
+    "N812",    # lowercase imported as non-lowercase (`import torch.nn.functional as F`)
+    "N999",    # invalid module name (`nnUNetTrainerDAExt`)
+    "NPY002",  # legacy np.random (reproducibility of published experiments)
+    "PERF203", # try/except in a loop
+    "PGH003",  # blanket type: ignore
+    "PLC0415", # import not at top of file (deliberate, for optional heavy deps)
+    "PLR0911", # too many return statements
+    "PLR0912", # too many branches
+    "PLR0913", # too many arguments (augmentation configs are wide by nature)
+    "PLR0915", # too many statements
+    "PLR0917", # too many positional arguments
+    "PLR2004", # magic value in comparison
+    "PLW0108", # unnecessary lambda
+    "RUF002",  # ambiguous unicode in docstrings
+    "RUF003",  # ambiguous unicode in comments
+    "RUF059",  # unused unpacked variable
+    "RUF100",  # unused noqa
+    "SIM105",  # contextlib.suppress instead of try/except/pass
+    "SIM118",  # `key in dict` instead of `key in dict.keys()`
+    "TRY003",  # long message outside the exception class
+    "UP007",   # Optional/Union instead of `X | Y`
+]
+
+# Allow fix for all enabled rules (when `--fix` is provided).
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.per-file-ignores]
+# Re-exports are the point of an __init__.
+"**/__init__.py" = ["F401"]
+# Tests are not an importable package and assert against literals.
+"unit_tests/**" = ["INP001", "PLR2004"]
+# Standalone scripts, not part of the installed package.
+"scripts/**" = ["INP001"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 20
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Enable reformatting of code snippets in docstrings.
+docstring-code-format = true
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["unit_tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore::UserWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.coverage.run]
+source = ["auglab"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "def __repr__",
+    "def __str__",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
