@@ -1,29 +1,28 @@
-import os, json
+import json
+import os
+from typing import Any
 
-import torch.nn as nn
-import torch
 import numpy as np
-
-from auglab.transforms.gpu.base import ImageOnlyTransform
-from typing import Any, Dict, Optional, Tuple, Union, List
+import torch
 from kornia.core import Tensor
+from torch import nn
 
+from auglab.transforms.gpu.base import AugmentationSequentialCustom, ImageOnlyTransform
 from auglab.transforms.gpu.contrast import (
-    RandomConvTransformGPU,
-    RandomGaussianNoiseGPU,
+    RandomBiasFieldGPU,
     RandomBrightnessGPU,
-    RandomGammaGPU,
+    RandomClampGPU,
+    RandomContrastGPU,
+    RandomConvTransformGPU,
     RandomFunctionGPU,
+    RandomGammaGPU,
+    RandomGaussianNoiseGPU,
     RandomHistogramEqualizationGPU,
     RandomInverseGPU,
-    RandomBiasFieldGPU,
-    RandomContrastGPU,
     ZscoreNormalizationGPU,
-    RandomClampGPU,
 )
-from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU
 from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU
-from auglab.transforms.gpu.base import AugmentationSequentialCustom
+from auglab.transforms.gpu.spatial import RandomAcqTransformGPU, RandomAffine3DCustom, RandomFlipTransformGPU, RandomLowResTransformGPU
 
 
 class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
@@ -34,7 +33,7 @@ class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
     def __init__(self, json_path: str):
         # Load transform parameters from JSON
         config_path = os.path.join(json_path)
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config = json.load(f)
 
         if "GPU" in config.keys():
@@ -333,12 +332,18 @@ class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
         choose_x_params = self.transform_params.get("RandomChooseXTransforms")
         transforms.append(
             RandomChooseXTransformsGPU(
-                transforms_list=ta_transforms, num_transforms=len(ta_transforms), p=choose_x_params.get("ta_probability", 1.0), random_order=choose_x_params.get("ta_random_order", True),
+                transforms_list=ta_transforms,
+                num_transforms=len(ta_transforms),
+                p=choose_x_params.get("ta_probability", 1.0),
+                random_order=choose_x_params.get("ta_random_order", True),
             )
         )
         transforms.append(
             RandomChooseXTransformsGPU(
-                transforms_list=ge_transforms, num_transforms=len(ge_transforms), p=choose_x_params.get("ge_probability", 1.0), random_order=choose_x_params.get("ge_random_order", True)
+                transforms_list=ge_transforms,
+                num_transforms=len(ge_transforms),
+                p=choose_x_params.get("ge_probability", 1.0),
+                random_order=choose_x_params.get("ge_random_order", True),
             )
         )
 
@@ -353,7 +358,7 @@ class AugTransformsGPURandomOrderTA(AugmentationSequentialCustom):
     def __init__(self, json_path: str):
         # Load transform parameters from JSON
         config_path = os.path.join(json_path)
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config = json.load(f)
 
         if "GPU" in config.keys():
@@ -677,7 +682,7 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
 
     def __init__(
         self,
-        transforms_list: List[ImageOnlyTransform],
+        transforms_list: list[ImageOnlyTransform],
         num_transforms: int = 1,
         same_on_batch: bool = False,
         p: float = 1.0,
@@ -692,7 +697,7 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
         self.num_transforms = num_transforms
         self.random_order = random_order
 
-    def _apply_mix(self, x: Tensor, seg: Optional[Tensor]) -> Tensor:
+    def _apply_mix(self, x: Tensor, seg: Tensor | None) -> Tensor:
         if self.num_transforms == 0 or len(self.transforms_list) == 0:
             return x
 
@@ -703,7 +708,7 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
         else:
             idx = torch.arange(len(self.transforms_list), device=x.device)[:k]
 
-        child_params: Dict[str, Tensor] = {}
+        child_params: dict[str, Tensor] = {}
         if seg is not None:
             child_params["seg"] = seg
 
@@ -719,10 +724,8 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
         return x
 
     @torch.no_grad()  # disable gradients for efficiency
-    def apply_transform(
-        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
-    ) -> Tensor:
-        seg = params.get("seg", None)
+    def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
+        seg = params.get("seg")
 
         if self.same_on_batch:
             return self._apply_mix(input, seg)
@@ -732,10 +735,7 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
         for i in range(batch_size):
             xi = out[i : i + 1]
             seg_i = None
-            if seg is not None and isinstance(seg, torch.Tensor) and seg.shape[0] == batch_size:
-                seg_i = seg[i : i + 1]
-            else:
-                seg_i = seg
+            seg_i = seg[i : i + 1] if seg is not None and isinstance(seg, torch.Tensor) and seg.shape[0] == batch_size else seg
             xi = self._apply_mix(xi, seg_i)
             out[i : i + 1] = xi
         return out
@@ -767,7 +767,8 @@ def pad_numpy_array(arr, shape):
 if __name__ == "__main__":
     # Example usage
     import importlib
-    import auglab.configs as configs
+
+    from auglab import configs
     from auglab.utils.image import Image, resample_nib
 
     configs_path = importlib.resources.files(configs)
@@ -856,9 +857,11 @@ if __name__ == "__main__":
     if torch.isnan(augmented_seg).any():
         raise ValueError("NaNs found in augmented segmentation.")
 
+    import os
+    import warnings
+
     import cv2
     import numpy as np
-    import warnings, sys, os
 
     warnings.simplefilter("always")
 

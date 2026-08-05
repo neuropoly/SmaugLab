@@ -27,7 +27,8 @@ Spatial conventions
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Sequence, Tuple, Union
+from collections.abc import Sequence
+from typing import Union
 
 import torch
 import torch.nn.functional as F
@@ -35,22 +36,22 @@ import torch.nn.functional as F
 Number = Union[int, float]
 
 __all__ = [
-    "to_label_map",
-    "infer_label_values",
-    "sample_gmm_parameters",
-    "labels_to_image_gmm",
-    "sample_affine_matrices",
-    "random_svf_field",
-    "warp_volume",
     "bias_field",
-    "intensity_augmentation",
     "blurring_sigma_for_downsampling",
-    "gaussian_blur_3d",
-    "sample_resolution",
-    "mimic_acquisition",
+    "convert_labels",
     "em_subdivide_labels",
     "flip_lr_with_swap",
-    "convert_labels",
+    "gaussian_blur_3d",
+    "infer_label_values",
+    "intensity_augmentation",
+    "labels_to_image_gmm",
+    "mimic_acquisition",
+    "random_svf_field",
+    "sample_affine_matrices",
+    "sample_gmm_parameters",
+    "sample_resolution",
+    "to_label_map",
+    "warp_volume",
 ]
 
 
@@ -94,8 +95,8 @@ def infer_label_values(label_map: torch.Tensor) -> torch.Tensor:
 #                       + SynthSeg.model_inputs.build_model_inputs)
 # ---------------------------------------------------------------------------
 def _draw_value(
-    prior: Optional[Union[Number, Sequence[Number], torch.Tensor]],
-    size: Tuple[int, int],
+    prior: Union[Number, Sequence[Number], torch.Tensor] | None,
+    size: tuple[int, int],
     distribution: str,
     centre: float,
     default_range: float,
@@ -140,9 +141,7 @@ def _draw_value(
             b = prior_t[1].expand(size).clone()
         elif prior_t.dim() == 2 and prior_t.shape[0] == 2:
             if prior_t.shape[1] != n_classes:
-                raise ValueError(
-                    f"Prior array has {prior_t.shape[1]} classes, expected {n_classes}."
-                )
+                raise ValueError(f"Prior array has {prior_t.shape[1]} classes, expected {n_classes}.")
             a = prior_t[0].unsqueeze(0).expand(size).clone()
             b = prior_t[1].unsqueeze(0).expand(size).clone()
         else:
@@ -168,10 +167,10 @@ def sample_gmm_parameters(
     prior_means=None,
     prior_stds=None,
     prior_distributions: str = "uniform",
-    generation_classes: Optional[Sequence[int]] = None,
-    background_label_index: Optional[int] = 0,
+    generation_classes: Sequence[int] | None = None,
+    background_label_index: int | None = 0,
     randomise_background: bool = True,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Draw per-label Gaussian means/stds for one minibatch.
 
     Mirrors ``SynthSeg.model_inputs.build_model_inputs``. With the default
@@ -196,12 +195,8 @@ def sample_gmm_parameters(
     means = torch.empty(batch, n_classes, n_channels, device=device)
     stds = torch.empty(batch, n_classes, n_channels, device=device)
     for ch in range(n_channels):
-        means[:, :, ch] = _draw_value(
-            prior_means, (batch, n_classes), prior_distributions, 125.0, 125.0, device, positive_only=True
-        )
-        stds[:, :, ch] = _draw_value(
-            prior_stds, (batch, n_classes), prior_distributions, 15.0, 15.0, device, positive_only=True
-        )
+        means[:, :, ch] = _draw_value(prior_means, (batch, n_classes), prior_distributions, 125.0, 125.0, device, positive_only=True)
+        stds[:, :, ch] = _draw_value(prior_stds, (batch, n_classes), prior_distributions, 15.0, 15.0, device, positive_only=True)
 
     # Scatter class parameters to per-label parameters.
     means_lab = means[:, classes, :]
@@ -298,6 +293,7 @@ def sample_affine_matrices(
     translation placed in the last column. Returns ``(B, 4, 4)``. The matrix is
     applied about the volume centre by :func:`warp_volume`.
     """
+
     def draw(bounds, centre):
         vec = _as_3vec(bounds, device, default=0.0)
         return centre + (2.0 * torch.rand(batch, 3, device=device) - 1.0) * vec.view(1, 3)
@@ -345,7 +341,7 @@ def sample_affine_matrices(
     return affine
 
 
-def _identity_grid(shape: Tuple[int, int, int], device: torch.device) -> torch.Tensor:
+def _identity_grid(shape: tuple[int, int, int], device: torch.device) -> torch.Tensor:
     """Voxel-coordinate identity grid in ``(i, j, k)`` order, shape ``(3, D, H, W)``."""
     d, h, w = shape
     zs = torch.arange(d, device=device, dtype=torch.float32)
@@ -355,7 +351,7 @@ def _identity_grid(shape: Tuple[int, int, int], device: torch.device) -> torch.T
     return torch.stack([ii, jj, kk], dim=0)
 
 
-def _coords_to_grid_sample(coords: torch.Tensor, shape: Tuple[int, int, int]) -> torch.Tensor:
+def _coords_to_grid_sample(coords: torch.Tensor, shape: tuple[int, int, int]) -> torch.Tensor:
     """Convert ``(B, 3, D, H, W)`` voxel coords (i,j,k) to a grid_sample grid.
 
     Output ``(B, D, H, W, 3)`` with last-dim order ``(x, y, z) = (k, j, i)``
@@ -373,8 +369,8 @@ def _coords_to_grid_sample(coords: torch.Tensor, shape: Tuple[int, int, int]) ->
 
 def warp_volume(
     volume: torch.Tensor,
-    affine: Optional[torch.Tensor] = None,
-    displacement: Optional[torch.Tensor] = None,
+    affine: torch.Tensor | None = None,
+    displacement: torch.Tensor | None = None,
     interp: str = "linear",
     center: bool = True,
     padding_mode: str = "zeros",
@@ -407,9 +403,7 @@ def warp_volume(
     if affine is not None:
         flat = coords.reshape(B, 3, -1)  # (B, 3, N)
         if center:
-            centre = torch.tensor(
-                [(D - 1) / 2.0, (H - 1) / 2.0, (W - 1) / 2.0], device=device
-            ).view(1, 3, 1)
+            centre = torch.tensor([(D - 1) / 2.0, (H - 1) / 2.0, (W - 1) / 2.0], device=device).view(1, 3, 1)
             flat = flat - centre
         linear = affine[:, :3, :3]
         translation = affine[:, :3, 3:4]
@@ -423,9 +417,7 @@ def warp_volume(
 
     sample_grid = _coords_to_grid_sample(coords, shape)
     mode = "nearest" if interp == "nearest" else "bilinear"  # 3D 'bilinear' == trilinear
-    return F.grid_sample(
-        volume, sample_grid, mode=mode, align_corners=True, padding_mode=padding_mode
-    )
+    return F.grid_sample(volume, sample_grid, mode=mode, align_corners=True, padding_mode=padding_mode)
 
 
 def _integrate_velocity(velocity: torch.Tensor, int_steps: int = 7) -> torch.Tensor:
@@ -436,7 +428,7 @@ def _integrate_velocity(velocity: torch.Tensor, int_steps: int = 7) -> torch.Ten
     yielding a diffeomorphic displacement field. ``velocity`` and the returned
     displacement are ``(B, 3, D, H, W)`` in voxel units.
     """
-    disp = velocity / (2 ** int_steps)
+    disp = velocity / (2**int_steps)
     for _ in range(int_steps):
         disp = disp + warp_volume(disp, displacement=disp, interp="linear", padding_mode="border")
     return disp
@@ -444,7 +436,7 @@ def _integrate_velocity(velocity: torch.Tensor, int_steps: int = 7) -> torch.Ten
 
 def random_svf_field(
     batch: int,
-    shape: Tuple[int, int, int],
+    shape: tuple[int, int, int],
     device: torch.device,
     nonlin_std: float = 4.0,
     nonlin_scale: float = 0.04,
@@ -460,7 +452,7 @@ def random_svf_field(
     if nonlin_std <= 0:
         return torch.zeros(batch, 3, *shape, device=device)
 
-    small = [max(2, int(math.ceil(s * nonlin_scale))) for s in shape]
+    small = [max(2, math.ceil(s * nonlin_scale)) for s in shape]
     std = torch.rand(batch, 1, 1, 1, 1, device=device) * nonlin_std
     velocity = torch.randn(batch, 3, *small, device=device) * std
     velocity = F.interpolate(velocity, size=shape, mode="trilinear", align_corners=True)
@@ -487,7 +479,7 @@ def bias_field(
         return image
     B, C, D, H, W = image.shape
     device = image.device
-    small = [max(2, int(math.ceil(s * bias_scale))) for s in (D, H, W)]
+    small = [max(2, math.ceil(s * bias_scale)) for s in (D, H, W)]
     std = torch.rand(B, 1, 1, 1, 1, device=device) * bias_field_std
     field = torch.randn(B, C, *small, device=device) * std
     field = F.interpolate(field, size=(D, H, W), mode="trilinear", align_corners=True)
@@ -535,7 +527,7 @@ def intensity_augmentation(
 def blurring_sigma_for_downsampling(
     current_res: torch.Tensor,
     downsample_res: torch.Tensor,
-    thickness: Optional[torch.Tensor] = None,
+    thickness: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Per-axis Gaussian blur sigma for a target acquisition resolution.
 
@@ -556,7 +548,7 @@ def blurring_sigma_for_downsampling(
 def _gaussian_kernel1d(sigma: float, device: torch.device) -> torch.Tensor:
     if sigma <= 0:
         return torch.tensor([1.0], device=device)
-    radius = max(1, int(math.ceil(3.0 * sigma)))
+    radius = max(1, math.ceil(3.0 * sigma))
     x = torch.arange(-radius, radius + 1, device=device, dtype=torch.float32)
     k = torch.exp(-0.5 * (x / sigma) ** 2)
     return k / k.sum()
@@ -606,7 +598,7 @@ def sample_resolution(
     max_res_aniso: float = 8.0,
     prob_iso: float = 0.1,
     prob_min: float = 0.05,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Sample a random target acquisition resolution and slice thickness.
 
     Port of ``lab2im.layers.SampleResolution`` (with ``return_thickness=True``):
@@ -641,7 +633,7 @@ def mimic_acquisition(
     image: torch.Tensor,
     current_res: torch.Tensor,
     downsample_res: torch.Tensor,
-    output_shape: Tuple[int, int, int],
+    output_shape: tuple[int, int, int],
 ) -> torch.Tensor:
     """Downsample to a target resolution, then resample to the output grid.
 
@@ -652,7 +644,7 @@ def mimic_acquisition(
     B, C, D, H, W = image.shape
     in_shape = (D, H, W)
     factor = (current_res / downsample_res).tolist()
-    down_shape = [max(1, int(round(in_shape[i] * factor[i]))) for i in range(3)]
+    down_shape = [max(1, round(in_shape[i] * factor[i])) for i in range(3)]
     x = F.interpolate(image, size=down_shape, mode="nearest")
     x = F.interpolate(x, size=tuple(output_shape), mode="trilinear", align_corners=True)
     return x
@@ -661,9 +653,7 @@ def mimic_acquisition(
 # ---------------------------------------------------------------------------
 # EM label completion for sparse label maps  (SynthSeg paper, Sec. 5.4)
 # ---------------------------------------------------------------------------
-def _em_gmm_1d(
-    x_fit: torch.Tensor, n_components: int, n_iters: int, eps: float
-) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+def _em_gmm_1d(x_fit: torch.Tensor, n_components: int, n_iters: int, eps: float) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
     """Fit a 1D Gaussian mixture by Expectation-Maximization.
 
     ``x_fit`` is a 1D tensor of intensities. Returns ``(means, vars, weights)``
@@ -691,8 +681,8 @@ def _em_gmm_1d(
             - 0.5 * (x - means.view(1, k)) ** 2 / var.view(1, k)
         )
         logp = logp - torch.logsumexp(logp, dim=1, keepdim=True)
-        resp = logp.exp()                       # (n, k)
-        nk = resp.sum(0).clamp_min(eps)         # (k,)
+        resp = logp.exp()  # (n, k)
+        nk = resp.sum(0).clamp_min(eps)  # (k,)
         weights = nk / n
         means = (resp * x).sum(0) / nk
         var = (resp * (x - means.view(1, k)) ** 2).sum(0) / nk
@@ -701,8 +691,12 @@ def _em_gmm_1d(
 
 
 def _assign_gmm(
-    x_full: torch.Tensor, means: torch.Tensor, var: torch.Tensor, weights: torch.Tensor,
-    eps: float, chunk: int = 2_000_000,
+    x_full: torch.Tensor,
+    means: torch.Tensor,
+    var: torch.Tensor,
+    weights: torch.Tensor,
+    eps: float,
+    chunk: int = 2_000_000,
 ) -> torch.Tensor:
     """Hard-assign each value in ``x_full`` to its most likely mixture component."""
     n = x_full.numel()
@@ -713,9 +707,9 @@ def _assign_gmm(
     m = means.view(1, k)
     v = var.view(1, k)
     for s in range(0, n, chunk):
-        xc = x_full[s:s + chunk].view(-1, 1)
+        xc = x_full[s : s + chunk].view(-1, 1)
         logp = logw - half_logvar - 0.5 * (xc - m) ** 2 / v
-        out[s:s + chunk] = logp.argmax(dim=1)
+        out[s : s + chunk] = logp.argmax(dim=1)
     return out
 
 
@@ -730,7 +724,7 @@ def em_subdivide_labels(
     channel: int = 0,
     same_on_batch: bool = False,
     eps: float = 1e-6,
-) -> Tuple[torch.Tensor, List[int], List[int]]:
+) -> tuple[torch.Tensor, list[int], list[int]]:
     """Subdivide each label into intensity-coherent subregions via EM (SynthSeg §5.4).
 
     Reproduces SynthSeg's handling of sparse / incomplete label maps: "we enhance
@@ -764,11 +758,11 @@ def em_subdivide_labels(
     """
     B = image.shape[0]
     device = image.device
-    ref = image[:, channel]                                   # (B, D, H, W)
-    parents = torch.unique(label_map).long().tolist()         # sorted, batch-wide
+    ref = image[:, channel]  # (B, D, H, W)
+    parents = torch.unique(label_map).long().tolist()  # sorted, batch-wide
     parent_to_idx = {p: i for i, p in enumerate(parents)}
     lo, hi = int(background_clusters_range[0]), int(background_clusters_range[1])
-    mult = max(hi, int(n_foreground_clusters)) + 1            # collision-free encoding
+    mult = max(hi, int(n_foreground_clusters)) + 1  # collision-free encoding
 
     # If the configured background label is absent (e.g. a *complete* one-hot whose
     # decoding shifted every label by +1, so the real background is no longer 0),
@@ -805,10 +799,7 @@ def em_subdivide_labels(
                 else:
                     x_fit = x
                 fit = _em_gmm_1d(x_fit, k, n_iters, eps)
-                assign = (
-                    torch.zeros(cnt, dtype=torch.long, device=device)
-                    if fit is None else _assign_gmm(x, *fit, eps=eps)
-                )
+                assign = torch.zeros(cnt, dtype=torch.long, device=device) if fit is None else _assign_gmm(x, *fit, eps=eps)
             fine[b, 0][mask] = pi * mult + assign
 
     gen_values = torch.unique(fine).long().tolist()
@@ -822,8 +813,8 @@ def em_subdivide_labels(
 def flip_lr_with_swap(
     label_map: torch.Tensor,
     flip_axis: int,
-    label_values: Optional[torch.Tensor] = None,
-    n_neutral_labels: Optional[int] = None,
+    label_values: torch.Tensor | None = None,
+    n_neutral_labels: int | None = None,
 ) -> torch.Tensor:
     """Flip the label map along ``flip_axis`` and (optionally) swap L/R labels.
 
@@ -850,8 +841,8 @@ def flip_lr_with_swap(
         return flipped
 
     neutral = values[:n_neutral_labels]
-    left = values[n_neutral_labels:n_neutral_labels + n_sided]
-    right = values[n_neutral_labels + n_sided:n_neutral_labels + 2 * n_sided]
+    left = values[n_neutral_labels : n_neutral_labels + n_sided]
+    right = values[n_neutral_labels + n_sided : n_neutral_labels + 2 * n_sided]
     source = neutral + left + right
     dest = neutral + right + left
     return convert_labels(flipped, source, dest)

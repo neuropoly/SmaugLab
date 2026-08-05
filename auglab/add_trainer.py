@@ -4,23 +4,20 @@ import shutil
 
 import nnunetv2
 
-import auglab.trainers as trainers
+from auglab import trainers
+
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="This script copies an auglab nnUNetTrainer inside the nnunet folder."
-    )
+    parser = argparse.ArgumentParser(description="This script copies an auglab nnUNetTrainer inside the nnunet folder.")
     parser.add_argument(
-        "-t", "--trainer",
+        "-t",
+        "--trainer",
         choices=["nnUNetTrainerDAExt", "nnUNetTrainerTest"],
         type=str,
         required=True,
         help="nnUNetTrainer to be copied. Choices are: nnUNetTrainerDAExt and nnUNetTrainerTest",
     )
-    parser.add_argument(
-        '--overwrite', action='store_true',
-        help='Whether to overwrite existing trainer.'
-    )
+    parser.add_argument("--overwrite", action="store_true", help="Whether to overwrite existing trainer.")
     args = parser.parse_args()
 
     # Get trainer name
@@ -29,6 +26,7 @@ def main():
 
     # Add trainer
     add_trainer(trainer_name, overwrite=overwrite)
+
 
 def add_trainer(trainer_name: str, overwrite: bool = False):
 
@@ -54,6 +52,7 @@ def add_trainer(trainer_name: str, overwrite: bool = False):
         print(f"Trainer {trainer_name} was added to {output_path}")
     else:
         print(f"Trainer {trainer_name} already exists at {output_path}. Use --overwrite to replace it.")
-    
+
+
 if __name__ == "__main__":
     main()

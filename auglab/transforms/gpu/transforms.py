@@ -1,75 +1,101 @@
-import os, json
+import json
+import os
+from typing import Any
 
-import torch.nn as nn
-import torch
 import numpy as np
-
-from auglab.transforms.gpu.base import ImageOnlyTransform
-from typing import Any, Dict, Optional, Tuple, Union, List
+import torch
 from kornia.core import Tensor
+from torch import nn
 
-from auglab.transforms.gpu.contrast import RandomConvTransformGPU, RandomGaussianNoiseGPU, RandomBrightnessGPU, RandomGammaGPU, RandomFunctionGPU, \
-RandomHistogramEqualizationGPU, RandomInverseGPU, RandomBiasFieldGPU, RandomContrastGPU, ZscoreNormalizationGPU, RandomClampGPU
-from auglab.transforms.gpu.spatial import RandomAffine3DCustom, RandomLowResTransformGPU, RandomFlipTransformGPU, RandomAcqTransformGPU, RandomCropTransformGPU
-from auglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU, RandomPALETTEGPU
+from auglab.transforms.gpu.base import AugmentationSequentialCustom, ImageOnlyTransform
+from auglab.transforms.gpu.contrast import (
+    RandomBiasFieldGPU,
+    RandomBrightnessGPU,
+    RandomClampGPU,
+    RandomContrastGPU,
+    RandomConvTransformGPU,
+    RandomFunctionGPU,
+    RandomGammaGPU,
+    RandomGaussianNoiseGPU,
+    RandomHistogramEqualizationGPU,
+    RandomInverseGPU,
+    ZscoreNormalizationGPU,
+)
 from auglab.transforms.gpu.domain_transfer import RandomDomainTransferGPU
+from auglab.transforms.gpu.fromSeg import RandomPALETTEGPU, RandomRedistributeSegGPU
+from auglab.transforms.gpu.spatial import (
+    RandomAcqTransformGPU,
+    RandomAffine3DCustom,
+    RandomCropTransformGPU,
+    RandomFlipTransformGPU,
+    RandomLowResTransformGPU,
+)
 from auglab.transforms.synthseg.transforms import RandomSynthSegGPU
-from auglab.transforms.gpu.base import AugmentationSequentialCustom
+
 
 class AugTransformsGPU(AugmentationSequentialCustom):
     """
     Module to perform data augmentation on GPU.
     """
+
     def __init__(self, json_path: str):
         # Load transform parameters from JSON
         config_path = os.path.join(json_path)
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             config = json.load(f)
 
-        if 'GPU' in config.keys():
-            self.transform_params = config['GPU']
+        if "GPU" in config.keys():
+            self.transform_params = config["GPU"]
         else:
             self.transform_params = config
 
         transforms = self._build_transforms()
-        super().__init__(*transforms, data_keys=["input", "mask"], same_on_batch=True) # Same_on_batch to ensure mask are aligned with images correctly (custom) see AugmentationSequentialOpsCustom in base.py
+        super().__init__(
+            *transforms, data_keys=["input", "mask"], same_on_batch=True
+        )  # Same_on_batch to ensure mask are aligned with images correctly (custom) see AugmentationSequentialOpsCustom in base.py
 
     def _build_transforms(self) -> list[nn.Module]:
         transforms = []
 
         # Flipping transforms
-        flip_params = self.transform_params.get('FlipTransform')
+        flip_params = self.transform_params.get("FlipTransform")
         if flip_params is not None:
-            transforms.append(RandomFlipTransformGPU(
-                flip_axis=flip_params.get('flip_axis', [0]),
-                p=flip_params.get('probability', 0),
-                same_on_batch=flip_params.get('same_on_batch', False),
-                keepdim=flip_params.get('keepdim', True)
-            ))
+            transforms.append(
+                RandomFlipTransformGPU(
+                    flip_axis=flip_params.get("flip_axis", [0]),
+                    p=flip_params.get("probability", 0),
+                    same_on_batch=flip_params.get("same_on_batch", False),
+                    keepdim=flip_params.get("keepdim", True),
+                )
+            )
 
         # Spatial transforms
-        affine_params = self.transform_params.get('AffineTransform')
+        affine_params = self.transform_params.get("AffineTransform")
         if affine_params is not None:
-            transforms.append(RandomAffine3DCustom(
-                degrees=affine_params.get('degrees', 10),
-                translate=affine_params.get('translate', [0.1, 0.1, 0.1]),
-                scale=affine_params.get('scale', [0.9, 1.1]),
-                shears=affine_params.get('shear', [-10, 10, -10, 10, -10, 10]),
-                resample=affine_params.get('resample', "bilinear"),
-                p=affine_params.get('probability', 0)
-            ))
+            transforms.append(
+                RandomAffine3DCustom(
+                    degrees=affine_params.get("degrees", 10),
+                    translate=affine_params.get("translate", [0.1, 0.1, 0.1]),
+                    scale=affine_params.get("scale", [0.9, 1.1]),
+                    shears=affine_params.get("shear", [-10, 10, -10, 10, -10, 10]),
+                    resample=affine_params.get("resample", "bilinear"),
+                    p=affine_params.get("probability", 0),
+                )
+            )
 
         # SynthSeg generative augmentation: replace the image with a GMM synthesis
         # of the segmentation (intensity-only here, so the mask stays consistent;
         # geometric transforms above deform the labels first). All SynthSeg
         # generator parameters are read straight from the config block.
-        synthseg_params = self.transform_params.get('SynthSeg')
+        synthseg_params = self.transform_params.get("SynthSeg")
         if synthseg_params is not None:
-            synthseg_kwargs = {k: v for k, v in synthseg_params.items() if k != 'probability'}
-            transforms.append(RandomSynthSegGPU(
-                p=synthseg_params.get('probability', 1.0),
-                **synthseg_kwargs,
-            ))
+            synthseg_kwargs = {k: v for k, v in synthseg_params.items() if k != "probability"}
+            transforms.append(
+                RandomSynthSegGPU(
+                    p=synthseg_params.get("probability", 1.0),
+                    **synthseg_kwargs,
+                )
+            )
 
         ## Transfer augmentations (TA)
         #########################
@@ -95,8 +121,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
 
         # Domain transfer: randomly re-render the image as another sequence/cluster (TA)
         # Accept either the class-name key or the descriptive key.
-        domain_params = self.transform_params.get('RandomDomainTransferGPU') \
-            or self.transform_params.get('DomainTransferTransform')
+        domain_params = self.transform_params.get("RandomDomainTransferGPU") or self.transform_params.get("DomainTransferTransform")
         if domain_params is not None:
             transforms.append(
                 RandomDomainTransferGPU(
@@ -123,7 +148,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             )
 
         # Inverse transform (max - pixel_value)
-        inverse_params = self.transform_params.get('InverseTransform')
+        inverse_params = self.transform_params.get("InverseTransform")
         if inverse_params is not None:
             transforms.append(
                 RandomInverseGPU(
@@ -137,7 +162,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             )
 
         # Histogram manipulations
-        histo_params = self.transform_params.get('HistogramEqualizationTransform')
+        histo_params = self.transform_params.get("HistogramEqualizationTransform")
         if histo_params is not None:
             transforms.append(
                 RandomHistogramEqualizationGPU(
@@ -151,142 +176,164 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             )
 
         # Redistribute segmentation values transform
-        redistribute_params = self.transform_params.get('RedistributeSegTransform')
+        redistribute_params = self.transform_params.get("RedistributeSegTransform")
         if redistribute_params is not None:
-            transforms.append(RandomRedistributeSegGPU(
-                in_seg=redistribute_params.get('in_seg', 0.2),
-                retain_stats=redistribute_params.get('retain_stats', False),
-                p=redistribute_params.get('probability', 0),
-                std_noise_range=redistribute_params.get('std_noise_range', [0.1, 0.3]),
-                dilation_iterations_range=redistribute_params.get('dilation_iterations_range', [1, 3]),
-            ))
+            transforms.append(
+                RandomRedistributeSegGPU(
+                    in_seg=redistribute_params.get("in_seg", 0.2),
+                    retain_stats=redistribute_params.get("retain_stats", False),
+                    p=redistribute_params.get("probability", 0),
+                    std_noise_range=redistribute_params.get("std_noise_range", [0.1, 0.3]),
+                    dilation_iterations_range=redistribute_params.get("dilation_iterations_range", [1, 3]),
+                )
+            )
 
         # Scharr filter
-        scharr_params = self.transform_params.get('ScharrTransform')
+        scharr_params = self.transform_params.get("ScharrTransform")
         if scharr_params is not None:
-            transforms.append(RandomConvTransformGPU(
-                kernel_type=scharr_params.get('kernel_type', 'Scharr'),
-                p=scharr_params.get('probability', 0),
-                in_seg=scharr_params.get('in_seg', 0.0),
-                out_seg=scharr_params.get('out_seg', 0.0),
-                mix_in_out=scharr_params.get('mix_in_out', False),
-                retain_stats=scharr_params.get('retain_stats', True),
-                absolute=scharr_params.get('absolute', True),
-                mix_prob=scharr_params.get('mix_prob', 0.0),
-            ))
+            transforms.append(
+                RandomConvTransformGPU(
+                    kernel_type=scharr_params.get("kernel_type", "Scharr"),
+                    p=scharr_params.get("probability", 0),
+                    in_seg=scharr_params.get("in_seg", 0.0),
+                    out_seg=scharr_params.get("out_seg", 0.0),
+                    mix_in_out=scharr_params.get("mix_in_out", False),
+                    retain_stats=scharr_params.get("retain_stats", True),
+                    absolute=scharr_params.get("absolute", True),
+                    mix_prob=scharr_params.get("mix_prob", 0.0),
+                )
+            )
 
         # Unsharp masking
-        unsharp_params = self.transform_params.get('UnsharpMaskTransform')
+        unsharp_params = self.transform_params.get("UnsharpMaskTransform")
         if unsharp_params is not None:
-            transforms.append(RandomConvTransformGPU(
-                kernel_type=unsharp_params.get('kernel_type', 'UnsharpMask'),
-                p=unsharp_params.get('probability', 0),
-                in_seg=unsharp_params.get('in_seg', 0.0),
-                out_seg=unsharp_params.get('out_seg', 0.0),
-                mix_in_out=unsharp_params.get('mix_in_out', False),
-                sigma=unsharp_params.get('sigma', 1.0),
-                unsharp_amount=unsharp_params.get('unsharp_amount', 1.5),
-                mix_prob=unsharp_params.get('mix_prob', 0.0),
-        ))
+            transforms.append(
+                RandomConvTransformGPU(
+                    kernel_type=unsharp_params.get("kernel_type", "UnsharpMask"),
+                    p=unsharp_params.get("probability", 0),
+                    in_seg=unsharp_params.get("in_seg", 0.0),
+                    out_seg=unsharp_params.get("out_seg", 0.0),
+                    mix_in_out=unsharp_params.get("mix_in_out", False),
+                    sigma=unsharp_params.get("sigma", 1.0),
+                    unsharp_amount=unsharp_params.get("unsharp_amount", 1.5),
+                    mix_prob=unsharp_params.get("mix_prob", 0.0),
+                )
+            )
 
         # RandomConv transform
-        randconv_params = self.transform_params.get('RandomConvTransform')
+        randconv_params = self.transform_params.get("RandomConvTransform")
         if randconv_params is not None:
-            transforms.append(RandomConvTransformGPU(
-                kernel_type=randconv_params.get('kernel_type', 'RandConv'),
-                p=randconv_params.get('probability', 0),
-                in_seg=randconv_params.get('in_seg', 0.0),
-                out_seg=randconv_params.get('out_seg', 0.0),
-                mix_in_out=randconv_params.get('mix_in_out', False),
-                retain_stats=randconv_params.get('retain_stats', False),
-                kernel_sizes=randconv_params.get('kernel_sizes', [1,3,5,7]),
-                mix_prob=randconv_params.get('mix_prob', 0.0),
-        ))
+            transforms.append(
+                RandomConvTransformGPU(
+                    kernel_type=randconv_params.get("kernel_type", "RandConv"),
+                    p=randconv_params.get("probability", 0),
+                    in_seg=randconv_params.get("in_seg", 0.0),
+                    out_seg=randconv_params.get("out_seg", 0.0),
+                    mix_in_out=randconv_params.get("mix_in_out", False),
+                    retain_stats=randconv_params.get("retain_stats", False),
+                    kernel_sizes=randconv_params.get("kernel_sizes", [1, 3, 5, 7]),
+                    mix_prob=randconv_params.get("mix_prob", 0.0),
+                )
+            )
 
         ## General enhancement (GE)
         # Clamping transform
-        clamp_params = self.transform_params.get('ClampTransform')
+        clamp_params = self.transform_params.get("ClampTransform")
         if clamp_params is not None:
-            transforms.append(RandomClampGPU(
-                max_clamp_amount=clamp_params.get('max_clamp_amount', 0.0),
-                in_seg=clamp_params.get('in_seg', 0.0),
-                out_seg=clamp_params.get('out_seg', 0.0),
-                mix_in_out=clamp_params.get('mix_in_out', False),
-                retain_stats=clamp_params.get('retain_stats', False),
-                p=clamp_params.get('probability', 0),
-            ))
+            transforms.append(
+                RandomClampGPU(
+                    max_clamp_amount=clamp_params.get("max_clamp_amount", 0.0),
+                    in_seg=clamp_params.get("in_seg", 0.0),
+                    out_seg=clamp_params.get("out_seg", 0.0),
+                    mix_in_out=clamp_params.get("mix_in_out", False),
+                    retain_stats=clamp_params.get("retain_stats", False),
+                    p=clamp_params.get("probability", 0),
+                )
+            )
 
         # Noise transforms
-        noise_params = self.transform_params.get('GaussianNoiseTransform')
+        noise_params = self.transform_params.get("GaussianNoiseTransform")
         if noise_params is not None:
-            transforms.append(RandomGaussianNoiseGPU(
-                mean=noise_params.get('mean', 0.0),
-                std=noise_params.get('std', 1.0),
-                in_seg=noise_params.get('in_seg', 0.0),
-                out_seg=noise_params.get('out_seg', 0.0),
-                mix_in_out=noise_params.get('mix_in_out', False),
-                p=noise_params.get('probability', 0),
-            ))
+            transforms.append(
+                RandomGaussianNoiseGPU(
+                    mean=noise_params.get("mean", 0.0),
+                    std=noise_params.get("std", 1.0),
+                    in_seg=noise_params.get("in_seg", 0.0),
+                    out_seg=noise_params.get("out_seg", 0.0),
+                    mix_in_out=noise_params.get("mix_in_out", False),
+                    p=noise_params.get("probability", 0),
+                )
+            )
 
         # Gaussian blur
-        gaussianblur_params = self.transform_params.get('GaussianBlurTransform')
+        gaussianblur_params = self.transform_params.get("GaussianBlurTransform")
         if gaussianblur_params is not None:
-            transforms.append(RandomConvTransformGPU(
-                kernel_type=gaussianblur_params.get('kernel_type', 'GaussianBlur'),
-                in_seg=gaussianblur_params.get('in_seg', 0.0),
-                out_seg=gaussianblur_params.get('out_seg', 0.0),
-                mix_in_out=gaussianblur_params.get('mix_in_out', False),
-                p=gaussianblur_params.get('probability', 0),
-                sigma=gaussianblur_params.get('sigma', 1.0),
-            ))
+            transforms.append(
+                RandomConvTransformGPU(
+                    kernel_type=gaussianblur_params.get("kernel_type", "GaussianBlur"),
+                    in_seg=gaussianblur_params.get("in_seg", 0.0),
+                    out_seg=gaussianblur_params.get("out_seg", 0.0),
+                    mix_in_out=gaussianblur_params.get("mix_in_out", False),
+                    p=gaussianblur_params.get("probability", 0),
+                    sigma=gaussianblur_params.get("sigma", 1.0),
+                )
+            )
 
         # Brightness transforms
-        brightness_params = self.transform_params.get('BrightnessTransform')
+        brightness_params = self.transform_params.get("BrightnessTransform")
         if brightness_params is not None:
-            transforms.append(RandomBrightnessGPU(
-                brightness_range=brightness_params.get('brightness_range', [0.5, 1.5]),
-                in_seg=brightness_params.get('in_seg', 0.0),
-                out_seg=brightness_params.get('out_seg', 0.0),
-                mix_in_out=brightness_params.get('mix_in_out', False),
-                p=brightness_params.get('probability', 0),
-            ))
+            transforms.append(
+                RandomBrightnessGPU(
+                    brightness_range=brightness_params.get("brightness_range", [0.5, 1.5]),
+                    in_seg=brightness_params.get("in_seg", 0.0),
+                    out_seg=brightness_params.get("out_seg", 0.0),
+                    mix_in_out=brightness_params.get("mix_in_out", False),
+                    p=brightness_params.get("probability", 0),
+                )
+            )
 
         # Gamma transforms
-        gamma_params = self.transform_params.get('GammaTransform')
+        gamma_params = self.transform_params.get("GammaTransform")
         if gamma_params is not None:
-            transforms.append(RandomGammaGPU(
-                gamma_range=gamma_params.get('gamma_range', [0.7, 1.5]),
-                p=gamma_params.get('probability', 0),
-                invert_image=False,
-                in_seg=gamma_params.get('in_seg', 0.0),
-                out_seg=gamma_params.get('out_seg', 0.0),
-                mix_in_out=gamma_params.get('mix_in_out', False),
-                retain_stats=gamma_params.get('retain_stats', False),
-            ))
+            transforms.append(
+                RandomGammaGPU(
+                    gamma_range=gamma_params.get("gamma_range", [0.7, 1.5]),
+                    p=gamma_params.get("probability", 0),
+                    invert_image=False,
+                    in_seg=gamma_params.get("in_seg", 0.0),
+                    out_seg=gamma_params.get("out_seg", 0.0),
+                    mix_in_out=gamma_params.get("mix_in_out", False),
+                    retain_stats=gamma_params.get("retain_stats", False),
+                )
+            )
 
-        inv_gamma_params = self.transform_params.get('InvGammaTransform')
+        inv_gamma_params = self.transform_params.get("InvGammaTransform")
         if inv_gamma_params is not None:
-            transforms.append(RandomGammaGPU(
-                gamma_range=inv_gamma_params.get('gamma_range', [0.7, 1.5]),
-                p=inv_gamma_params.get('probability', 0),
-                in_seg=inv_gamma_params.get('in_seg', 0.0),
-                out_seg=inv_gamma_params.get('out_seg', 0.0),
-                mix_in_out=inv_gamma_params.get('mix_in_out', False),
-                invert_image=True,
-                retain_stats=inv_gamma_params.get('retain_stats', False),
-            ))
+            transforms.append(
+                RandomGammaGPU(
+                    gamma_range=inv_gamma_params.get("gamma_range", [0.7, 1.5]),
+                    p=inv_gamma_params.get("probability", 0),
+                    in_seg=inv_gamma_params.get("in_seg", 0.0),
+                    out_seg=inv_gamma_params.get("out_seg", 0.0),
+                    mix_in_out=inv_gamma_params.get("mix_in_out", False),
+                    invert_image=True,
+                    retain_stats=inv_gamma_params.get("retain_stats", False),
+                )
+            )
 
         # nnUNetV2 Contrast transforms
-        contrast_params = self.transform_params.get('ContrastTransform')
+        contrast_params = self.transform_params.get("ContrastTransform")
         if contrast_params is not None:
-            transforms.append(RandomContrastGPU(
-                contrast_range=contrast_params.get('contrast_range', [0.75, 1.25]),
-                p=contrast_params.get('probability', 0),
-                in_seg=contrast_params.get('in_seg', 0.0),
-                out_seg=contrast_params.get('out_seg', 0.0),
-                mix_in_out=contrast_params.get('mix_in_out', False),
-                retain_stats=contrast_params.get('retain_stats', False)
-            ))
+            transforms.append(
+                RandomContrastGPU(
+                    contrast_range=contrast_params.get("contrast_range", [0.75, 1.25]),
+                    p=contrast_params.get("probability", 0),
+                    in_seg=contrast_params.get("in_seg", 0.0),
+                    out_seg=contrast_params.get("out_seg", 0.0),
+                    mix_in_out=contrast_params.get("mix_in_out", False),
+                    retain_stats=contrast_params.get("retain_stats", False),
+                )
+            )
 
         # Apply functions
         func_list = [
@@ -294,67 +341,76 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             torch.sqrt,
             torch.sin,
             torch.exp,
-            lambda x: 1/(1 + torch.exp(-x)),
+            lambda x: 1 / (1 + torch.exp(-x)),
         ]
-        function_params = self.transform_params.get('FunctionTransform')
+        function_params = self.transform_params.get("FunctionTransform")
         if function_params is not None:
             for func in func_list:
-                transforms.append(RandomFunctionGPU(
-                    func=func,
-                    p=function_params.get('probability', 0),
-                    in_seg=function_params.get('in_seg', 0.0),
-                    out_seg=function_params.get('out_seg', 0.0),
-                    mix_in_out=function_params.get('mix_in_out', False),
-                    retain_stats=function_params.get('retain_stats', False),
-            ))
+                transforms.append(
+                    RandomFunctionGPU(
+                        func=func,
+                        p=function_params.get("probability", 0),
+                        in_seg=function_params.get("in_seg", 0.0),
+                        out_seg=function_params.get("out_seg", 0.0),
+                        mix_in_out=function_params.get("mix_in_out", False),
+                        retain_stats=function_params.get("retain_stats", False),
+                    )
+                )
 
         # Shape transforms (Cropping and Simulating low resolution)
-        lowres_params = self.transform_params.get('SimulateLowResTransform')
+        lowres_params = self.transform_params.get("SimulateLowResTransform")
         if lowres_params is not None:
-            transforms.append(RandomLowResTransformGPU(
-                p=lowres_params.get('probability', 0),
-                scale=lowres_params.get('scale', [0.3, 1.0]),
-                same_on_batch=lowres_params.get('same_on_batch', False)
-        ))
+            transforms.append(
+                RandomLowResTransformGPU(
+                    p=lowres_params.get("probability", 0),
+                    scale=lowres_params.get("scale", [0.3, 1.0]),
+                    same_on_batch=lowres_params.get("same_on_batch", False),
+                )
+            )
 
-        acq_params = self.transform_params.get('AcqTransform')
+        acq_params = self.transform_params.get("AcqTransform")
         if acq_params is not None:
-            transforms.append(RandomAcqTransformGPU(
-                p=acq_params.get('probability', 0),
-                scale=acq_params.get('scale', [0.3, 1.0]),
-                one_dim=True,
-                same_on_batch=acq_params.get('same_on_batch', False)
-        ))
+            transforms.append(
+                RandomAcqTransformGPU(
+                    p=acq_params.get("probability", 0),
+                    scale=acq_params.get("scale", [0.3, 1.0]),
+                    one_dim=True,
+                    same_on_batch=acq_params.get("same_on_batch", False),
+                )
+            )
 
-        crop_params = self.transform_params.get('CropTransform')
+        crop_params = self.transform_params.get("CropTransform")
         if crop_params is not None:
-            transforms.append(RandomCropTransformGPU(
-                p=crop_params.get('probability', 0),
-                crop=crop_params.get('crop', [1.0, 1.0]),
-                pos=crop_params.get('pos', [0.0, 1.0]),
-                same_on_batch=acq_params.get('same_on_batch', False)
-        ))
+            transforms.append(
+                RandomCropTransformGPU(
+                    p=crop_params.get("probability", 0),
+                    crop=crop_params.get("crop", [1.0, 1.0]),
+                    pos=crop_params.get("pos", [0.0, 1.0]),
+                    same_on_batch=acq_params.get("same_on_batch", False),
+                )
+            )
 
         # Bias field artifact
-        bias_field_params = self.transform_params.get('BiasFieldTransform')
+        bias_field_params = self.transform_params.get("BiasFieldTransform")
         if bias_field_params is not None:
-            transforms.append(RandomBiasFieldGPU(
-                p=bias_field_params.get('probability', 0),
-                in_seg=bias_field_params.get('in_seg', 0.0),
-                out_seg=bias_field_params.get('out_seg', 0.0),
-                mix_in_out=bias_field_params.get('mix_in_out', False),
-                retain_stats=bias_field_params.get('retain_stats', False),
-                coefficients=bias_field_params.get('coefficients', 0.5),
-            ))
+            transforms.append(
+                RandomBiasFieldGPU(
+                    p=bias_field_params.get("probability", 0),
+                    in_seg=bias_field_params.get("in_seg", 0.0),
+                    out_seg=bias_field_params.get("out_seg", 0.0),
+                    mix_in_out=bias_field_params.get("mix_in_out", False),
+                    retain_stats=bias_field_params.get("retain_stats", False),
+                    coefficients=bias_field_params.get("coefficients", 0.5),
+                )
+            )
 
         ## Random Z-score normalization
-        zscore_params = self.transform_params.get('ZscoreNormalizationTransform')
+        zscore_params = self.transform_params.get("ZscoreNormalizationTransform")
         if zscore_params is not None:
-            transforms.append(ZscoreNormalizationGPU(
-                p=zscore_params.get('probability', 0)
-            ))
+            transforms.append(ZscoreNormalizationGPU(p=zscore_params.get("probability", 0)))
 
         return transforms
+
 
 class RandomChooseXTransformsGPU(ImageOnlyTransform):
     """Randomly choose X transforms to apply from a given list of ImageOnlyTransform transforms (GPU version).
@@ -372,7 +428,7 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
 
     def __init__(
         self,
-        transforms_list: List[ImageOnlyTransform],
+        transforms_list: list[ImageOnlyTransform],
         num_transforms: int = 1,
         same_on_batch: bool = False,
         p: float = 1.0,
@@ -385,7 +441,7 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
         self.transforms_list = nn.ModuleList(transforms_list)
         self.num_transforms = num_transforms
 
-    def _apply_mix(self, x: Tensor, seg: Optional[Tensor]) -> Tensor:
+    def _apply_mix(self, x: Tensor, seg: Tensor | None) -> Tensor:
         if self.num_transforms == 0 or len(self.transforms_list) == 0:
             return x
 
@@ -393,7 +449,7 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
         # sample without replacement
         idx = torch.randperm(len(self.transforms_list), device=x.device)[:k]
 
-        child_params: Dict[str, Tensor] = {}
+        child_params: dict[str, Tensor] = {}
         if seg is not None:
             child_params["seg"] = seg
 
@@ -402,19 +458,15 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
             if torch.rand(1, device=x.device, dtype=x.dtype) > t.p:
                 continue
             if not hasattr(t, "apply_transform"):
-                raise TypeError(
-                    f"All transforms must implement apply_transform like ImageOnlyTransform. Got {type(t)}"
-                )
+                raise TypeError(f"All transforms must implement apply_transform like ImageOnlyTransform. Got {type(t)}")
             # Most contrast transforms perform their random sampling inside apply_transform.
             t_flags = getattr(t, "flags", {})
             x = t.apply_transform(x, child_params, t_flags, transform=None)
         return x
 
     @torch.no_grad()  # disable gradients for efficiency
-    def apply_transform(
-        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
-    ) -> Tensor:
-        seg = params.get("seg", None)
+    def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
+        seg = params.get("seg")
 
         if self.same_on_batch:
             return self._apply_mix(input, seg)
@@ -424,13 +476,11 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
         for i in range(batch_size):
             xi = out[i : i + 1]
             seg_i = None
-            if seg is not None and isinstance(seg, torch.Tensor) and seg.shape[0] == batch_size:
-                seg_i = seg[i : i + 1]
-            else:
-                seg_i = seg
+            seg_i = seg[i : i + 1] if seg is not None and isinstance(seg, torch.Tensor) and seg.shape[0] == batch_size else seg
             xi = self._apply_mix(xi, seg_i)
             out[i : i + 1] = xi
         return out
+
 
 def normalize(arr: np.ndarray) -> np.ndarray:
     """
@@ -441,19 +491,25 @@ def normalize(arr: np.ndarray) -> np.ndarray:
     normalized_arr = (arr - min_val) / (max_val - min_val + 1e-8)
     return normalized_arr
 
+
 def pad_numpy_array(arr, shape):
     """
     Pad a numpy array to the desired shape with zeros.
     """
     # Calculate padding needed for each dimension
-    pad_width = [(max(0, shape[i] - arr.shape[i]) // 2, max(0, shape[i] - arr.shape[i]) - max(0, shape[i] - arr.shape[i]) // 2) for i in range(len(shape))]
-    padded_arr = np.pad(arr, pad_width, mode='constant', constant_values=0)
+    pad_width = [
+        (max(0, shape[i] - arr.shape[i]) // 2, max(0, shape[i] - arr.shape[i]) - max(0, shape[i] - arr.shape[i]) // 2)
+        for i in range(len(shape))
+    ]
+    padded_arr = np.pad(arr, pad_width, mode="constant", constant_values=0)
     return padded_arr
+
 
 if __name__ == "__main__":
     # Example usage
     import importlib
-    import auglab.configs as configs
+
+    from auglab import configs
     from auglab.utils.image import Image, resample_nib
 
     configs_path = importlib.resources.files(configs)
@@ -461,24 +517,24 @@ if __name__ == "__main__":
     augmentor = AugTransformsGPU(json_path)
 
     # Load images and masks tensors
-    img_path = '/home/ge.polymtl.ca/p118739/data/datasets/data-multi-subject/sub-amu02/anat/sub-amu02_T1w.nii.gz'
-    img = Image(img_path).change_orientation('RSP')
-    img = resample_nib(img, new_size=[1,1,1], new_size_type='mm', interpolation='linear')
+    img_path = "/home/ge.polymtl.ca/p118739/data/datasets/data-multi-subject/sub-amu02/anat/sub-amu02_T1w.nii.gz"
+    img = Image(img_path).change_orientation("RSP")
+    img = resample_nib(img, new_size=[1, 1, 1], new_size_type="mm", interpolation="linear")
     img_tensor = torch.from_numpy(img.data.copy()).to(torch.float32)
 
-    seg_path = '/home/ge.polymtl.ca/p118739/data/datasets/data-multi-subject/derivatives/labels/sub-amu02/anat/sub-amu02_T1w_label-spine_dseg.nii.gz'
-    seg = Image(seg_path).change_orientation('RSP')
-    seg = resample_nib(seg, new_size=[1,1,1], new_size_type='mm', interpolation='nn')
+    seg_path = "/home/ge.polymtl.ca/p118739/data/datasets/data-multi-subject/derivatives/labels/sub-amu02/anat/sub-amu02_T1w_label-spine_dseg.nii.gz"
+    seg = Image(seg_path).change_orientation("RSP")
+    seg = resample_nib(seg, new_size=[1, 1, 1], new_size_type="mm", interpolation="nn")
     seg_tensor_all = torch.from_numpy(seg.data.copy())
-    
-    img2_path = '/home/ge.polymtl.ca/p118739/data/datasets/spider-challenge-2023/sub-002/anat/sub-002_acq-lowresSag_T2w.nii.gz'
-    img2 = Image(img2_path).change_orientation('RSP')
-    img2 = resample_nib(img2, new_size=[1,1,1], new_size_type='mm', interpolation='linear')
+
+    img2_path = "/home/ge.polymtl.ca/p118739/data/datasets/spider-challenge-2023/sub-002/anat/sub-002_acq-lowresSag_T2w.nii.gz"
+    img2 = Image(img2_path).change_orientation("RSP")
+    img2 = resample_nib(img2, new_size=[1, 1, 1], new_size_type="mm", interpolation="linear")
     img2_tensor = torch.from_numpy(img2.data.copy()).to(torch.float32)
 
-    seg2_path = '/home/ge.polymtl.ca/p118739/data/datasets/spider-challenge-2023/derivatives/labels/sub-002/anat/sub-002_acq-lowresSag_T2w_label-spine_dseg.nii.gz'
-    seg2 = Image(seg2_path).change_orientation('RSP')
-    seg2 = resample_nib(seg2, new_size=[1,1,1], new_size_type='mm', interpolation='nn')
+    seg2_path = "/home/ge.polymtl.ca/p118739/data/datasets/spider-challenge-2023/derivatives/labels/sub-002/anat/sub-002_acq-lowresSag_T2w_label-spine_dseg.nii.gz"
+    seg2 = Image(seg2_path).change_orientation("RSP")
+    seg2 = resample_nib(seg2, new_size=[1, 1, 1], new_size_type="mm", interpolation="nn")
     seg2_tensor_all = torch.from_numpy(seg2.data.copy())
 
     # Combine two images to same size
@@ -488,7 +544,7 @@ if __name__ == "__main__":
         size2 = img2_tensor.shape[dim]
         min_size = min(size1, size2)
         new_shape.append(min_size)
-    
+
     new_img_tensor = torch.zeros(new_shape)
     new_img2_tensor = torch.zeros(new_shape)
     new_seg_tensor_all = torch.zeros(new_shape)
@@ -496,25 +552,31 @@ if __name__ == "__main__":
 
     gap = (torch.tensor(img_tensor.shape) - torch.tensor(new_shape)) // 2
     gap2 = (torch.tensor(img2_tensor.shape) - torch.tensor(new_shape)) // 2
-    new_img_tensor = img_tensor[gap[0]:gap[0]+new_shape[0], gap[1]:gap[1]+new_shape[1], gap[2]:gap[2]+new_shape[2]]
-    new_img2_tensor = img2_tensor[gap2[0]:gap2[0]+new_shape[0], gap2[1]:gap2[1]+new_shape[1], gap2[2]:gap2[2]+new_shape[2]]
-    new_seg_tensor_all = seg_tensor_all[gap[0]:gap[0]+new_shape[0], gap[1]:gap[1]+new_shape[1], gap[2]:gap[2]+new_shape[2]]
-    new_seg2_tensor_all = seg2_tensor_all[gap2[0]:gap2[0]+new_shape[0], gap2[1]:gap2[1]+new_shape[1], gap2[2]:gap2[2]+new_shape[2]]
+    new_img_tensor = img_tensor[gap[0] : gap[0] + new_shape[0], gap[1] : gap[1] + new_shape[1], gap[2] : gap[2] + new_shape[2]]
+    new_img2_tensor = img2_tensor[gap2[0] : gap2[0] + new_shape[0], gap2[1] : gap2[1] + new_shape[1], gap2[2] : gap2[2] + new_shape[2]]
+    new_seg_tensor_all = seg_tensor_all[gap[0] : gap[0] + new_shape[0], gap[1] : gap[1] + new_shape[1], gap[2] : gap[2] + new_shape[2]]
+    new_seg2_tensor_all = seg2_tensor_all[
+        gap2[0] : gap2[0] + new_shape[0], gap2[1] : gap2[1] + new_shape[1], gap2[2] : gap2[2] + new_shape[2]
+    ]
 
     # Add segmentation values to different channels
     seg_tensor = torch.zeros((1, 5, *new_seg_tensor_all.shape))
     for i, value in enumerate([12, 13, 14, 15, 16]):
-        seg_tensor[0, i] = (new_seg_tensor_all == value)
-    
+        seg_tensor[0, i] = new_seg_tensor_all == value
+
     seg2_tensor = torch.zeros((1, 5, *new_seg2_tensor_all.shape))
     for i, value in enumerate([50, 45, 44, 43, 42]):
-        seg2_tensor[0, i] = (new_seg2_tensor_all == value)
+        seg2_tensor[0, i] = new_seg2_tensor_all == value
 
     # Format tensors to match expected input shape (B, C, D, H, W)
-    img_tensor = torch.cat([new_img_tensor.unsqueeze(0), new_seg_tensor_all.bool().int().unsqueeze(0)], dim=0).unsqueeze(0)  # Add batch dimension and second channel
-    img2_tensor = torch.cat([new_img2_tensor.unsqueeze(0), new_seg2_tensor_all.bool().int().unsqueeze(0)], dim=0).unsqueeze(0)  # Add batch dimension and second channel
+    img_tensor = torch.cat([new_img_tensor.unsqueeze(0), new_seg_tensor_all.bool().int().unsqueeze(0)], dim=0).unsqueeze(
+        0
+    )  # Add batch dimension and second channel
+    img2_tensor = torch.cat([new_img2_tensor.unsqueeze(0), new_seg2_tensor_all.bool().int().unsqueeze(0)], dim=0).unsqueeze(
+        0
+    )  # Add batch dimension and second channel
 
-    # Add batch 
+    # Add batch
     img_tensor = torch.cat([img_tensor, img2_tensor], dim=0)
     seg_tensor = torch.cat([seg_tensor, seg2_tensor], dim=0)
 
@@ -535,10 +597,13 @@ if __name__ == "__main__":
         raise ValueError("NaNs found in augmented image.")
     if torch.isnan(augmented_seg).any():
         raise ValueError("NaNs found in augmented segmentation.")
-    
+
+    import os
+    import warnings
+
     import cv2
     import numpy as np
-    import warnings, sys, os
+
     warnings.simplefilter("always")
 
     # Convert tensors to numpy arrays
@@ -551,25 +616,95 @@ if __name__ == "__main__":
     seg_tensor_np = np.sum(seg_tensor_np, axis=1)
     augmented_seg_np = np.sum(augmented_seg_np, axis=1)
 
-    pad_shape = 2*(np.max(img_tensor_np.shape[2:]),)
+    pad_shape = 2 * (np.max(img_tensor_np.shape[2:]),)
 
     # Combine tensors into single output for visualization
-    os.makedirs('img', exist_ok=True)
-    img_line = np.concatenate([normalize(pad_numpy_array(img_tensor_np[0, 0, img_tensor_np.shape[2] // 2], pad_shape)), normalize(pad_numpy_array(img_tensor_np[0, 0, :, :, img_tensor_np.shape[4] // 2], pad_shape)), normalize(pad_numpy_array(img_tensor_np[0, 0, :, img_tensor_np.shape[3] // 2, :], pad_shape))], axis=1)
-    augmented_img_line = np.concatenate([normalize(pad_numpy_array(augmented_img_np[0, 0, img_tensor_np.shape[2] // 2], pad_shape)), normalize(pad_numpy_array(augmented_img_np[0, 0, :, :, img_tensor_np.shape[4] // 2], pad_shape)), normalize(pad_numpy_array(augmented_img_np[0, 0, :, img_tensor_np.shape[3] // 2, :], pad_shape))], axis=1)
-    seg_line = np.concatenate([normalize(pad_numpy_array(seg_tensor_np[0, img_tensor_np.shape[2] // 2], pad_shape)), normalize(pad_numpy_array(seg_tensor_np[0, :, :, img_tensor_np.shape[4] // 2], pad_shape)), normalize(pad_numpy_array(seg_tensor_np[0, :, img_tensor_np.shape[3] // 2, :], pad_shape))], axis=1)
-    augmented_seg_line = np.concatenate([normalize(pad_numpy_array(augmented_seg_np[0, img_tensor_np.shape[2] // 2], pad_shape)), normalize(pad_numpy_array(augmented_seg_np[0, :, :, img_tensor_np.shape[4] // 2], pad_shape)), normalize(pad_numpy_array(augmented_seg_np[0, :, img_tensor_np.shape[3] // 2, :], pad_shape))], axis=1)
-    not_augmented_channel_line = np.concatenate([normalize(pad_numpy_array(augmented_img_np[0, 1, img_tensor_np.shape[2] // 2], pad_shape)), normalize(pad_numpy_array(augmented_img_np[0, 1, :, :, img_tensor_np.shape[4] // 2], pad_shape)), normalize(pad_numpy_array(augmented_img_np[0, 1, :, img_tensor_np.shape[3] // 2, :], pad_shape))], axis=1)
+    os.makedirs("img", exist_ok=True)
+    img_line = np.concatenate(
+        [
+            normalize(pad_numpy_array(img_tensor_np[0, 0, img_tensor_np.shape[2] // 2], pad_shape)),
+            normalize(pad_numpy_array(img_tensor_np[0, 0, :, :, img_tensor_np.shape[4] // 2], pad_shape)),
+            normalize(pad_numpy_array(img_tensor_np[0, 0, :, img_tensor_np.shape[3] // 2, :], pad_shape)),
+        ],
+        axis=1,
+    )
+    augmented_img_line = np.concatenate(
+        [
+            normalize(pad_numpy_array(augmented_img_np[0, 0, img_tensor_np.shape[2] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_img_np[0, 0, :, :, img_tensor_np.shape[4] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_img_np[0, 0, :, img_tensor_np.shape[3] // 2, :], pad_shape)),
+        ],
+        axis=1,
+    )
+    seg_line = np.concatenate(
+        [
+            normalize(pad_numpy_array(seg_tensor_np[0, img_tensor_np.shape[2] // 2], pad_shape)),
+            normalize(pad_numpy_array(seg_tensor_np[0, :, :, img_tensor_np.shape[4] // 2], pad_shape)),
+            normalize(pad_numpy_array(seg_tensor_np[0, :, img_tensor_np.shape[3] // 2, :], pad_shape)),
+        ],
+        axis=1,
+    )
+    augmented_seg_line = np.concatenate(
+        [
+            normalize(pad_numpy_array(augmented_seg_np[0, img_tensor_np.shape[2] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_seg_np[0, :, :, img_tensor_np.shape[4] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_seg_np[0, :, img_tensor_np.shape[3] // 2, :], pad_shape)),
+        ],
+        axis=1,
+    )
+    not_augmented_channel_line = np.concatenate(
+        [
+            normalize(pad_numpy_array(augmented_img_np[0, 1, img_tensor_np.shape[2] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_img_np[0, 1, :, :, img_tensor_np.shape[4] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_img_np[0, 1, :, img_tensor_np.shape[3] // 2, :], pad_shape)),
+        ],
+        axis=1,
+    )
     combined_img = np.concatenate([img_line, seg_line, augmented_img_line, augmented_seg_line, not_augmented_channel_line], axis=0)
-    cv2.imwrite('img/combined.png', combined_img*255)
+    cv2.imwrite("img/combined.png", combined_img * 255)
 
-    img_line2 = np.concatenate([normalize(pad_numpy_array(img_tensor_np[1, 0, img_tensor_np.shape[2] // 2], pad_shape)), normalize(pad_numpy_array(img_tensor_np[1, 0, :, :, img_tensor_np.shape[4] // 2], pad_shape)), normalize(pad_numpy_array(img_tensor_np[1, 0, :, img_tensor_np.shape[3] // 2, :], pad_shape))], axis=1)
-    augmented_img_line2 = np.concatenate([normalize(pad_numpy_array(augmented_img_np[1, 0, img_tensor_np.shape[2] // 2], pad_shape)), normalize(pad_numpy_array(augmented_img_np[1, 0, :, :, img_tensor_np.shape[4] // 2], pad_shape)), normalize(pad_numpy_array(augmented_img_np[1, 0, :, img_tensor_np.shape[3] // 2, :], pad_shape))], axis=1)
-    seg_line2 = np.concatenate([normalize(pad_numpy_array(seg_tensor_np[1, img_tensor_np.shape[2] // 2], pad_shape)), normalize(pad_numpy_array(seg_tensor_np[1, :, :, img_tensor_np.shape[4] // 2], pad_shape)), normalize(pad_numpy_array(seg_tensor_np[1, :, img_tensor_np.shape[3] // 2, :], pad_shape))], axis=1)
-    augmented_seg_line2 = np.concatenate([normalize(pad_numpy_array(augmented_seg_np[1, img_tensor_np.shape[2] // 2], pad_shape)), normalize(pad_numpy_array(augmented_seg_np[1, :, :, img_tensor_np.shape[4] // 2], pad_shape)), normalize(pad_numpy_array(augmented_seg_np[1, :, img_tensor_np.shape[3] // 2, :], pad_shape))], axis=1)
-    not_augmented_channel_line2 = np.concatenate([normalize(pad_numpy_array(augmented_img_np[1, 1, img_tensor_np.shape[2] // 2], pad_shape)), normalize(pad_numpy_array(augmented_img_np[1, 1, :, :, img_tensor_np.shape[4] // 2], pad_shape)), normalize(pad_numpy_array(augmented_img_np[1, 1, :, img_tensor_np.shape[3] // 2, :], pad_shape))], axis=1)
+    img_line2 = np.concatenate(
+        [
+            normalize(pad_numpy_array(img_tensor_np[1, 0, img_tensor_np.shape[2] // 2], pad_shape)),
+            normalize(pad_numpy_array(img_tensor_np[1, 0, :, :, img_tensor_np.shape[4] // 2], pad_shape)),
+            normalize(pad_numpy_array(img_tensor_np[1, 0, :, img_tensor_np.shape[3] // 2, :], pad_shape)),
+        ],
+        axis=1,
+    )
+    augmented_img_line2 = np.concatenate(
+        [
+            normalize(pad_numpy_array(augmented_img_np[1, 0, img_tensor_np.shape[2] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_img_np[1, 0, :, :, img_tensor_np.shape[4] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_img_np[1, 0, :, img_tensor_np.shape[3] // 2, :], pad_shape)),
+        ],
+        axis=1,
+    )
+    seg_line2 = np.concatenate(
+        [
+            normalize(pad_numpy_array(seg_tensor_np[1, img_tensor_np.shape[2] // 2], pad_shape)),
+            normalize(pad_numpy_array(seg_tensor_np[1, :, :, img_tensor_np.shape[4] // 2], pad_shape)),
+            normalize(pad_numpy_array(seg_tensor_np[1, :, img_tensor_np.shape[3] // 2, :], pad_shape)),
+        ],
+        axis=1,
+    )
+    augmented_seg_line2 = np.concatenate(
+        [
+            normalize(pad_numpy_array(augmented_seg_np[1, img_tensor_np.shape[2] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_seg_np[1, :, :, img_tensor_np.shape[4] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_seg_np[1, :, img_tensor_np.shape[3] // 2, :], pad_shape)),
+        ],
+        axis=1,
+    )
+    not_augmented_channel_line2 = np.concatenate(
+        [
+            normalize(pad_numpy_array(augmented_img_np[1, 1, img_tensor_np.shape[2] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_img_np[1, 1, :, :, img_tensor_np.shape[4] // 2], pad_shape)),
+            normalize(pad_numpy_array(augmented_img_np[1, 1, :, img_tensor_np.shape[3] // 2, :], pad_shape)),
+        ],
+        axis=1,
+    )
     combined_img2 = np.concatenate([img_line2, seg_line2, augmented_img_line2, augmented_seg_line2, not_augmented_channel_line2], axis=0)
-    cv2.imwrite('img/combined2.png', combined_img2*255)
+    cv2.imwrite("img/combined2.png", combined_img2 * 255)
 
     # cv2.imwrite('img/orig_img.png', normalize(pad_numpy_array(img_tensor_np[1, 0, img_tensor_np.shape[2] // 2], pad_shape))*255)
     # cv2.imwrite('img/aug_img.png', normalize(pad_numpy_array(augmented_img_np[1, 0, img_tensor_np.shape[2] // 2], pad_shape))*255)

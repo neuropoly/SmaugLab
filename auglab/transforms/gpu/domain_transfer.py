@@ -35,26 +35,22 @@ configs are unchanged):
 """
 
 import math
+from typing import Any
 
 import numpy as np
 import torch
+from kornia.core import Tensor
 from torch.distributions import Dirichlet
 from torch.nn import functional as F
-from typing import Any, Dict, List, Optional, Tuple
-
-from kornia.core import Tensor
 
 from auglab.transforms.gpu.base import ImageOnlyTransform
 
 # Default transfer LUT bank (built by embeddaug/analysis/playground/build_transfer_bank.py).
-DEFAULT_BANK_PATH = (
-    "/DATA/NAS/ongoing_projects/hendrik/nathan-transferaug/"
-    "embeddaug/analysis/playground/results/domain_transfer_bank.npz"
-)
+DEFAULT_BANK_PATH = "/DATA/NAS/ongoing_projects/hendrik/nathan-transferaug/embeddaug/analysis/playground/results/domain_transfer_bank.npz"
 
 
 def _gaussian_kernel1d(sigma: float, device, dtype) -> torch.Tensor:
-    radius = max(1, int(round(3.0 * sigma)))
+    radius = max(1, round(3.0 * sigma))
     x = torch.arange(-radius, radius + 1, device=device, dtype=dtype)
     k = torch.exp(-0.5 * (x / sigma) ** 2)
     return k / k.sum()
@@ -68,9 +64,12 @@ def _gaussian_blur3d(x: torch.Tensor, sigma: float) -> torch.Tensor:
     k = _gaussian_kernel1d(sigma, x.device, x.dtype)
     r = (k.numel() - 1) // 2
     for dim in (2, 3, 4):
-        shape = [1, 1, 1, 1, 1]; shape[dim] = k.numel()
-        ker = k.view(shape).repeat(c, 1, 1, 1, 1)                 # [C,1,kD,kH,kW] for separable conv
-        pad = [0, 0, 0, 0, 0, 0]; pad[(4 - dim) * 2] = r; pad[(4 - dim) * 2 + 1] = r
+        shape = [1, 1, 1, 1, 1]
+        shape[dim] = k.numel()
+        ker = k.view(shape).repeat(c, 1, 1, 1, 1)  # [C,1,kD,kH,kW] for separable conv
+        pad = [0, 0, 0, 0, 0, 0]
+        pad[(4 - dim) * 2] = r
+        pad[(4 - dim) * 2 + 1] = r
         x = F.conv3d(F.pad(x, pad, mode="replicate"), ker, groups=c)
     return x
 
@@ -84,7 +83,7 @@ def _random_bias_field3d(shape, std: float, scale: float, device, dtype) -> torc
     ``contrast.py::RandomBiasFieldGPU``; kept local so this module stays self-contained.
     """
     d, h, w = shape
-    small = [max(2, int(math.ceil(s * scale))) for s in (d, h, w)]
+    small = [max(2, math.ceil(s * scale)) for s in (d, h, w)]
     s = torch.rand((), device=device) * std
     field = torch.randn(1, 1, *small, device=device, dtype=dtype) * s
     field = F.interpolate(field, size=(d, h, w), mode="trilinear", align_corners=True)
@@ -101,10 +100,10 @@ def _random_smooth_field01(shape, scale: float, gain: float, device, dtype) -> t
     balance between the two domains per draw.
     """
     d, h, w = shape
-    small = [max(2, int(math.ceil(s * scale))) for s in (d, h, w)]
+    small = [max(2, math.ceil(s * scale)) for s in (d, h, w)]
     field = torch.randn(1, 1, *small, device=device, dtype=dtype)
     field = F.interpolate(field, size=(d, h, w), mode="trilinear", align_corners=True)[0, 0]
-    offset = (torch.rand((), device=device, dtype=dtype) * 4.0 - 2.0)
+    offset = torch.rand((), device=device, dtype=dtype) * 4.0 - 2.0
     return torch.sigmoid(gain * field + offset)
 
 
@@ -113,13 +112,13 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
 
     def __init__(
         self,
-        bank_path: Optional[str] = None,
-        source_label: Optional[str] = None,
-        targets: Optional[List[str]] = None,
+        bank_path: str | None = None,
+        source_label: str | None = None,
+        targets: list[str] | None = None,
         include_self: bool = True,
         any_source: bool = False,
         sigma: float = 2.0,
-        apply_to_channel: List[int] = [0],
+        apply_to_channel: list[int] | None = None,
         zscore_io: str = "auto",
         pct: float = 1.0,
         blend_targets: int = 1,
@@ -135,10 +134,12 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         keepdim: bool = True,
         **kwargs,
     ) -> None:
+        if apply_to_channel is None:
+            apply_to_channel = [0]
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
         bank_path = bank_path or DEFAULT_BANK_PATH
         data = np.load(bank_path, allow_pickle=True)
-        self.labels: List[str] = [str(x) for x in data["labels"].tolist()]
+        self.labels: list[str] = [str(x) for x in data["labels"].tolist()]
         self.L = int(data["L"])
         self.num_classes = int(data["num_classes"])
         self.any_source = bool(any_source)
@@ -156,9 +157,9 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
                 x, y = k.split("__", 1)
                 if x not in self.labels or y not in self.labels:
                     continue
-                if not include_self and x == y:                 # identity transfers
+                if not include_self and x == y:  # identity transfers
                     continue
-                if targets is not None and y not in targets:    # optional: restrict the target domain
+                if targets is not None and y not in targets:  # optional: restrict the target domain
                     continue
                 keys.append(k)
             self.targets = keys
@@ -202,7 +203,7 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         self.spatial_mix_scale = float(spatial_mix_scale)
         self.spatial_mix_gain = float(spatial_mix_gain)
 
-    def _sample_blended_luts(self, lut_bank: Tensor, n_seg_c: int, device) -> Tuple[Tensor, bool]:
+    def _sample_blended_luts(self, lut_bank: Tensor, n_seg_c: int, device) -> tuple[Tensor, bool]:
         """Build the per-class LUTs to use for one sample.
 
         Returns ``(lut_used, per_class)`` where ``lut_used`` is ``[n_draws, NC, L]`` with
@@ -215,9 +216,9 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         K = T if (self.blend_targets <= 0 or self.blend_targets > T) else self.blend_targets
         per_class = (self.p_class_mix > 0.0) and (float(torch.rand((), device=device)) < self.p_class_mix)
 
-        if K == 1 and not per_class:                       # fast path == original behaviour
+        if K == 1 and not per_class:  # fast path == original behaviour
             ti = int(torch.randint(T, (1,), device=device).item())
-            return lut_bank[ti:ti + 1], False              # [1, NC, L]
+            return lut_bank[ti : ti + 1], False  # [1, NC, L]
 
         n_draws = n_seg_c if per_class else 1
         beta = torch.zeros(n_draws, T, device=device, dtype=lut_bank.dtype)
@@ -229,16 +230,15 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
                 conc = torch.full((K,), self.blend_concentration, device=device, dtype=torch.float32)
                 wd = Dirichlet(conc).sample().to(lut_bank.dtype)
             beta[d, idx] = wd
-        lut_used = torch.einsum("dt,tcl->dcl", beta, lut_bank)   # [n_draws, NC, L]
+        lut_used = torch.einsum("dt,tcl->dcl", beta, lut_bank)  # [n_draws, NC, L]
         return lut_used, per_class
 
     @staticmethod
-    def _accumulate(lut_used: Tensor, per_class: bool, w_b: Tensor,
-                    il: Tensor, ih: Tensor, xf: Tensor, n_seg_c: int) -> Tensor:
+    def _accumulate(lut_used: Tensor, per_class: bool, w_b: Tensor, il: Tensor, ih: Tensor, xf: Tensor, n_seg_c: int) -> Tensor:
         """Class-weighted LUT interpolation ``Σ_c w_c · interp(LUT_c, x)`` → ``[D, H, W]``."""
         acc = torch.zeros_like(xf)
         for c in range(n_seg_c):
-            lut_c = lut_used[c if per_class else 0, c]      # [L]
+            lut_c = lut_used[c if per_class else 0, c]  # [L]
             acc += w_b[c] * (lut_c[il] * (1 - xf) + lut_c[ih] * xf)
         return acc
 
@@ -253,25 +253,23 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         """Map a (z-scored) image into the LUT's [0,1] domain via percentile scaling (clip),
         matching how the bank's source histograms were normalised."""
         flat = x.reshape(-1).float()
-        if flat.numel() > 1_000_000:                       # cap for torch.quantile
+        if flat.numel() > 1_000_000:  # cap for torch.quantile
             flat = flat[torch.linspace(0, flat.numel() - 1, 1_000_000, device=x.device).long()]
         lo = torch.quantile(flat, self.pct / 100.0)
         hi = torch.quantile(flat, 1.0 - self.pct / 100.0)
         return ((x - lo) / (hi - lo).clamp_min(1e-6)).clamp(0.0, 1.0)
 
     @torch.no_grad()
-    def apply_transform(
-        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
-    ) -> Tensor:
+    def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
         if "seg" not in params:
             return input
         seg = params["seg"]
-        if seg.dim() != input.dim():                       # accept [N, ...] integer seg → one-hot-ish
+        if seg.dim() != input.dim():  # accept [N, ...] integer seg → one-hot-ish
             if seg.dim() == input.dim() - 1:
                 seg = seg.unsqueeze(1)
             else:
                 return input
-        if input.dim() != 5:                               # this GPU pipeline is 3D: [N, C, D, H, W]
+        if input.dim() != 5:  # this GPU pipeline is 3D: [N, C, D, H, W]
             return input
 
         out = input.clone()
@@ -286,9 +284,9 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         N = input.shape[0]
         for ch in self.apply_to_channel:
             for b in range(N):
-                x = input[b, ch]                           # [D, H, W] — may be z-scored
+                x = input[b, ch]  # [D, H, W] — may be z-scored
                 zmode = self._is_zscore(x)
-                if zmode:                                  # remember scale, map into LUT's [0,1] domain
+                if zmode:  # remember scale, map into LUT's [0,1] domain
                     mu, sd = x.mean(), x.std().clamp_min(1e-6)
                     x01 = self._to_unit(x)
                 else:
@@ -303,24 +301,21 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
                 # hybridised per class (see _sample_blended_luts). With p_spatial_mix, two
                 # independent domain transfers are blended across space by a smooth field, so
                 # different regions look like different target sequences.
-                spatial = (self.p_spatial_mix > 0.0) and \
-                    (float(torch.rand((), device=input.device)) < self.p_spatial_mix)
+                spatial = (self.p_spatial_mix > 0.0) and (float(torch.rand((), device=input.device)) < self.p_spatial_mix)
                 if spatial:
                     lutA, pcA = self._sample_blended_luts(lut_bank, n_seg_c, input.device)
                     lutB, pcB = self._sample_blended_luts(lut_bank, n_seg_c, input.device)
                     accA = self._accumulate(lutA, pcA, w[b], il, ih, xf, n_seg_c)
                     accB = self._accumulate(lutB, pcB, w[b], il, ih, xf, n_seg_c)
-                    a = _random_smooth_field01(x01.shape, self.spatial_mix_scale,
-                                               self.spatial_mix_gain, input.device, x01.dtype)
+                    a = _random_smooth_field01(x01.shape, self.spatial_mix_scale, self.spatial_mix_gain, input.device, x01.dtype)
                     acc = (1.0 - a) * accA + a * accB
                 else:
                     lut_used, per_class = self._sample_blended_luts(lut_bank, n_seg_c, input.device)
                     acc = self._accumulate(lut_used, per_class, w[b], il, ih, xf, n_seg_c)
                 acc = acc.clamp(0.0, 1.0)
 
-                if self.bias_field_std > 0.0:              # smooth multiplicative spatial inhomogeneity
-                    field = _random_bias_field3d(acc.shape, self.bias_field_std, self.bias_scale,
-                                                 acc.device, acc.dtype)
+                if self.bias_field_std > 0.0:  # smooth multiplicative spatial inhomogeneity
+                    field = _random_bias_field3d(acc.shape, self.bias_field_std, self.bias_scale, acc.device, acc.dtype)
                     acc = (acc * field).clamp(0.0, 1.0)
 
                 if zmode:

@@ -1,17 +1,18 @@
 import torch
 import torch.nn.functional as F
+from batchgeneratorsv2.transforms.base.basic_transform import ImageOnlyTransform
 
-from batchgeneratorsv2.transforms.base.basic_transform import ImageOnlyTransform, BasicTransform
 
 class ConvTransform(ImageOnlyTransform):
-    '''
+    """
     Applies a Laplace/Scharr filter to the image to highlight edges.
 
     Based on https://github.com/spinalcordtoolbox/disc-labeling-playground/blob/main/src/ply/models/transform.py
-    '''
-    def __init__(self, kernel_type: str = 'Laplace', absolute: bool = False, retain_stats: bool = False):
+    """
+
+    def __init__(self, kernel_type: str = "Laplace", absolute: bool = False, retain_stats: bool = False):
         super().__init__()
-        if kernel_type not in  ["Laplace","Scharr"]:
+        if kernel_type not in ["Laplace", "Scharr"]:
             raise NotImplementedError('Currently only "Laplace" and "Scharr" are supported.')
         else:
             self.kernel_type = kernel_type
@@ -19,7 +20,7 @@ class ConvTransform(ImageOnlyTransform):
         self.retain_stats = retain_stats
 
     def get_parameters(self, **data_dict) -> dict:
-        spatial_dims = len(data_dict['image'].shape) - 1
+        spatial_dims = len(data_dict["image"].shape) - 1
         if spatial_dims == 2:
             if self.kernel_type == "Laplace":
                 kernel = torch.tensor([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]], dtype=torch.float32)
@@ -32,97 +33,82 @@ class ConvTransform(ImageOnlyTransform):
                 kernel = -1.0 * torch.ones(3, 3, 3, dtype=torch.float32)
                 kernel[1, 1, 1] = 26.0
             elif self.kernel_type == "Scharr":
-                kernel_x = torch.tensor([[[  9,    0,    -9],
-                                          [ 30,    0,   -30],
-                                          [  9,    0,    -9]],
+                kernel_x = torch.tensor(
+                    [
+                        [[9, 0, -9], [30, 0, -30], [9, 0, -9]],
+                        [[30, 0, -30], [100, 0, -100], [30, 0, -30]],
+                        [[9, 0, -9], [30, 0, -30], [9, 0, -9]],
+                    ],
+                    dtype=torch.float32,
+                )
 
-                                          [[ 30,    0,   -30],
-                                           [100,    0,  -100],
-                                           [ 30,    0,   -30]],
+                kernel_y = torch.tensor(
+                    [
+                        [[9, 30, 9], [0, 0, 0], [-9, -30, -9]],
+                        [[30, 100, 30], [0, 0, 0], [-30, -100, -30]],
+                        [[9, 30, 9], [0, 0, 0], [-9, -30, -9]],
+                    ],
+                    dtype=torch.float32,
+                )
 
-                                          [[  9,    0,    -9],
-                                           [ 30,    0,   -30],
-                                           [  9,    0,    -9]]], dtype=torch.float32)
-                
-                kernel_y = torch.tensor([[[    9,   30,    9],
-                                          [    0,    0,    0],
-                                          [   -9,  -30,   -9]],
-
-                                         [[  30,  100,   30],
-                                          [   0,    0,    0],
-                                          [ -30, -100,  -30]],
-
-                                         [[   9,   30,    9],
-                                          [   0,    0,    0],
-                                          [  -9,  -30,   -9]]], dtype=torch.float32)
-                
-                kernel_z = torch.tensor([[[   9,   30,   9],
-                                          [  30,  100,  30],
-                                          [   9,   30,   9]],
-
-                                         [[   0,    0,   0],
-                                          [   0,    0,   0],
-                                          [   0,    0,   0]],
-
-                                         [[   -9,  -30,  -9],
-                                          [  -30, -100, -30],
-                                          [   -9,  -30,  -9]]], dtype=torch.float32)
+                kernel_z = torch.tensor(
+                    [
+                        [[9, 30, 9], [30, 100, 30], [9, 30, 9]],
+                        [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
+                        [[-9, -30, -9], [-30, -100, -30], [-9, -30, -9]],
+                    ],
+                    dtype=torch.float32,
+                )
                 kernel = [kernel_x, kernel_y, kernel_z]
         else:
             raise ValueError(f"{self.__class__} can only handle 2D or 3D images.")
 
-        return {
-            'kernel_type': self.kernel_type,
-            'kernel': kernel,
-            'absolute': self.absolute,
-            'retain_stats': self.retain_stats
-        }
-    
+        return {"kernel_type": self.kernel_type, "kernel": kernel, "absolute": self.absolute, "retain_stats": self.retain_stats}
+
     def _apply_to_image(self, img: torch.Tensor, **params) -> torch.Tensor:
-        '''
+        """
         We expect (C, X, Y) or (C, X, Y, Z) shaped inputs for image and seg
-        '''
-        for c in range(1): # Works on the first channel only
-            if params['retain_stats']:
+        """
+        for c in range(1):  # Works on the first channel only
+            if params["retain_stats"]:
                 orig_mean = torch.mean(img[c])
                 orig_std = torch.std(img[c])
             img_ = img[c].unsqueeze(0).unsqueeze(0)  # adds temp batch and channel dim
-            if params['kernel_type'] == 'Laplace':
-                tot_ = apply_filter(img_, params['kernel'])
-            elif params['kernel_type'] == 'Scharr':
+            if params["kernel_type"] == "Laplace":
+                tot_ = apply_filter(img_, params["kernel"])
+            elif params["kernel_type"] == "Scharr":
                 tot_ = torch.zeros_like(img_)
-                for kernel in params['kernel']:
-                    if params['absolute']:
+                for kernel in params["kernel"]:
+                    if params["absolute"]:
                         tot_ += torch.abs(apply_filter(img_, kernel))
                     else:
                         tot_ += apply_filter(img_, kernel)
-            img[c] = tot_[0,0]
-            if params['retain_stats']:
+            img[c] = tot_[0, 0]
+            if params["retain_stats"]:
                 mean = torch.mean(img[c])
                 std = torch.std(img[c])
-                img[c] = (img[c] - mean)/torch.clamp(std, min=1e-7)
-                img[c] = img[c]*orig_std + orig_mean # return to original distribution
+                img[c] = (img[c] - mean) / torch.clamp(std, min=1e-7)
+                img[c] = img[c] * orig_std + orig_mean  # return to original distribution
         return img
 
 
 class HistogramEqualTransform(ImageOnlyTransform):
-    '''
+    """
     Update image intensity using histogram manipulations
 
     Based on https://github.com/neuropoly/totalspineseg/blob/main/totalspineseg/utils/augment.py
-    '''
+    """
+
     def __init__(self, retain_stats: bool = False):
         super().__init__()
         self.retain_stats = retain_stats
-    
+
     def get_parameters(self, **data_dict) -> dict:
-        return {
-            'retain_stats': self.retain_stats
-        }
-    
+        return {"retain_stats": self.retain_stats}
+
     def _apply_to_image(self, img: torch.Tensor, **params) -> torch.Tensor:
         for c in range(1):  # Works on the first channel only
-            if params['retain_stats']:
+            if params["retain_stats"]:
                 orig_mean = torch.mean(img[c])
                 orig_std = torch.std(img[c])
             img_min, img_max = img[c].min(), img[c].max()
@@ -143,36 +129,34 @@ class HistogramEqualTransform(ImageOnlyTransform):
             indices = torch.searchsorted(bin_edges[:-1], img_flattened)
             img_eq = torch.index_select(cdf, dim=0, index=torch.clamp(indices, 0, 255))
             img[c] = img_eq.reshape(img[c].shape)
-            
-            if params['retain_stats']:
+
+            if params["retain_stats"]:
                 # Return to original distribution
                 mean = torch.mean(img[c])
                 std = torch.std(img[c])
-                img[c] = (img[c] - mean)/torch.clamp(std, min=1e-7)
-                img[c] = img[c]*orig_std + orig_mean
+                img[c] = (img[c] - mean) / torch.clamp(std, min=1e-7)
+                img[c] = img[c] * orig_std + orig_mean
         return img
 
 
 class FunctionTransform(ImageOnlyTransform):
-    '''
+    """
     Apply different functions to image pixels
 
     Based on https://github.com/neuropoly/totalspineseg/blob/main/totalspineseg/utils/augment.py
-    '''
-    def __init__(self, function, retain_stats : bool = False):
+    """
+
+    def __init__(self, function, retain_stats: bool = False):
         super().__init__()
         self.function = function
         self.retain_stats = retain_stats
 
     def get_parameters(self, **data_dict) -> dict:
-        return {
-            'function': self.function,
-            'retain_stats': self.retain_stats
-        }
-    
+        return {"function": self.function, "retain_stats": self.retain_stats}
+
     def _apply_to_image(self, img: torch.Tensor, **params) -> torch.Tensor:
         for c in range(1):  # Works on the first channel only
-            if params['retain_stats']:
+            if params["retain_stats"]:
                 orig_mean = torch.mean(img[c])
                 orig_std = torch.std(img[c])
 
@@ -180,15 +164,16 @@ class FunctionTransform(ImageOnlyTransform):
             img[c] = (img[c] - img.min()) / (img.max() - img.min() + 0.00001)
 
             # Apply function
-            img[c] = params['function'](img[c])
+            img[c] = params["function"](img[c])
 
-            if params['retain_stats']:
+            if params["retain_stats"]:
                 # Return to original distribution
                 mean = torch.mean(img[c])
                 std = torch.std(img[c])
-                img[c] = (img[c] - mean)/torch.clamp(std, min=1e-7)
-                img[c] = img[c]*orig_std + orig_mean
+                img[c] = (img[c] - mean) / torch.clamp(std, min=1e-7)
+                img[c] = img[c] * orig_std + orig_mean
         return img
+
 
 def apply_filter(x: torch.Tensor, kernel: torch.Tensor, **kwargs) -> torch.Tensor:
     """
@@ -225,9 +210,7 @@ def apply_filter(x: torch.Tensor, kernel: torch.Tensor, **kwargs) -> torch.Tenso
         raise NotImplementedError(f"Only spatial dimensions up to 3 are supported but got {n_spatial}.")
     k_size = len(kernel.shape)
     if k_size < n_spatial or k_size > n_spatial + 2:
-        raise ValueError(
-            f"kernel must have {n_spatial} ~ {n_spatial + 2} dimensions to match the input shape {x.shape}."
-        )
+        raise ValueError(f"kernel must have {n_spatial} ~ {n_spatial + 2} dimensions to match the input shape {x.shape}.")
     kernel = kernel.to(x)
     # broadcast kernel size to (batch chns, spatial_kernel_size)
     kernel = kernel.expand(batch, chns, *kernel.shape[(k_size - n_spatial) :])
@@ -242,10 +225,12 @@ def apply_filter(x: torch.Tensor, kernel: torch.Tensor, **kwargs) -> torch.Tenso
     output = conv(x, kernel, groups=kernel.shape[0], bias=None, **kwargs)
     return output.view(batch, chns, *output.shape[2:])
 
+
 class ZscoreNormalization(ImageOnlyTransform):
-    '''
+    """
     Z-score normalization of image
-    '''
+    """
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -253,5 +238,5 @@ class ZscoreNormalization(ImageOnlyTransform):
         for c in range(1):
             mean = torch.mean(img[c])
             std = torch.std(img[c])
-            img[c] = (img[c] - mean)/torch.clamp(std, min=1e-8)
+            img[c] = (img[c] - mean) / torch.clamp(std, min=1e-8)
         return img

@@ -1,17 +1,16 @@
 import random
+from typing import Any
 
 import torch
+import torch.distributed as dist
+from kornia.core import Tensor
 from torch import nn
 from torch.nn import functional as F
 
-from typing import Any, Dict, Optional, Tuple, Union, List, Protocol
-from kornia.core import Tensor
-import torch.distributed as dist
-
 from auglab.transforms.gpu.base import ImageOnlyTransform
 
-
 # ── PALETTE AUG helpers ──────────────────────────────────────────────────
+
 
 def _kmeans_1d(values: torch.Tensor, C: int, n_iter: int = 10) -> torch.Tensor:
     """1-D K-means on foreground values. Returns (C,) centroids."""
@@ -47,7 +46,7 @@ def _voronoi_region_ids(
     fg: torch.Tensor,
     C: int,
     device: torch.device,
-    s_choices: List[int],
+    s_choices: list[int],
     skip_sub_parc_prob: float,
 ) -> tuple[torch.Tensor, int]:
     """Spatially subdivide each K-means cluster into Voronoi sub-regions.
@@ -83,11 +82,13 @@ def _voronoi_region_ids(
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _normal_pdf(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
     inv = 1.0 / (std + 1e-6)
     return (inv / (torch.sqrt(torch.tensor(2.0 * 3.141592653589793, device=x.device, dtype=x.dtype)))) * torch.exp(
         -0.5 * ((x - mean) * inv) ** 2
     )
+
 
 ## Redistribute segmentation values transform (GPU)
 class RandomRedistributeSegGPU(ImageOnlyTransform):
@@ -100,15 +101,21 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
     def __init__(
         self,
         in_seg: float = 0.2,
-        apply_to_channel: list[int] = [0],
+        apply_to_channel: list[int] | None = None,
         retain_stats: bool = False,
         same_on_batch: bool = False,
         p: float = 1.0,
         keepdim: bool = True,
-        std_noise_range: list[float] = [0.1, 0.3],
-        dilation_iterations_range: list[int] = [1, 3],
+        std_noise_range: list[float] | None = None,
+        dilation_iterations_range: list[int] | None = None,
         **kwargs,
     ) -> None:
+        if dilation_iterations_range is None:
+            dilation_iterations_range = [1, 3]
+        if std_noise_range is None:
+            std_noise_range = [0.1, 0.3]
+        if apply_to_channel is None:
+            apply_to_channel = [0]
         super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
         self.in_seg = in_seg
         self.apply_to_channel = apply_to_channel
@@ -117,13 +124,11 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
         self.dilation_iterations_range = dilation_iterations_range
 
     @torch.no_grad()
-    def apply_transform(
-        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
-    ) -> Tensor:
+    def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
         # Expect segmentation provided in params: shape [N, 1, ...] or [N, C_seg, ...]
-        if 'seg' not in params:
+        if "seg" not in params:
             return input
-        seg = params['seg']
+        seg = params["seg"]
         if seg.dim() != input.dim():
             # Allow seg [N, ...] by adding channel dim
             if seg.dim() == input.dim() - 1:
@@ -151,8 +156,8 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                 orig_std = flat.std(dim=1, unbiased=False)
 
             # Normalize entire batch to [0,1] per sample
-            img_min = img_batch.view(N, -1).min(dim=1)[0].view(N, *([1] * (img_batch.dim()-1)))
-            img_max = img_batch.view(N, -1).max(dim=1)[0].view(N, *([1] * (img_batch.dim()-1)))
+            img_min = img_batch.view(N, -1).min(dim=1)[0].view(N, *([1] * (img_batch.dim() - 1)))
+            img_max = img_batch.view(N, -1).max(dim=1)[0].view(N, *([1] * (img_batch.dim() - 1)))
             denom = (img_max - img_min).clamp_min(1e-6)
             x_batch = (img_batch - img_min) / denom
 
@@ -176,7 +181,9 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
                 # Vectorized dilation for all regions (3 iterations)
                 dilated = masks.float()
-                dilation_iterations = torch.randint(self.dilation_iterations_range[0], self.dilation_iterations_range[1]+1, (1,), device=input.device)[0].item()
+                dilation_iterations = torch.randint(
+                    self.dilation_iterations_range[0], self.dilation_iterations_range[1] + 1, (1,), device=input.device
+                )[0].item()
                 for _ in range(dilation_iterations):
                     if spatial_dims == 3:
                         dilated = F.max_pool3d(dilated.unsqueeze(0), 3, 1, 1).squeeze(0)
@@ -194,27 +201,29 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                 # Means
                 means = (mask_flat * x_flat).sum(dim=1) / counts
                 # Std (compute variance then sqrt) avoid indexing overhead
-                diffs = (x_flat - means.view(R,1)) * mask_flat
+                diffs = (x_flat - means.view(R, 1)) * mask_flat
                 vars = (diffs * diffs).sum(dim=1) / counts.clamp_min(1)
                 stds = vars.sqrt()
 
                 # Dilated stats
                 dil_counts = dil_flat.sum(dim=1).clamp_min(1)
                 dil_means = (dil_flat * x_flat).sum(dim=1) / dil_counts
-                dil_diffs = (x_flat - dil_means.view(R,1)) * dil_flat
+                dil_diffs = (x_flat - dil_means.view(R, 1)) * dil_flat
                 dil_vars = (dil_diffs * dil_diffs).sum(dim=1) / dil_counts
                 dil_stds = dil_vars.sqrt()
 
                 # redist_std per region
-                std_noise_range = torch.rand(1, device=input.device)[0] * (self.std_noise_range[1] - self.std_noise_range[0]) + self.std_noise_range[0]
+                std_noise_range = (
+                    torch.rand(1, device=input.device)[0] * (self.std_noise_range[1] - self.std_noise_range[0]) + self.std_noise_range[0]
+                )
                 redist_std = torch.maximum(
                     torch.rand(R, device=input.device) * std_noise_range + 0.4 * torch.abs((means - dil_means) * stds / (dil_stds + 1e-6)),
-                    torch.full((R,), 0.01, device=input.device, dtype=input.dtype)
+                    torch.full((R,), 0.01, device=input.device, dtype=input.dtype),
                 )
 
                 # Build additive term
                 to_add = torch.zeros_like(x)
-                rand_sign = (2 * torch.rand(R, device=input.device) - 1)  # random sign factor per region
+                rand_sign = 2 * torch.rand(R, device=input.device) - 1  # random sign factor per region
                 if in_seg_bool.item():
                     # Only inside region
                     for r in range(R):
@@ -291,20 +300,28 @@ class RandomPALETTEGPU(ImageOnlyTransform):
 
     def __init__(
         self,
-        c_choices: List[int] = [2, 3, 4, 5, 6],
-        s_choices: List[int] = [2, 3, 4, 5, 6, 7, 8, 9, 10],
-        blur_sigmas: List[float] = [0.0, 0.0, 0.0, 0.3, 0.5, 0.8],
+        c_choices: list[int] | None = None,
+        s_choices: list[int] | None = None,
+        blur_sigmas: list[float] | None = None,
         dark_threshold: float = 0.01,
         n_kmeans_subsample: int = 10_000,
         skip_parcellation_prob: float = 0.10,
         skip_sub_parc_prob: float = 0.40,
-        alpha_magnitude_range: List[float] = [0.5, 2.0],
+        alpha_magnitude_range: list[float] | None = None,
         label_remap_prob: float = 0.5,
         min_label_voxels: int = 4,
-        label_classes: Optional[List[int]] = None,
+        label_classes: list[int] | None = None,
         p: float = 1.0,
         **kwargs: Any,
     ) -> None:
+        if alpha_magnitude_range is None:
+            alpha_magnitude_range = [0.5, 2.0]
+        if blur_sigmas is None:
+            blur_sigmas = [0.0, 0.0, 0.0, 0.3, 0.5, 0.8]
+        if s_choices is None:
+            s_choices = [2, 3, 4, 5, 6, 7, 8, 9, 10]
+        if c_choices is None:
+            c_choices = [2, 3, 4, 5, 6]
         super().__init__(p=p, **kwargs)
         self.c_choices = c_choices
         self.s_choices = s_choices
@@ -322,13 +339,13 @@ class RandomPALETTEGPU(ImageOnlyTransform):
     def apply_transform(
         self,
         input: Tensor,
-        params: Dict[str, Any],
-        flags: Dict[str, Any],
-        transform: Optional[Tensor] = None,
+        params: dict[str, Any],
+        flags: dict[str, Any],
+        transform: Tensor | None = None,
     ) -> Tensor:
-        seg_raw: Optional[torch.Tensor] = params.get("seg", None)
+        seg_raw: torch.Tensor | None = params.get("seg")
 
-        labels: Optional[torch.Tensor] = None
+        labels: torch.Tensor | None = None
         if seg_raw is not None and seg_raw.ndim == 5 and seg_raw.shape[1] > 1:
             labels = collapse_onehot_to_index(seg_raw)
         elif seg_raw is not None and seg_raw.ndim == 5 and seg_raw.shape[1] == 1:
@@ -349,11 +366,15 @@ class RandomPALETTEGPU(ImageOnlyTransform):
         flat_m_all = (images_01 > self.dark_threshold).float()  # foreground mask
 
         # Voxel coordinates (shared — same spatial dims for every sample)
-        coords = torch.stack(torch.meshgrid(
-            torch.arange(D, device=device, dtype=torch.float32),
-            torch.arange(H, device=device, dtype=torch.float32),
-            torch.arange(W, device=device, dtype=torch.float32),
-            indexing="ij"), dim=-1).reshape(N, 3)
+        coords = torch.stack(
+            torch.meshgrid(
+                torch.arange(D, device=device, dtype=torch.float32),
+                torch.arange(H, device=device, dtype=torch.float32),
+                torch.arange(W, device=device, dtype=torch.float32),
+                indexing="ij",
+            ),
+            dim=-1,
+        ).reshape(N, 3)
 
         # ── Step 1: PALETTE K-means + Voronoi per-region affine remap ──────────
         synth_list = []
@@ -374,9 +395,9 @@ class RandomPALETTEGPU(ImageOnlyTransform):
                 C_k = self.c_choices[int(torch.rand(1, device=device).item() * len(self.c_choices))]
                 idx = torch.randint(0, N, (min(N, 40_000),), device=device)
                 samp = flat[idx]
-                sub_fg = samp[samp > self.dark_threshold][:self.n_kmeans_subsample]
+                sub_fg = samp[samp > self.dark_threshold][: self.n_kmeans_subsample]
                 if sub_fg.numel() < 4:
-                    sub_fg = samp[:self.n_kmeans_subsample]
+                    sub_fg = samp[: self.n_kmeans_subsample]
 
                 centroids = _kmeans_1d(sub_fg, C_k)
                 sorted_c, sort_idx = torch.sort(centroids)
@@ -385,8 +406,13 @@ class RandomPALETTEGPU(ImageOnlyTransform):
                 lbl_l = sort_idx[lbl_s].long()
 
                 rid, R = _voronoi_region_ids(
-                    coords, lbl_l, flat_m, C_k, device,
-                    self.s_choices, self.skip_sub_parc_prob,
+                    coords,
+                    lbl_l,
+                    flat_m,
+                    C_k,
+                    device,
+                    self.s_choices,
+                    self.skip_sub_parc_prob,
                 )
 
                 s_c = torch.zeros(R, device=device).scatter_add_(0, rid, flat * flat_m)
@@ -402,7 +428,7 @@ class RandomPALETTEGPU(ImageOnlyTransform):
 
             synth_list.append(synth_i)
 
-        synth = torch.stack(synth_list)       # (B, N)
+        synth = torch.stack(synth_list)  # (B, N)
         synth_01 = synth.reshape(B, 1, D, H, W)
 
         sigma = random.choice(self.blur_sigmas)
@@ -424,13 +450,10 @@ class RandomPALETTEGPU(ImageOnlyTransform):
 
             for c in unique_classes:
                 c_val = int(c.item())
-                c_mask = (lbl == c_val).float()                         # (B, N)
-                c_cnt = c_mask.sum(dim=1, keepdim=True)                 # (B, 1)
+                c_mask = (lbl == c_val).float()  # (B, N)
+                c_cnt = c_mask.sum(dim=1, keepdim=True)  # (B, 1)
 
-                apply = (
-                    (torch.rand(B, 1, device=device) < self.label_remap_prob)
-                    & (c_cnt >= self.min_label_voxels)
-                ).float()
+                apply = ((torch.rand(B, 1, device=device) < self.label_remap_prob) & (c_cnt >= self.min_label_voxels)).float()
 
                 if apply.sum() == 0:
                     continue
@@ -480,8 +503,7 @@ def _next_shared_seed() -> int:
 
 
 @staticmethod
-def _minmax_norm(x: torch.Tensor, eps: float = 1e-8
-                    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def _minmax_norm(x: torch.Tensor, eps: float = 1e-8) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Per-sample min-max normalise to [0, 1]. Returns (normed, min, max)."""
     B = x.shape[0]
     x_flat = x.view(B, -1)
@@ -489,10 +511,11 @@ def _minmax_norm(x: torch.Tensor, eps: float = 1e-8
     vmax = x_flat.max(dim=1).values.view(B, 1, 1, 1, 1)
     return (x - vmin) / (vmax - vmin + eps), vmin, vmax
 
+
 @staticmethod
-def _minmax_denorm(x_norm: torch.Tensor, vmin: torch.Tensor,
-                    vmax: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+def _minmax_denorm(x_norm: torch.Tensor, vmin: torch.Tensor, vmax: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     return x_norm * (vmax - vmin + eps) + vmin
+
 
 @staticmethod
 def _zscore_renorm(x: torch.Tensor, bg_threshold: float = 1e-6) -> torch.Tensor:
@@ -502,18 +525,20 @@ def _zscore_renorm(x: torch.Tensor, bg_threshold: float = 1e-6) -> torch.Tensor:
     Eliminates the train/inference distribution mismatch that would occur
     because nnUNet always z-scores at inference time.
     """
-    fg   = x.abs() > bg_threshold
+    fg = x.abs() > bg_threshold
     fg_f = fg.float()
-    n    = fg_f.sum(dim=(2, 3, 4), keepdim=True).clamp(min=1)
+    n = fg_f.sum(dim=(2, 3, 4), keepdim=True).clamp(min=1)
     mean = (x * fg_f).sum(dim=(2, 3, 4), keepdim=True) / n
-    var  = ((x - mean).pow(2) * fg_f).sum(dim=(2, 3, 4), keepdim=True) / n
-    std  = var.sqrt().clamp(min=1e-8)
+    var = ((x - mean).pow(2) * fg_f).sum(dim=(2, 3, 4), keepdim=True) / n
+    std = var.sqrt().clamp(min=1e-8)
     return torch.where(fg, (x - mean) / std, torch.zeros_like(x))
+
 
 def _shared_cpu_generator() -> torch.Generator:
     generator = torch.Generator(device="cpu")
     generator.manual_seed(_next_shared_seed())
     return generator
+
 
 def _shared_rand(shape: tuple[int, ...], device: torch.device, dtype: torch.dtype) -> torch.Tensor:
     if not (dist.is_available() and dist.is_initialized()):
@@ -536,8 +561,8 @@ def collapse_onehot_to_index(seg_raw: torch.Tensor) -> torch.Tensor:
                 Background voxels (all-zero across channels) map to 0.
                 Foreground voxels map to argmax(seg_raw, dim=1) + 1.
     """
-    foreground_mask = seg_raw.any(dim=1, keepdim=True)               # [B,1,D,H,W] bool
-    labels = torch.argmax(seg_raw, dim=1, keepdim=True).long() + 1   # 0-based → 1-based
+    foreground_mask = seg_raw.any(dim=1, keepdim=True)  # [B,1,D,H,W] bool
+    labels = torch.argmax(seg_raw, dim=1, keepdim=True).long() + 1  # 0-based → 1-based
     labels = torch.where(foreground_mask, labels, torch.zeros_like(labels))
     return labels
 

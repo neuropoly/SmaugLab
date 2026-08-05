@@ -1,34 +1,34 @@
+import copy
 import warnings
-from kornia.augmentation import RandomGamma
+from collections.abc import Sequence
+from typing import Any, Union
 
+import kornia.augmentation as K
+from kornia.augmentation import AugmentationSequential
 from kornia.augmentation._2d.base import RigidAffineAugmentationBase2D
-from kornia.augmentation._3d.base import RigidAffineAugmentationBase3D
 from kornia.augmentation._3d.base import AugmentationBase3D, RigidAffineAugmentationBase3D
 from kornia.augmentation.base import _AugmentationBase
-from kornia.constants import DataKey, Resample
-from kornia.core import Tensor
-from kornia.geometry.boxes import Boxes
-from kornia.geometry.keypoints import Keypoints
+from kornia.augmentation.container.image import ImageSequential
+from kornia.augmentation.container.ops import (
+    AugmentationSequentialOps,
+    BoxSequentialOps,
+    ClassSequentialOps,
+    InputSequentialOps,
+    KeypointSequentialOps,
+    MaskSequentialOps,
+    SequentialOpsInterface,
+)
+from kornia.augmentation.container.params import ParamItem
 from kornia.augmentation.container.patch import PatchSequential
 from kornia.augmentation.container.video import VideoSequential
-from kornia.augmentation.container.image import ImageSequential
-from kornia.augmentation.container.ops import AugmentationSequentialOps, SequentialOpsInterface, InputSequentialOps, BoxSequentialOps, KeypointSequentialOps, ClassSequentialOps
-
-from kornia.augmentation import AugmentationSequential
-from kornia.augmentation.container.ops import MaskSequentialOps
-from kornia.augmentation.container.params import ParamItem
-import kornia.augmentation as K
-from kornia.augmentation.base import _AugmentationBase
-from kornia.constants import DataKey
+from kornia.constants import DataKey, Resample
 from kornia.core import Module, Tensor
 from kornia.geometry.boxes import Boxes
 from kornia.geometry.keypoints import Keypoints
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, Type
-import copy
+DataType = Union[Tensor, list[Tensor], Boxes, Keypoints]
+SequenceDataType = Union[list[Tensor], list[list[Tensor]], list[Boxes], list[Keypoints]]
 
-DataType = Union[Tensor, List[Tensor], Boxes, Keypoints]
-SequenceDataType = Union[List[Tensor], List[List[Tensor]], List[Boxes], List[Keypoints]]
 
 class ImageOnlyTransform(RigidAffineAugmentationBase3D):
     r"""ImageOnlyTransform base class for customized image-only transformations.
@@ -44,70 +44,72 @@ class ImageOnlyTransform(RigidAffineAugmentationBase3D):
 
     """
 
-    def compute_transformation(self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any]) -> Tensor:
+    def compute_transformation(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any]) -> Tensor:
         return self.identity_matrix(input)
 
     def apply_non_transform(
-        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+        self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None
     ) -> Tensor:
         # For the images where batch_prob == False.
         return input
 
     def apply_non_transform_mask(
-        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+        self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None
     ) -> Tensor:
         return input
 
     def apply_transform_mask(
-        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+        self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None
     ) -> Tensor:
         return input
 
     def apply_non_transform_boxes(
-        self, input: Boxes, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+        self, input: Boxes, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None
     ) -> Boxes:
         return input
 
     def apply_transform_boxes(
-        self, input: Boxes, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+        self, input: Boxes, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None
     ) -> Boxes:
         return input
 
     def apply_non_transform_keypoint(
-        self, input: Keypoints, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+        self, input: Keypoints, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None
     ) -> Keypoints:
         return input
 
     def apply_transform_keypoint(
-        self, input: Keypoints, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+        self, input: Keypoints, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None
     ) -> Keypoints:
         return input
 
     def apply_non_transform_class(
-        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+        self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None
     ) -> Tensor:
         return input
 
     def apply_transform_class(
-        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
+        self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None
     ) -> Tensor:
         return input
 
+
 class AugmentationSequentialCustom(AugmentationSequential):
     """Custom AugmentationSequential to handle masks augmentations."""
+
     def __init__(
         self,
         *args: Union[_AugmentationBase, ImageSequential],
-        data_keys: Optional[Union[Sequence[str], Sequence[int], Sequence[DataKey]]] = (DataKey.INPUT,),
-        same_on_batch: Optional[bool] = None,
-        keepdim: Optional[bool] = None,
-        random_apply: Union[int, bool, Tuple[int, int]] = False,
-        random_apply_weights: Optional[List[float]] = None,
+        data_keys: Union[Sequence[str], Sequence[int], Sequence[DataKey]] | None = (DataKey.INPUT,),
+        same_on_batch: bool | None = None,
+        keepdim: bool | None = None,
+        random_apply: Union[int, bool, tuple[int, int]] = False,
+        random_apply_weights: list[float] | None = None,
         transformation_matrix_mode: str = "silent",
-        extra_args: Optional[Dict[DataKey, Dict[str, Any]]] = None,
+        extra_args: dict[DataKey, dict[str, Any]] | None = None,
     ) -> None:
-        self._transform_matrix: Optional[Tensor]
-        self._transform_matrices: List[Optional[Tensor]] = []
+        self._transform_matrix: Tensor | None
+        self._transform_matrices: list[Tensor | None] = []
 
         super().__init__(
             *args,
@@ -119,13 +121,13 @@ class AugmentationSequentialCustom(AugmentationSequential):
 
         self._parse_transformation_matrix_mode(transformation_matrix_mode)
 
-        self._valid_ops_for_transform_computation: Tuple[Any, ...] = (
+        self._valid_ops_for_transform_computation: tuple[Any, ...] = (
             RigidAffineAugmentationBase2D,
             RigidAffineAugmentationBase3D,
             AugmentationSequential,
         )
 
-        self.data_keys: Optional[List[DataKey]]
+        self.data_keys: list[DataKey] | None
         if data_keys is not None:
             self.data_keys = [DataKey.get(inp) for inp in data_keys]
         else:
@@ -144,9 +146,7 @@ class AugmentationSequentialCustom(AugmentationSequential):
         self.contains_3d_augmentation: bool = False
         for arg in args:
             if isinstance(arg, PatchSequential) and not arg.is_intensity_only():
-                warnings.warn(
-                    "Geometric transformation detected in PatchSeqeuntial, which would break bbox, mask.", stacklevel=1
-                )
+                warnings.warn("Geometric transformation detected in PatchSeqeuntial, which would break bbox, mask.", stacklevel=1)
             if isinstance(arg, VideoSequential):
                 self.contains_video_sequential = True
             # NOTE: only for images are supported for 3D.
@@ -154,20 +154,17 @@ class AugmentationSequentialCustom(AugmentationSequential):
                 self.contains_3d_augmentation = True
         self._transform_matrix = None
         self.extra_args = extra_args or {DataKey.MASK: {"resample": Resample.NEAREST, "align_corners": None}}
-    
-    def transform_masks(
-        self, input: Tensor, params: List[ParamItem], extra_args: Optional[Dict[str, Any]] = None
-    ) -> Tensor:
+
+    def transform_masks(self, input: Tensor, params: list[ParamItem], extra_args: dict[str, Any] | None = None) -> Tensor:
         for param in params:
             module = self.get_submodule(param.name)
             input = MaskSequentialOpsCustom.transform(input, module=module, param=param, extra_args=extra_args)
         return input
 
+
 class MaskSequentialOpsCustom(MaskSequentialOps):
     @classmethod
-    def transform(
-        cls, input: Tensor, module: Module, param: ParamItem, extra_args: Optional[Dict[str, Any]] = None
-    ) -> Tensor:
+    def transform(cls, input: Tensor, module: Module, param: ParamItem, extra_args: dict[str, Any] | None = None) -> Tensor:
         """Apply a transformation with respect to the parameters.
 
         Args:
@@ -203,14 +200,11 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
             input = module(input, params=cls.get_instance_module_param(param), data_keys=[DataKey.MASK], **extra_args)
 
         elif isinstance(module, (_AugmentationBase)):
-            input = module.transform_masks(
-                input, params=cls.get_instance_module_param(param), flags=module.flags, **extra_args
-            )
+            input = module.transform_masks(input, params=cls.get_instance_module_param(param), flags=module.flags, **extra_args)
 
-        elif isinstance(module, K.ImageSequential) and not module.is_intensity_only():
-            input = module.transform_masks(input, params=cls.get_sequential_module_param(param), extra_args=extra_args)
-
-        elif isinstance(module, K.container.ImageSequentialBase):
+        elif (isinstance(module, K.ImageSequential) and not module.is_intensity_only()) or isinstance(
+            module, K.container.ImageSequentialBase
+        ):
             input = module.transform_masks(input, params=cls.get_sequential_module_param(param), extra_args=extra_args)
 
         elif isinstance(module, (K.auto.operations.OperationBase,)):
@@ -220,8 +214,8 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
 
     @classmethod
     def transform_list(
-        cls, input: List[Tensor], module: Module, param: ParamItem, extra_args: Optional[Dict[str, Any]] = None
-    ) -> List[Tensor]:
+        cls, input: list[Tensor], module: Module, param: ParamItem, extra_args: dict[str, Any] | None = None
+    ) -> list[Tensor]:
         """Apply a transformation with respect to the parameters.
 
         Args:
@@ -233,27 +227,13 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
         """
         if extra_args is None:
             extra_args = {}
-        if isinstance(module, (K.GeometricAugmentationBase2D,)):
+        if isinstance(module, (K.GeometricAugmentationBase2D, K.RigidAffineAugmentationBase3D)):
             tfm_input = []
             params = cls.get_instance_module_param(param)
             params_i = copy.deepcopy(params)
             for i, inp in enumerate(input):
                 params_i["batch_prob"] = params["batch_prob"][i]
-                tfm_inp = module.transform_masks(
-                    inp, params=params_i, flags=module.flags, transform=module.transform_matrix, **extra_args
-                )
-                tfm_input.append(tfm_inp)
-            input = tfm_input
-
-        elif isinstance(module, (K.RigidAffineAugmentationBase3D,)):
-            tfm_input = []
-            params = cls.get_instance_module_param(param)
-            params_i = copy.deepcopy(params)
-            for i, inp in enumerate(input):
-                params_i["batch_prob"] = params["batch_prob"][i]
-                tfm_inp = module.transform_masks(
-                    inp, params=params_i, flags=module.flags, transform=module.transform_matrix, **extra_args
-                )
+                tfm_inp = module.transform_masks(inp, params=params_i, flags=module.flags, transform=module.transform_matrix, **extra_args)
                 tfm_input.append(tfm_inp)
             input = tfm_input
 
@@ -267,15 +247,9 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
                 tfm_input.append(tfm_inp)
             input = tfm_input
 
-        elif isinstance(module, K.ImageSequential) and not module.is_intensity_only():
-            tfm_input = []
-            seq_params = cls.get_sequential_module_param(param)
-            for inp in input:
-                tfm_inp = module.transform_masks(inp, params=seq_params, extra_args=extra_args)
-                tfm_input.append(tfm_inp)
-            input = tfm_input
-
-        elif isinstance(module, K.container.ImageSequentialBase):
+        elif (isinstance(module, K.ImageSequential) and not module.is_intensity_only()) or isinstance(
+            module, K.container.ImageSequentialBase
+        ):
             tfm_input = []
             seq_params = cls.get_sequential_module_param(param)
             for inp in input:
@@ -285,13 +259,13 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
 
         elif isinstance(module, (K.auto.operations.OperationBase,)):
             raise NotImplementedError(
-                "The support for list of masks under auto operations are not yet supported. You are welcome to file a"
-                " PR in our repo."
+                "The support for list of masks under auto operations are not yet supported. You are welcome to file a PR in our repo."
             )
         return input
 
+
 class AugmentationSequentialOpsCustom(AugmentationSequentialOps):
-    def _get_op(self, data_key: DataKey) -> Type[SequentialOpsInterface[Any]]:
+    def _get_op(self, data_key: DataKey) -> type[SequentialOpsInterface[Any]]:
         """Return the corresponding operation given a data key."""
         if data_key == DataKey.INPUT:
             return InputSequentialOps
@@ -304,14 +278,14 @@ class AugmentationSequentialOpsCustom(AugmentationSequentialOps):
         if data_key == DataKey.CLASS:
             return ClassSequentialOps
         raise RuntimeError(f"Operation for `{data_key.name}` is not found.")
-    
+
     def transform(
         self,
         *arg: DataType,
         module: Module,
         param: ParamItem,
-        extra_args: Dict[DataKey, Dict[str, Any]],
-        data_keys: Optional[Union[List[str], List[int], List[DataKey]]] = None,
+        extra_args: dict[DataKey, dict[str, Any]],
+        data_keys: Union[list[str], list[int], list[DataKey]] | None = None,
     ) -> Union[DataType, SequenceDataType]:
         _data_keys = self.preproc_datakeys(data_keys)
 
@@ -326,7 +300,7 @@ class AugmentationSequentialOpsCustom(AugmentationSequentialOps):
                     extra_args=extra_args,
                 ),
             )
-        
+
         keys = [dk.name for dk in _data_keys]
         if "MASK" in keys:
             mask_index = keys.index("MASK")

@@ -15,13 +15,13 @@ Public API:
                               AugmentationSequentialCustom pipelines).
 """
 
+from auglab.transforms.synthseg import functional
 from auglab.transforms.synthseg.generator import SynthSegGenerator
 from auglab.transforms.synthseg.transforms import RandomSynthSegGPU, SynthSegTransformsGPU
-from auglab.transforms.synthseg import functional
 
 __all__ = [
+    "RandomSynthSegGPU",
     "SynthSegGenerator",
     "SynthSegTransformsGPU",
-    "RandomSynthSegGPU",
     "functional",
 ]

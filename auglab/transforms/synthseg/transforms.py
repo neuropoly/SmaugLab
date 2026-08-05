@@ -23,32 +23,63 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import torch
-from torch import nn
 from kornia.core import Tensor
+from torch import nn
 
 from auglab.transforms.gpu.base import ImageOnlyTransform
 from auglab.transforms.synthseg.generator import SynthSegGenerator
 
 # Keys understood from the JSON config / kwargs, forwarded to SynthSegGenerator.
 _GENERATOR_KEYS = {
-    "generation_labels", "output_labels", "n_neutral_labels", "generation_classes",
-    "n_channels", "prior_distributions", "prior_means", "prior_stds",
-    "flipping", "flip_axis", "scaling_bounds", "rotation_bounds", "shearing_bounds",
-    "translation_bounds", "nonlin_std", "nonlin_scale", "svf_integration_steps",
-    "bias_field_std", "bias_scale", "gamma_std", "clip", "normalise",
-    "randomise_res", "max_res_iso", "max_res_aniso", "data_res", "thickness",
-    "blur_range", "atlas_res", "output_shape",
-    "em_label_completion", "em_n_foreground_clusters", "em_background_clusters_range",
-    "em_background_label", "em_n_iters", "em_max_fit_voxels", "em_same_on_batch",
-    "apply_affine", "apply_nonlinear", "apply_bias_field",
-    "apply_intensity_augmentation", "apply_resolution",
+    "generation_labels",
+    "output_labels",
+    "n_neutral_labels",
+    "generation_classes",
+    "n_channels",
+    "prior_distributions",
+    "prior_means",
+    "prior_stds",
+    "flipping",
+    "flip_axis",
+    "scaling_bounds",
+    "rotation_bounds",
+    "shearing_bounds",
+    "translation_bounds",
+    "nonlin_std",
+    "nonlin_scale",
+    "svf_integration_steps",
+    "bias_field_std",
+    "bias_scale",
+    "gamma_std",
+    "clip",
+    "normalise",
+    "randomise_res",
+    "max_res_iso",
+    "max_res_aniso",
+    "data_res",
+    "thickness",
+    "blur_range",
+    "atlas_res",
+    "output_shape",
+    "em_label_completion",
+    "em_n_foreground_clusters",
+    "em_background_clusters_range",
+    "em_background_label",
+    "em_n_iters",
+    "em_max_fit_voxels",
+    "em_same_on_batch",
+    "apply_affine",
+    "apply_nonlinear",
+    "apply_bias_field",
+    "apply_intensity_augmentation",
+    "apply_resolution",
 }
 
 
-def _filter_generator_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
+def _filter_generator_kwargs(params: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in params.items() if k in _GENERATOR_KEYS}
 
 
@@ -71,7 +102,7 @@ class RandomSynthSegGPU(ImageOnlyTransform):
 
     def __init__(
         self,
-        apply_to_channel: Optional[List[int]] = None,
+        apply_to_channel: list[int] | None = None,
         same_on_batch: bool = False,
         p: float = 0.5,
         keepdim: bool = True,
@@ -86,10 +117,8 @@ class RandomSynthSegGPU(ImageOnlyTransform):
         self.generator = SynthSegGenerator(**gen_kwargs)
 
     @torch.no_grad()
-    def apply_transform(
-        self, input: Tensor, params: Dict[str, Tensor], flags: Dict[str, Any], transform: Optional[Tensor] = None
-    ) -> Tensor:
-        seg = params.get("seg", None)
+    def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
+        seg = params.get("seg")
         if seg is None:
             return input
 
@@ -124,12 +153,12 @@ class SynthSegTransformsGPU(nn.Module):
     to ``1.0`` (always synthesise, as in the paper).
     """
 
-    def __init__(self, json_path: Optional[str] = None, params: Optional[Dict[str, Any]] = None):
+    def __init__(self, json_path: str | None = None, params: dict[str, Any] | None = None):
         super().__init__()
         if params is None:
             if json_path is None:
                 raise ValueError("Provide either json_path or params.")
-            with open(os.path.join(json_path), "r") as f:
+            with open(os.path.join(json_path)) as f:
                 config = json.load(f)
         else:
             config = params
@@ -183,8 +212,7 @@ if __name__ == "__main__":
     # Full end-to-end driver
     driver = SynthSegTransformsGPU(params={"generation_labels": [0, 1, 2], "n_channels": 1}).to(device)
     out_img, out_lab = driver(img.to(device), labels.to(device))
-    print("driver image", tuple(out_img.shape), "labels", tuple(out_lab.shape),
-          torch.unique(out_lab).tolist())
+    print("driver image", tuple(out_img.shape), "labels", tuple(out_lab.shape), torch.unique(out_lab).tolist())
     assert out_img.shape[0] == B and not torch.isnan(out_img).any()
 
     # Intensity-only ImageOnlyTransform
