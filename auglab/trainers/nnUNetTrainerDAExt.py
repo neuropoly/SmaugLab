@@ -434,6 +434,35 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
 
         return {"loss": l.detach().cpu().numpy(), "tp_hard": tp_hard, "fp_hard": fp_hard, "fn_hard": fn_hard}
 
+    @staticmethod
+    def _valaug_sidecar_path(checkpoint_path: str) -> str:
+        root, ext = os.path.splitext(checkpoint_path)
+        return f"{root}_valaug{ext}"
+
+    def save_checkpoint(self, filename: str) -> None:
+        super().save_checkpoint(filename)
+        if self.local_rank == 0 and not self.disable_checkpointing:
+            torch.save(
+                {
+                    "ema_dice_validation": self.ema_dice_validation,
+                    "best_ema_dice_validation": self.best_ema_dice_validation,
+                    "validation_augmentation_checkpoints": self.validation_augmentation_checkpoints,
+                },
+                self._valaug_sidecar_path(filename),
+            )
+
+    def load_checkpoint(self, filename_or_checkpoint: Union[dict, str]) -> None:
+        super().load_checkpoint(filename_or_checkpoint)
+        if isinstance(filename_or_checkpoint, str):
+            sidecar = self._valaug_sidecar_path(filename_or_checkpoint)
+            if os.path.isfile(sidecar):
+                state = torch.load(sidecar, map_location="cpu")
+                # Only adopt persisted EMA state if the configured checkpoints list is unchanged;
+                # otherwise the per-index slots no longer correspond and we restart tracking.
+                if state.get("validation_augmentation_checkpoints") == self.validation_augmentation_checkpoints:
+                    self.ema_dice_validation = state["ema_dice_validation"]
+                    self.best_ema_dice_validation = state["best_ema_dice_validation"]
+
     def compute_validation_metrics(self, val_outputs: list[dict]):
         """
         Based on on_validation_epoch_end nnUNetTrainer
@@ -481,7 +510,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
 
             with torch.no_grad():
                 self.on_validation_epoch_start()
-                val_outputs = [[]] * len(self.validation_augmentation_checkpoints)
+                val_outputs = [[] for _ in range(len(self.validation_augmentation_checkpoints))]
                 for _batch_id in range(self.num_val_iterations_per_epoch):
                     batch = next(self.dataloader_val)
                     for prob_id, augmentation_prob in enumerate(self.validation_augmentation_checkpoints):
@@ -501,7 +530,8 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             self.on_epoch_end()
             for val_idx, augmentation_prob in enumerate(self.validation_augmentation_checkpoints):
                 ema_dice = self.ema_dice_validation[val_idx]
-                if ema_dice is None or ema_dice > self.best_ema_dice_validation[val_idx]:
+                best = self.best_ema_dice_validation[val_idx]
+                if ema_dice is not None and (best is None or ema_dice > best):
                     self.best_ema_dice_validation[val_idx] = ema_dice
                     self.save_checkpoint(join(self.output_folder, f"checkpoint_best_validation_aug_{augmentation_prob}.pth"))
 
