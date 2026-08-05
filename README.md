@@ -1,5 +1,9 @@
 [![arXiv](https://img.shields.io/badge/Preprint-arXiv:2605.03098-orange)](https://arxiv.org/abs/2605.03098)
-[![Python Versions](https://img.shields.io/pypi/pyversions/spineps)](https://pypi.org/project/spineps/)
+[![PyPI](https://img.shields.io/pypi/v/auglab)](https://pypi.org/project/auglab/)
+[![Python Versions](https://img.shields.io/pypi/pyversions/auglab)](https://pypi.org/project/auglab/)
+[![tests](https://github.com/neuropoly/AugLab/actions/workflows/tests.yml/badge.svg)](https://github.com/neuropoly/AugLab/actions/workflows/tests.yml)
+[![lint](https://github.com/neuropoly/AugLab/actions/workflows/lint.yml/badge.svg)](https://github.com/neuropoly/AugLab/actions/workflows/lint.yml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 # AugLab
@@ -128,6 +132,20 @@ python scripts/train_monai.py --config <your_path>/config.json --transforms <you
 ```
 
 Additional parameters can be specified—see `python scripts/train_monai.py -h` for details. If anything is unclear, feel free to open an issue.
+
+## Contributing
+
+Development setup, the test suite, and the release process are documented in
+[CONTRIBUTING.md](CONTRIBUTING.md). The short version:
+
+```bash
+pip install -e ".[dev]"
+pre-commit install
+pytest
+```
+
+Pull requests are gated on Ruff (lint + format) and the test suite across
+Python 3.10–3.12.
 
 ## How to use my data ?
 

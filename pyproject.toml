@@ -51,7 +51,10 @@ dev = [
     "pre-commit",
     "pytest>=8",
     "pytest-cov",
-    "ruff",
+    # Pinned to the same version as the ruff-pre-commit rev in
+    # .pre-commit-config.yaml. Ruff adds rules between releases, so an
+    # unpinned local ruff will disagree with the one CI runs.
+    "ruff==0.16.1",
     "twine",
 ]
 

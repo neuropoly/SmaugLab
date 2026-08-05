@@ -104,7 +104,6 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
         translate: Union[Tensor, tuple[float, float, float]] | None = None,
         scale: Union[Tensor, tuple[float, float], tuple[tuple[float, float], tuple[float, float], tuple[float, float]]] | None = None,
         shears: Union[
-            None,
             Tensor,
             float,
             tuple[float, float],
@@ -117,6 +116,7 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
                 tuple[float, float],
                 tuple[float, float],
             ],
+            None,
         ] = None,
         resample: Union[str, int, Resample] = Resample.BILINEAR.name,
         same_on_batch: bool = False,
