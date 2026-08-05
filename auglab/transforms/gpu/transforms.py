@@ -93,6 +93,13 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 )
             )
 
+        # Composable PALETTE: swappable image-based initial partitioner
+        # (kmeans1d, em_gmm) + optional stack of refinements (voronoi, em_gmm).
+        palette_composed_params = self.transform_params.get("PaletteSynthesisTransform")
+        if palette_composed_params is not None:
+            from auglab.transforms.gpu.palette.factory import build_palette_from_cfg
+            transforms.append(build_palette_from_cfg(palette_composed_params))
+
         # Domain transfer: randomly re-render the image as another sequence/cluster (TA)
         # Accept either the class-name key or the descriptive key.
         domain_params = self.transform_params.get('RandomDomainTransferGPU') \
