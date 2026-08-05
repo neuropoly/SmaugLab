@@ -1,0 +1,12 @@
+# Owners are requested for review automatically on every pull request.
+# Combined with a branch protection rule requiring one approval, this is the
+# "requiring code-review" half of issue #34.
+#
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+*                       @Hendrik-code @NathanMolinier
+
+# Changing the CI, packaging or linting setup affects every contributor.
+/.github/               @Hendrik-code
+/pyproject.toml         @Hendrik-code
+/.pre-commit-config.yaml @Hendrik-code

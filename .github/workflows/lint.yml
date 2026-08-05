@@ -1,0 +1,33 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Runs the pre-commit hooks rather than a bare `ruff check`, so the hooks
+  # contributors run locally and the ones CI enforces cannot drift apart.
+  #
+  # Deliberately does NOT auto-commit fixes back to the branch: that breaks on
+  # pull requests from forks and rewrites contributors' branches under them.
+  # A red check plus `pre-commit run --all-files` locally is the fix.
+  pre-commit:
+    name: pre-commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: pre-commit/action@v3.0.1

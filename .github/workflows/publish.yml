@@ -1,0 +1,96 @@
+name: publish to PyPI
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Which index to upload to
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: build and upload
+    runs-on: ubuntu-latest
+    # Requires the PYPI_API_TOKEN (and, for dry runs, TEST_PYPI_API_TOKEN)
+    # repository secret. Until that is set by an admin this job cannot upload.
+    environment: pypi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Check the release tag matches project.version
+        # project.version is bumped by hand (it is a date string like 20260109).
+        # Without this guard, tagging a release without bumping it fails deep
+        # inside twine with "file already exists" -- or worse, silently
+        # republishes nothing.
+        if: github.event_name == 'release'
+        run: |
+          python - <<'PY'
+          import os, sys, tomllib
+
+          with open("pyproject.toml", "rb") as handle:
+              version = tomllib.load(handle)["project"]["version"]
+
+          tag = os.environ["RELEASE_TAG"].removeprefix("v")
+          if tag != version:
+              sys.exit(
+                  f"release tag '{tag}' does not match project.version '{version}' in "
+                  "pyproject.toml -- bump the version before tagging"
+              )
+          print(f"tag and project.version agree: {version}")
+          PY
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check distribution metadata
+        run: twine check dist/*
+
+      - name: Verify the wheel ships the package data
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          if "auglab/configs/transform_params_gpu.json" not in names:
+              sys.exit("refusing to publish: wheel has no config JSONs")
+          if len([n for n in names if n.endswith(".py")]) < 20:
+              sys.exit("refusing to publish: wheel is missing modules")
+          print("wheel contents look complete")
+          PY
+
+      - name: Upload to TestPyPI
+        if: github.event_name == 'workflow_dispatch' && inputs.repository == 'testpypi'
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          TWINE_REPOSITORY: testpypi
+        run: twine upload dist/*
+
+      - name: Upload to PyPI
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.repository == 'pypi')
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        # Uploads the sdist as well as the wheel; auglab currently has no sdist
+        # on PyPI, which blocks anyone who needs to build from source.
+        run: twine upload dist/*
