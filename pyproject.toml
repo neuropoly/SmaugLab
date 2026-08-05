@@ -1,6 +1,7 @@
 [project]
 name = "auglab"
-version = "20260109"
+# Derived from the git tag by setuptools-scm; see [tool.setuptools_scm] below.
+dynamic = ["version"]
 requires-python = ">=3.10"
 description = "AugLab investigates the influence of different data augmentation strategies on MRI training performance."
 readme = "README.md"
@@ -29,7 +30,12 @@ keywords = [
 dependencies = [
     "batchgenerators",
     "batchgeneratorsv2",
-    "kornia",
+    # auglab subclasses kornia's private augmentation internals
+    # (_AugmentationBase, RigidAffineAugmentationBase3D, augmentation.container.ops,
+    # _adapted_rsampling, _tuple_range_reader). Those move between minor releases,
+    # so the range is capped and every version in it is exercised by
+    # .github/workflows/tests.yml. Verified working: 0.7.3 - 0.8.3.
+    "kornia>=0.7.3,<0.9",
     "nibabel",
     "numpy",
     "progress",
@@ -66,8 +72,24 @@ homepage = "https://github.com/neuropoly/AugLab"
 repository = "https://github.com/neuropoly/AugLab"
 
 [build-system]
-requires = ["pip>=23", "setuptools>=67"]
+requires = ["pip>=23", "setuptools>=67", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+# Dynamic versioning, the setuptools counterpart of the poetry-dynamic-versioning
+# setup in Hendrik-code/TPTBox: the released version is whatever the git tag says,
+# so pyproject and the tag can never disagree.
+#
+# Releases are tagged with a date, optionally prefixed: r20260615, v20260615,
+# or a bare 20260615. The default regex rejects the "r" prefix already in use.
+tag_regex = "^(?:[rvV])?(?P<version>\\d+(?:\\.\\d+)*)$"
+# Between tags, produce e.g. 20260616.dev19 rather than a PEP 440 local version,
+# because PyPI rejects local versions (+g<sha>) on upload.
+local_scheme = "no-local-version"
+# Building outside a git checkout (from an sdist, or an exported tree) has no tag
+# to read. Deliberately obviously-wrong so a mis-built artifact is easy to spot;
+# the publish workflow refuses to upload it.
+fallback_version = "0.0.0"
 
 [tool.setuptools]
 include-package-data = true

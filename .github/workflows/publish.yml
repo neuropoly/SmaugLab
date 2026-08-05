@@ -25,6 +25,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from the git tag; a shallow
+          # clone has no tags and would build as 0.0.0.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -35,32 +39,48 @@ jobs:
           python -m pip install --upgrade pip
           pip install build twine
 
-      - name: Check the release tag matches project.version
-        # project.version is bumped by hand (it is a date string like 20260109).
-        # Without this guard, tagging a release without bumping it fails deep
-        # inside twine with "file already exists" -- or worse, silently
-        # republishes nothing.
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check the built version came from the release tag
+        # setuptools-scm derives the version from the tag, so the two cannot
+        # disagree the way a hand-maintained project.version could. What can
+        # still go wrong is the tag not matching [tool.setuptools_scm].tag_regex,
+        # or the checkout arriving without tags -- both of which silently yield
+        # the 0.0.0 fallback or a .dev version. Catch that before uploading.
         if: github.event_name == 'release'
         run: |
           python - <<'PY'
-          import os, sys, tomllib
+          import glob, os, pathlib, sys
 
-          with open("pyproject.toml", "rb") as handle:
-              version = tomllib.load(handle)["project"]["version"]
+          tag = os.environ["RELEASE_TAG"]
+          expected = tag.lstrip("rvV")
+          built = {pathlib.Path(p).name.split("-")[1] for p in glob.glob("dist/*.whl")}
 
-          tag = os.environ["RELEASE_TAG"].removeprefix("v")
-          if tag != version:
+          print(f"tag={tag!r} expected={expected!r} built={sorted(built)}")
+          if built != {expected}:
               sys.exit(
-                  f"release tag '{tag}' does not match project.version '{version}' in "
-                  "pyproject.toml -- bump the version before tagging"
+                  f"built version {sorted(built)} does not match release tag '{tag}'. "
+                  "Either the tag does not match [tool.setuptools_scm].tag_regex in "
+                  "pyproject.toml, or the checkout has no tags (needs fetch-depth: 0)."
               )
-          print(f"tag and project.version agree: {version}")
           PY
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
 
-      - name: Build sdist and wheel
-        run: python -m build
+      - name: Refuse to publish a fallback version
+        run: |
+          python - <<'PY'
+          import glob, pathlib, sys
+
+          built = {pathlib.Path(p).name.split("-")[1] for p in glob.glob("dist/*.whl")}
+          if "0.0.0" in built:
+              sys.exit(
+                  "refusing to publish 0.0.0 -- setuptools-scm found no git tag, so the "
+                  "version is the fallback rather than a real release"
+              )
+          print(f"version looks real: {sorted(built)}")
+          PY
 
       - name: Check distribution metadata
         run: twine check dist/*

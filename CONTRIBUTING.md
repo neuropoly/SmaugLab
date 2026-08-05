@@ -1,7 +1,7 @@
 # Contributing to AugLab
 
 Thanks for contributing. This page covers the development setup, the checks CI
-runs, and the repository settings an admin needs to configure.
+runs, and how versioning and releases work.
 
 ## Development setup
 
@@ -78,68 +78,34 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 4. Open a PR. CODEOWNERS requests reviewers automatically.
 5. One approval and green checks are required before merge.
 
-## Releasing
+## Versioning
 
-`project.version` in `pyproject.toml` is a manual date string (e.g. `20260109`).
+The version comes from the git tag via
+[setuptools-scm](https://setuptools-scm.readthedocs.io/) — there is no version
+string to maintain in `pyproject.toml`. To release, tag a commit `r<date>`
+(e.g. `r20260801`) and publish a GitHub release; `publish.yml` does the rest.
 
-1. Bump `project.version` and merge that to `main`.
-2. Create a GitHub release tagged `v<version>` (e.g. `v20260109`).
-3. `publish.yml` builds and uploads to PyPI.
-
-The workflow refuses to publish if the tag disagrees with `project.version`, or
-if the wheel is missing its config JSONs. To rehearse without touching PyPI,
-run the workflow manually via **Actions → publish to PyPI → Run workflow** and
-pick `testpypi`.
-
-## Repository settings (admin only)
-
-These cannot be set from files in the repository.
-
-### Secrets
-
-**Settings → Secrets and variables → Actions:**
-
-| Secret | Needed by |
+| Where you are | Version you get |
 | --- | --- |
-| `PYPI_API_TOKEN` | `publish.yml` — without it, releases cannot upload |
-| `TEST_PYPI_API_TOKEN` | `publish.yml` TestPyPI dry runs (optional) |
-| `CODECOV_TOKEN` | coverage upload in `tests.yml` (optional) |
+| On tag `r20260801`, clean tree | `20260801` |
+| 19 commits past `r20260615` | `20260616.dev19` |
+| No git metadata (sdist, export) | `0.0.0` (fallback) |
 
-`publish.yml` uses a `pypi` environment; create it under
-**Settings → Environments** and consider adding a required reviewer so a
-release upload needs a human to approve it.
+Tags may be prefixed `r`/`v` or bare; see `[tool.setuptools_scm].tag_regex`.
+Anything that builds or installs the package needs the tags to be present, so
+every workflow checkout uses `fetch-depth: 0` — a shallow clone has no tags and
+silently builds `0.0.0`. `publish.yml` refuses to upload that.
 
-### Branch protection
+## Dependency pins
 
-This is the "Branch protection, requiring code-review" part of issue #34.
-Via **Settings → Rules → Rulesets**, or with the `gh` CLI:
+`kornia` is capped at `>=0.7.3,<0.9`. AugLab subclasses kornia's *private*
+augmentation internals (`_AugmentationBase`, `RigidAffineAugmentationBase3D`,
+`augmentation.container.ops`, `_adapted_rsampling`, `_tuple_range_reader`),
+which move between minor releases — 0.8.3 removed `kornia.core.Module` and the
+whole `kornia.utils.helpers` module. The `kornia-compat` CI job runs the suite
+against both ends of the supported range, so a break shows up here rather than
+in a user's training run.
 
-```bash
-gh api -X PUT repos/neuropoly/AugLab/branches/main/protection \
-  --input - <<'JSON'
-{
-  "required_status_checks": {
-    "strict": true,
-    "contexts": [
-      "pre-commit",
-      "test (python 3.10)",
-      "test (python 3.11)",
-      "test (python 3.12)",
-      "build distribution"
-    ]
-  },
-  "enforce_admins": false,
-  "required_pull_request_reviews": {
-    "required_approving_review_count": 1,
-    "dismiss_stale_reviews": true,
-    "require_code_owner_reviews": true
-  },
-  "restrictions": null,
-  "allow_force_pushes": false,
-  "allow_deletions": false
-}
-JSON
-```
-
-Set this up *after* the first PR has run, so the status check names exist and
-GitHub can match them.
+`auglab/transforms/gpu/contrast.py` imports the private
+`torchvision.transforms._functional_tensor`. It still exists as of torchvision
+0.28, but carries the same risk.
