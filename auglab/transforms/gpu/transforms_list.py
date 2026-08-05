@@ -4,8 +4,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from kornia.core import Tensor
-from torch import nn
+from torch import Tensor, nn
 
 from auglab.transforms.gpu.base import AugmentationSequentialCustom, ImageOnlyTransform
 from auglab.transforms.gpu.contrast import (

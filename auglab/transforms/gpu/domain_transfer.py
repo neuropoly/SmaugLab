@@ -39,7 +39,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from kornia.core import Tensor
+from torch import Tensor
 from torch.distributions import Dirichlet
 from torch.nn import functional as F
 

@@ -26,8 +26,7 @@ import os
 from typing import Any
 
 import torch
-from kornia.core import Tensor
-from torch import nn
+from torch import Tensor, nn
 
 from auglab.transforms.gpu.base import ImageOnlyTransform
 from auglab.transforms.synthseg.generator import SynthSegGenerator

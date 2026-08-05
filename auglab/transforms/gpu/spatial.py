@@ -7,9 +7,13 @@ from kornia.augmentation._3d.base import RigidAffineAugmentationBase3D
 from kornia.augmentation.random_generator.base import RandomGeneratorBase, UniformDistribution
 from kornia.augmentation.utils import _adapted_rsampling, _tuple_range_reader
 from kornia.constants import DataKey, Resample
-from kornia.core import Tensor
 from kornia.geometry import deg2rad, get_affine_matrix3d, warp_affine3d
-from kornia.utils.helpers import _extract_device_dtype
+from torch import Tensor
+
+try:  # kornia < 0.8.3
+    from kornia.utils.helpers import _extract_device_dtype
+except ImportError:  # kornia >= 0.8.3 moved it and dropped kornia.utils.helpers
+    from kornia.core.utils import _extract_device_dtype
 
 from auglab.transforms.gpu.base import ImageOnlyTransform
 

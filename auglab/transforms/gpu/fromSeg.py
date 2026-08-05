@@ -3,8 +3,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
-from kornia.core import Tensor
-from torch import nn
+from torch import Tensor, nn
 from torch.nn import functional as F
 
 from auglab.transforms.gpu.base import ImageOnlyTransform

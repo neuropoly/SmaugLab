@@ -4,7 +4,7 @@ from typing import Any, Union
 
 import torch
 import torchvision.transforms._functional_tensor as F_t
-from kornia.core import Tensor
+from torch import Tensor
 from torch.nn import functional as F
 
 from auglab.transforms.gpu.base import ImageOnlyTransform

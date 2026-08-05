@@ -22,9 +22,10 @@ from kornia.augmentation.container.params import ParamItem
 from kornia.augmentation.container.patch import PatchSequential
 from kornia.augmentation.container.video import VideoSequential
 from kornia.constants import DataKey, Resample
-from kornia.core import Module, Tensor
 from kornia.geometry.boxes import Boxes
 from kornia.geometry.keypoints import Keypoints
+from torch import Tensor
+from torch.nn import Module
 
 DataType = Union[Tensor, list[Tensor], Boxes, Keypoints]
 SequenceDataType = Union[list[Tensor], list[list[Tensor]], list[Boxes], list[Keypoints]]
