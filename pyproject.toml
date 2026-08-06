@@ -19,6 +19,7 @@ authors = [
 # without checking it again.
 maintainers = [
     "Hendrik Möller",
+    "Nathan Molinier",
 ]
 homepage = "https://github.com/neuropoly/AugLab"
 repository = "https://github.com/neuropoly/AugLab"
