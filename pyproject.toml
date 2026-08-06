@@ -1,18 +1,22 @@
 [tool.poetry]
 name = "auglab"
 # Placeholder only. The real version is substituted at build time by
-# poetry-dynamic-versioning from the git tag -- same arrangement as
-# Hendrik-code/TPTBox. Do not bump this by hand.
+# poetry-dynamic-versioning from the git tag. Do not bump this by hand.
 version = "0.0.0"
 description = "AugLab investigates the influence of different data augmentation strategies on MRI training performance."
 readme = "README.md"
 authors = [
     "Nathan Molinier <nathan.molinier@polymtl.ca>",
+    "Hendrik Möller <hendrik.moeller[AT]tum.de>",
 ]
-# poetry-core only ever writes the FIRST author into the wheel metadata, so a
-# second entry in `authors` would silently vanish from the published package
-# (setuptools used to emit both). Listing Hendrik as a maintainer keeps the
-# attribution in the metadata as `Maintainer:`.
+# poetry-core writes only the FIRST entry of `authors` AND only the FIRST entry
+# of `maintainers` into the wheel metadata; every later entry is silently
+# dropped (setuptools used to emit both authors). So the two lists have to name
+# different people or someone disappears from the published package:
+#   authors[0]     -> Author: / Author-email:   (Nathan)
+#   maintainers[0] -> Maintainer:               (Hendrik)
+# Verified by inspecting the built wheel's METADATA -- do not reorder these
+# without checking it again.
 maintainers = [
     "Hendrik Möller",
 ]
