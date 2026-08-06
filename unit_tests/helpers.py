@@ -1,4 +1,4 @@
-"""Shared fixtures for the AugLab test suite.
+"""Shared helpers and the base TestCase for the AugLab test suite.
 
 Everything here runs on CPU with tiny volumes, so the whole suite stays fast
 enough to gate every pull request. No GPU and no image data on disk required.
@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import random
+import unittest
 from pathlib import Path
 
-import pytest
+import numpy as np
 import torch
 
 # Small enough to be fast, large enough that the spatial transforms (crop,
@@ -19,30 +21,44 @@ VOLUME_SHAPE = (1, 1, 24, 24, 24)
 SEED = 1234
 
 
-@pytest.fixture(autouse=True)
-def _seeded():
-    """Seed every RNG the transforms reach for, so failures are reproducible."""
-    import random
+def seed_everything(seed: int = SEED) -> None:
+    """Pin every RNG the transforms reach for.
 
-    import numpy as np
-
-    torch.manual_seed(SEED)
-    random.seed(SEED)
-    np.random.seed(SEED)
-
-
-@pytest.fixture
-def tiny_volume() -> torch.Tensor:
-    """A [N, C, D, H, W] float image in roughly the range the transforms expect."""
-    return torch.rand(*VOLUME_SHAPE, dtype=torch.float32)
+    Some transforms use the stdlib and numpy generators, not just torch's, so
+    all three have to be set or results are not reproducible between runs.
+    """
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
 
 
-@pytest.fixture
-def tiny_seg() -> torch.Tensor:
-    """A binary segmentation mask matching `tiny_volume`."""
-    seg = torch.zeros(*VOLUME_SHAPE, dtype=torch.float32)
-    seg[:, :, 6:18, 6:18, 6:18] = 1.0
-    return seg
+class AugLabTestCase(unittest.TestCase):
+    """Base class that seeds the RNGs and hands out the standard test volumes."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        seed_everything()
+
+    def tiny_volume(self) -> torch.Tensor:
+        """A [N, C, D, H, W] float image in roughly the range the transforms expect."""
+        return torch.rand(*VOLUME_SHAPE, dtype=torch.float32)
+
+    def tiny_seg(self) -> torch.Tensor:
+        """A binary segmentation mask matching `tiny_volume`."""
+        seg = torch.zeros(*VOLUME_SHAPE, dtype=torch.float32)
+        seg[:, :, 6:18, 6:18, 6:18] = 1.0
+        return seg
+
+    def assertIsImageLike(self, image: torch.Tensor, reference: torch.Tensor, label: str) -> None:
+        """Assert `image` is a finite float tensor shaped like `reference`."""
+        self.assertEqual(image.shape, reference.shape, f"{label} changed the volume shape")
+        self.assertTrue(image.dtype.is_floating_point, f"{label} returned a non-float tensor")
+        self.assertTrue(bool(torch.isfinite(image).all()), f"{label} produced NaN or Inf")
+
+
+def first_output(result):
+    """Pipelines return either a tensor or a (image, mask) sequence."""
+    return result[0] if isinstance(result, (list, tuple)) else result
 
 
 def configs_dir() -> Path:
