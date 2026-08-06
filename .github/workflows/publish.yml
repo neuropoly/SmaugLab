@@ -107,14 +107,6 @@ jobs:
           print("wheel contents look complete")
           PY
 
-      - name: Upload to TestPyPI
-        if: github.event_name == 'workflow_dispatch' && inputs.repository == 'testpypi'
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
-          TWINE_REPOSITORY: testpypi
-        run: twine upload dist/*
-
       - name: Upload to PyPI
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.repository == 'pypi')
         env:
