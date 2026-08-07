@@ -1,9 +1,9 @@
 [tool.poetry]
-name = "auglab"
+name = "smauglab"
 # Placeholder only. The real version is substituted at build time by
 # poetry-dynamic-versioning from the git tag. Do not bump this by hand.
 version = "0.0.0"
-description = "AugLab investigates the influence of different data augmentation strategies on MRI training performance."
+description = "SmaugLab investigates the influence of different data augmentation strategies on MRI training performance."
 readme = "README.md"
 authors = [
     "Nathan Molinier <nathan.molinier@polymtl.ca>",
@@ -21,8 +21,8 @@ maintainers = [
     "Hendrik Möller",
     "Nathan Molinier",
 ]
-homepage = "https://github.com/neuropoly/AugLab"
-repository = "https://github.com/neuropoly/AugLab"
+homepage = "https://github.com/neuropoly/SmaugLab"
+repository = "https://github.com/neuropoly/SmaugLab"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
@@ -41,20 +41,20 @@ keywords = [
     "offline augmentation",
     "mri",
 ]
-# auglab has no __init__.py anywhere, so it is a PEP 420 namespace package.
+# smauglab has no __init__.py anywhere, so it is a PEP 420 namespace package.
 # poetry-core still walks the tree correctly; the CI build job and
 # unit_tests/test_packaging.py assert the wheel really contains every module.
-packages = [{ include = "auglab" }]
+packages = [{ include = "smauglab" }]
 # The config JSONs are package data, not code, so they need listing explicitly.
-# A wheel without them is broken: auglab resolves its default config through
+# A wheel without them is broken: smauglab resolves its default config through
 # importlib.resources at runtime.
-include = [{ path = "auglab/configs/**/*.json", format = ["sdist", "wheel"] }]
+include = [{ path = "smauglab/configs/**/*.json", format = ["sdist", "wheel"] }]
 
 [tool.poetry.dependencies]
 python = ">=3.10"
 batchgenerators = "*"
 batchgeneratorsv2 = "*"
-# auglab subclasses kornia's private augmentation internals
+# smauglab subclasses kornia's private augmentation internals
 # (_AugmentationBase, RigidAffineAugmentationBase3D, augmentation.container.ops,
 # _adapted_rsampling, _tuple_range_reader). Those move between minor releases,
 # so the range is capped and both ends are exercised by the kornia-compat job
@@ -91,7 +91,7 @@ all = ["monai", "tqdm", "wandb"]
 dev = ["build", "coverage", "pre-commit", "pytest", "pytest-cov", "ruff", "twine"]
 
 [tool.poetry.scripts]
-auglab_add_nnunettrainer = "auglab.add_trainer:main"
+smauglab_add_nnunettrainer = "smauglab.add_trainer:main"
 
 [build-system]
 requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
@@ -217,7 +217,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 # The trainers mirror nnU-Net's upstream signatures verbatim, including its
 # `device: torch.device = torch.device("cuda")` default. Diverging would break
 # the drop-in contract with nnUNetTrainer.
-"auglab/trainers/**" = ["B008"]
+"smauglab/trainers/**" = ["B008"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 20
@@ -250,7 +250,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["auglab"]
+source = ["smauglab"]
 
 [tool.coverage.report]
 exclude_lines = [

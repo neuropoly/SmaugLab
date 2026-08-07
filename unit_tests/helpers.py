@@ -1,4 +1,4 @@
-"""Shared helpers and the base TestCase for the AugLab test suite.
+"""Shared helpers and the base TestCase for the SmaugLab test suite.
 
 Everything here runs on CPU with tiny volumes, so the whole suite stays fast
 enough to gate every pull request. No GPU and no image data on disk required.
@@ -32,7 +32,7 @@ def seed_everything(seed: int = SEED) -> None:
     np.random.seed(seed)
 
 
-class AugLabTestCase(unittest.TestCase):
+class SmaugLabTestCase(unittest.TestCase):
     """Base class that seeds the RNGs and hands out the standard test volumes."""
 
     def setUp(self) -> None:
@@ -65,16 +65,16 @@ def configs_dir() -> Path:
     """Locate the packaged config directory.
 
     Uses importlib.resources rather than a path relative to this file, which is
-    how auglab.add_trainer resolves its own package data -- so the tests
+    how smauglab.add_trainer resolves its own package data -- so the tests
     exercise the same lookup that ships to users.
     """
-    from auglab import configs
+    from smauglab import configs
 
     return Path(str(importlib.resources.files(configs)))
 
 
 def all_config_paths() -> list[Path]:
-    """Every JSON config shipped in auglab/configs (excluding the data/ examples)."""
+    """Every JSON config shipped in smauglab/configs (excluding the data/ examples)."""
     return sorted(p for p in configs_dir().glob("*.json"))
 
 
@@ -94,7 +94,7 @@ def requires_external_asset(config_path: Path) -> str | None:
     path baked into the module, which only exists on the authors' machines.
     Rather than fail CI, skip those configs and say why.
     """
-    from auglab.transforms.gpu.domain_transfer import DEFAULT_BANK_PATH
+    from smauglab.transforms.gpu.domain_transfer import DEFAULT_BANK_PATH
 
     params = json.loads(config_path.read_text())
     params = params.get("GPU", params)

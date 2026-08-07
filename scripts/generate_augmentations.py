@@ -10,9 +10,9 @@ import numpy as np
 import torch
 from tqdm.contrib.concurrent import process_map
 
-from auglab.transforms.cpu.transforms import AugTransforms
-from auglab.utils.image import Image, resample_nib, zeros_like
-from auglab.utils.utils import fetch_image_config
+from smauglab.transforms.cpu.transforms import AugTransforms
+from smauglab.utils.image import Image, resample_nib, zeros_like
+from smauglab.utils.utils import fetch_image_config
 
 warnings.filterwarnings("ignore")
 
@@ -31,7 +31,7 @@ def main():
         "-d",
         type=Path,
         required=True,
-        help="Data config JSON file containing the IMAGE and LABEL paths of the files used. Only TRAINING will be augmented. See example in auglab.configs.data (required).",
+        help="Data config JSON file containing the IMAGE and LABEL paths of the files used. Only TRAINING will be augmented. See example in smauglab.configs.data (required).",
     )
     parser.add_argument(
         "--ofolder",
@@ -45,7 +45,7 @@ def main():
         "-t",
         type=Path,
         required=True,
-        help="Transforms config JSON file containing the parameters of the transformations. See example in auglab.configs (required).",
+        help="Transforms config JSON file containing the parameters of the transformations. See example in smauglab.configs (required).",
     )
     parser.add_argument(
         "--augmentations-per-image", "-n", type=int, default=5, help="Number of augmentation images to generate. Default is 5."
@@ -220,9 +220,9 @@ def augment(
 if __name__ == "__main__":
     main()
     # augment_mp(
-    #     data_json_path="auglab/configs/data/data.json",
-    #     transforms_json_path="auglab/configs/transform_params.json",
-    #     ofolder="/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/test-auglab/augmented",
+    #     data_json_path="smauglab/configs/data/data.json",
+    #     transforms_json_path="smauglab/configs/transform_params.json",
+    #     ofolder="/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/test-smauglab/augmented",
     #     augmentations_per_image=2,
     #     overwrite=True,
     #     max_workers=mp.cpu_count(),

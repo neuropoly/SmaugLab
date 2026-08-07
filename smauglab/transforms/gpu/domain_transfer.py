@@ -43,7 +43,7 @@ from torch import Tensor
 from torch.distributions import Dirichlet
 from torch.nn import functional as F
 
-from auglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform
 
 # Default transfer LUT bank (built by embeddaug/analysis/playground/build_transfer_bank.py).
 DEFAULT_BANK_PATH = "/DATA/NAS/ongoing_projects/hendrik/nathan-transferaug/embeddaug/analysis/playground/results/domain_transfer_bank.npz"

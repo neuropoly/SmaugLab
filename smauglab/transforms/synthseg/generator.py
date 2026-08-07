@@ -34,7 +34,7 @@ from typing import Union
 import torch
 from torch import nn
 
-from auglab.transforms.synthseg import functional as FN
+from smauglab.transforms.synthseg import functional as FN
 
 Number = Union[int, float]
 

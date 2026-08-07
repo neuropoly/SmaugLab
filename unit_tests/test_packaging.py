@@ -1,6 +1,6 @@
 """The built wheel must actually contain the package.
 
-auglab has no __init__.py anywhere, so it is picked up purely by the build
+smauglab has no __init__.py anywhere, so it is picked up purely by the build
 backend's namespace-package handling. That works, but it is easy to break
 silently -- a wheel that is missing a subpackage installs fine and only fails
 at import time for users. This test builds the real artifact and looks inside.
@@ -22,8 +22,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def source_modules() -> set[str]:
-    """Every .py file under auglab/, as a wheel-relative path."""
-    package_root = REPO_ROOT / "auglab"
+    """Every .py file under smauglab/, as a wheel-relative path."""
+    package_root = REPO_ROOT / "smauglab"
     return {str(path.relative_to(REPO_ROOT)) for path in package_root.rglob("*.py") if "__pycache__" not in path.parts}
 
 
@@ -77,7 +77,7 @@ class TestWheelContents(unittest.TestCase):
 
     def test_wheel_contains_the_config_data(self):
         """The JSON configs are the package's data; without them nothing runs."""
-        configs = {n for n in self.wheel_names() if n.startswith("auglab/configs/") and n.endswith(".json")}
+        configs = {n for n in self.wheel_names() if n.startswith("smauglab/configs/") and n.endswith(".json")}
 
         self.assertTrue(configs, "wheel ships no config JSONs")
         self.assertTrue(

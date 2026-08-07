@@ -1,7 +1,7 @@
 # SynthSeg generative augmentation
 
 A faithful [torch] re-implementation of the **SynthSeg** "brain generator" as an
-AugLab augmentation. Unlike every other transform in AugLab — which perturbs a
+SmaugLab augmentation. Unlike every other transform in SmaugLab — which perturbs a
 *real* image — SynthSeg **ignores the input image entirely and synthesises a new
 image from a label map**, using domain randomisation (a per-label Gaussian
 mixture model plus random spatial, bias, intensity and resolution corruptions).
@@ -63,8 +63,8 @@ Defaults match `BrainGenerator.__init__` (which overrides several
 
 ## Implementation notes / deviations
 
-- **3D only** (5D `(B, C, D, H, W)` tensors), matching AugLab's GPU transforms.
-- Affine transforms are applied **about the volume centre** (like AugLab's
+- **3D only** (5D `(B, C, D, H, W)` tensors), matching SmaugLab's GPU transforms.
+- Affine transforms are applied **about the volume centre** (like SmaugLab's
   `RandomAffine3DCustom`), rather than the corner-origin used by neuron's
   `affine_to_shift`. This keeps the anatomy in frame and is the standard choice;
   the visual augmentation is equivalent.
@@ -128,8 +128,8 @@ is ignored; `target` is the label map.
 
 ```python
 import importlib, torch
-import auglab.configs as configs
-from auglab.transforms.synthseg import SynthSegTransformsGPU
+import smauglab.configs as configs
+from smauglab.transforms.synthseg import SynthSegTransformsGPU
 
 cfg = importlib.resources.files(configs) / "synthseg_params.json"
 synth = SynthSegTransformsGPU(json_path=str(cfg)).to("cuda")
@@ -141,7 +141,7 @@ image, label = synth(data, target)   # image is fully synthetic, label is deform
 Or directly with the module API:
 
 ```python
-from auglab.transforms.synthseg import SynthSegGenerator
+from smauglab.transforms.synthseg import SynthSegGenerator
 gen = SynthSegGenerator(generation_labels=[0, 2, 3, 41, 42, ...],
                         n_neutral_labels=1, n_channels=1).to("cuda")
 image, label = gen(label_map)         # label_map: (B, 1, D, H, W)
@@ -150,14 +150,14 @@ image, label = gen(label_map)         # label_map: (B, 1, D, H, W)
 ### 2. As an `ImageOnlyTransform` in an existing GPU pipeline
 
 `RandomSynthSegGPU` replaces the image with a GMM synthesis of `params['seg']`
-(intensity-only: GMM → bias → intensity → resolution). Put AugLab's geometric
+(intensity-only: GMM → bias → intensity → resolution). Put SmaugLab's geometric
 transforms *before* it so the mask is deformed first and SynthSeg generates from
 the deformed labels:
 
 ```python
-from auglab.transforms.gpu.base import AugmentationSequentialCustom
-from auglab.transforms.gpu.spatial import RandomAffine3DCustom
-from auglab.transforms.synthseg import RandomSynthSegGPU
+from smauglab.transforms.gpu.base import AugmentationSequentialCustom
+from smauglab.transforms.gpu.spatial import RandomAffine3DCustom
+from smauglab.transforms.synthseg import RandomSynthSegGPU
 
 aug = AugmentationSequentialCustom(
     RandomAffine3DCustom(degrees=15, scale=[0.8, 1.2], p=1.0),
@@ -170,7 +170,7 @@ image, seg = aug(image, seg)
 
 > **Note (kornia 0.7.4 quirk):** when an `AugmentationSequentialCustom` is called
 > with more than one data key, kornia detaches the returned **input image** to the
-> CPU (the segmentation/mask stays on the GPU). This affects *every* AugLab GPU
+> CPU (the segmentation/mask stays on the GPU). This affects *every* SmaugLab GPU
 > transform identically, not just SynthSeg — re-`.to(device)` the returned image
 > if you need it back on the GPU. The full-pipeline `SynthSegTransformsGPU` driver
 > (section 1) does **not** go through kornia's sequential and is unaffected.
@@ -199,6 +199,6 @@ are therefore inert in this path — add an `AffineTransform`/`FlipTransform` bl
 Both modules are runnable and self-contained (no data files, CPU-friendly):
 
 ```bash
-python -m auglab.transforms.synthseg.generator
-python -m auglab.transforms.synthseg.transforms
+python -m smauglab.transforms.synthseg.generator
+python -m smauglab.transforms.synthseg.transforms
 ```

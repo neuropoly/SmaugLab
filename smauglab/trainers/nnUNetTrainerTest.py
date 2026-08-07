@@ -20,10 +20,10 @@ from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.helpers import dummy_context
 from torch import autocast
 
-from auglab import configs
-from auglab.trainers.utils import DownsampleSegForDSTransformCustom
-from auglab.transforms.cpu.transforms import AugTransformsTest
-from auglab.transforms.gpu.transforms import AugTransformsGPU
+from smauglab import configs
+from smauglab.trainers.utils import DownsampleSegForDSTransformCustom
+from smauglab.transforms.cpu.transforms import AugTransformsTest
+from smauglab.transforms.gpu.transforms import AugTransformsGPU
 
 
 class nnUNetTrainerTest(nnUNetTrainer):

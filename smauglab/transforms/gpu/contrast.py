@@ -7,7 +7,7 @@ import torchvision.transforms._functional_tensor as F_t
 from torch import Tensor
 from torch.nn import functional as F
 
-from auglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform
 
 
 def _choose_region_mode(p_in: float, p_out: float, seg_mask: torch.Tensor | None) -> str:  # noqa: ARG001 -- seg_mask kept for signature symmetry with _apply_region_mode

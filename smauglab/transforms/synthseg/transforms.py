@@ -1,10 +1,10 @@
-"""AugLab-style wrappers around the SynthSeg generative model.
+"""SmaugLab-style wrappers around the SynthSeg generative model.
 
 Two entry points are provided:
 
 * :class:`RandomSynthSegGPU` -- an :class:`ImageOnlyTransform` that *replaces*
   the image with a GMM-synthesised one derived from ``params['seg']``. It is
-  intensity-only (no internal spatial deformation), so it composes with AugLab's
+  intensity-only (no internal spatial deformation), so it composes with SmaugLab's
   existing geometric transforms (``RandomAffine3DCustom``, ``RandomFlipTransformGPU``,
   ...) inside an :class:`AugmentationSequentialCustom`: place those *before* it so
   the mask is deformed first and SynthSeg generates from the deformed labels,
@@ -12,7 +12,7 @@ Two entry points are provided:
   pipeline like any other transform.
 
 * :class:`SynthSegTransformsGPU` -- a config-driven top-level module mirroring
-  :class:`auglab.transforms.gpu.transforms.AugTransformsGPU`. It runs the *full*
+  :class:`smauglab.transforms.gpu.transforms.AugTransformsGPU`. It runs the *full*
   SynthSeg pipeline (spatial deform + flip + GMM + bias + intensity + resolution)
   and returns ``(image, label)`` from ``forward(data, target)`` -- the calling
   convention used by the nnUNet trainer and ``train_monai.py``. This is the
@@ -28,8 +28,8 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
-from auglab.transforms.gpu.base import ImageOnlyTransform
-from auglab.transforms.synthseg.generator import SynthSegGenerator
+from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.synthseg.generator import SynthSegGenerator
 
 # Keys understood from the JSON config / kwargs, forwarded to SynthSegGenerator.
 _GENERATOR_KEYS = {
@@ -88,7 +88,7 @@ class RandomSynthSegGPU(ImageOnlyTransform):
     Intensity-only: GMM sampling -> bias field -> intensity augmentation ->
     resolution randomisation. Spatial deformation / flipping are disabled so that
     geometry stays consistent with the segmentation propagated by the surrounding
-    :class:`AugmentationSequentialCustom` (use AugLab's geometric transforms for
+    :class:`AugmentationSequentialCustom` (use SmaugLab's geometric transforms for
     that, placed before this one).
 
     Args:

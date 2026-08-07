@@ -10,7 +10,7 @@ assignees: ''
 A clear description of the limitation you are hitting.
 
 **Proposed solution**
-What you would like AugLab to do.
+What you would like SmaugLab to do.
 
 **If this is a new augmentation**
 - What does it simulate (acquisition artefact, contrast change, anatomy change)?

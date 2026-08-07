@@ -13,5 +13,5 @@ What you are trying to do and where you are stuck.
 Commands, config JSONs, or documentation you already looked at.
 
 **Environment (if relevant)**
-- AugLab version or commit:
+- SmaugLab version or commit:
 - Python / PyTorch version:

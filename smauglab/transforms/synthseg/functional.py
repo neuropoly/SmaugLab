@@ -11,7 +11,7 @@ The reference TensorFlow implementation lives in ``BBillot/SynthSeg`` and
 ``BBillot/lab2im``. Each function below cites the corresponding reference layer.
 Everything operates on 3D volumes stored as ``(B, C, D, H, W)`` torch tensors
 (label maps as ``(B, 1, D, H, W)`` integer tensors), which is the convention
-used throughout AugLab's GPU transforms.
+used throughout SmaugLab's GPU transforms.
 
 Spatial conventions
 --------------------
@@ -20,7 +20,7 @@ Spatial conventions
   the ``(x, y, z) = (W, H, D)`` order expected by ``F.grid_sample`` at the very
   end, with ``align_corners=True`` so that integer voxel indices map exactly.
 * Affine transforms are applied about the volume centre (standard practice and
-  matching AugLab's existing ``RandomAffine3DCustom``), so small rotations /
+  matching SmaugLab's existing ``RandomAffine3DCustom``), so small rotations /
   scalings keep the anatomy in frame.
 """
 
@@ -64,7 +64,7 @@ def to_label_map(seg: torch.Tensor) -> torch.Tensor:
     Accepts:
       * ``(B, 1, D, H, W)``  -> rounded to integer labels (used directly).
       * ``(B, C, D, H, W)`` one-hot (C > 1) -> argmax + 1, background (all-zero
-        across channels) stays 0. This matches AugLab's
+        across channels) stays 0. This matches SmaugLab's
         :func:`collapse_onehot_to_index` convention where channel ``c`` encodes
         label ``c + 1``.
       * ``(B, D, H, W)``     -> unsqueezed to ``(B, 1, D, H, W)``.

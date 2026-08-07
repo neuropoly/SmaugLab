@@ -15,7 +15,7 @@ try:  # kornia < 0.8.3
 except ImportError:  # kornia >= 0.8.3 moved it and dropped kornia.utils.helpers
     from kornia.core.utils import _extract_device_dtype
 
-from auglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform
 
 
 # Affine transform

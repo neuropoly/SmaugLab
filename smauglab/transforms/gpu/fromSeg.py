@@ -6,7 +6,7 @@ import torch.distributed as dist
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from auglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform
 
 # ── PALETTE AUG helpers ──────────────────────────────────────────────────
 
@@ -265,7 +265,7 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
 class RandomPALETTEGPU(ImageOnlyTransform):
     """
-    AugLab GPU augmentation implementing PALETTE synthesis.
+    SmaugLab GPU augmentation implementing PALETTE synthesis.
 
     Pipeline (mirrors src/synthesis/PALETTE_synthesis.py, self-contained):
       1. Min-max normalise input to [0, 1] per sample.
@@ -277,7 +277,7 @@ class RandomPALETTEGPU(ImageOnlyTransform):
          label's voxels with a fresh (μ, α).
       4. Optional second Gaussian blur, then foreground z-score.
 
-    Segmentation is read from params['seg'] (injected by AugLab's pipeline).
+    Segmentation is read from params['seg'] (injected by SmaugLab's pipeline).
     Supported formats: one-hot [B, C_seg, D, H, W] or index [B, 1, D, H, W].
 
     Args:

@@ -48,11 +48,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
-      - name: Install AugLab
+      - name: Install SmaugLab
         run: pip install -e ".[dev]"
 
       - name: Run tests
-        run: pytest -v --cov=auglab --cov-report=xml --cov-report=term-missing
+        run: pytest -v --cov=smauglab --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage to Codecov
         # Only after a merge to main, and only once per matrix.
@@ -63,7 +63,7 @@ jobs:
           fail_ci_if_error: false
 
   kornia-compat:
-    # auglab subclasses kornia's private augmentation internals, which move
+    # smauglab subclasses kornia's private augmentation internals, which move
     # between minor releases -- kornia 0.8.3 dropped kornia.core.Module and the
     # whole kornia.utils.helpers module. The `test` job only ever installs the
     # newest kornia, so it cannot catch a break at the other end of the
@@ -94,7 +94,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
-      - name: Install AugLab with a pinned kornia
+      - name: Install SmaugLab with a pinned kornia
         run: |
           pip install -e ".[dev]"
           pip install "kornia==${{ matrix.kornia-version }}"
@@ -138,13 +138,13 @@ jobs:
           wheel = glob.glob("dist/*.whl")[0]
           names = zipfile.ZipFile(wheel).namelist()
           modules = [n for n in names if n.endswith(".py")]
-          configs = [n for n in names if n.startswith("auglab/configs/") and n.endswith(".json")]
+          configs = [n for n in names if n.startswith("smauglab/configs/") and n.endswith(".json")]
 
           print(f"{wheel}: {len(modules)} modules, {len(configs)} configs")
           problems = []
           if len(modules) < 20:
               problems.append(f"only {len(modules)} modules in the wheel")
-          if "auglab/configs/transform_params_gpu.json" not in configs:
+          if "smauglab/configs/transform_params_gpu.json" not in configs:
               problems.append("default transform_params_gpu.json is missing")
           if problems:
               sys.exit("wheel is incomplete: " + "; ".join(problems))

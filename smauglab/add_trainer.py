@@ -4,11 +4,11 @@ import shutil
 
 import nnunetv2
 
-from auglab import trainers
+from smauglab import trainers
 
 
 def main():
-    parser = argparse.ArgumentParser(description="This script copies an auglab nnUNetTrainer inside the nnunet folder.")
+    parser = argparse.ArgumentParser(description="This script copies a smauglab nnUNetTrainer inside the nnunet folder.")
     parser.add_argument(
         "-t",
         "--trainer",

@@ -17,10 +17,10 @@ from batchgeneratorsv2.transforms.utils.compose import ComposeTransforms
 from batchgeneratorsv2.transforms.utils.pseudo2d import Convert2DTo3DTransform, Convert3DTo2DTransform
 from batchgeneratorsv2.transforms.utils.random import RandomTransform
 
-from auglab.transforms.cpu.artifact import ArtifactTransform
-from auglab.transforms.cpu.contrast import ConvTransform, FunctionTransform, HistogramEqualTransform
-from auglab.transforms.cpu.fromSeg import RedistributeTransform
-from auglab.transforms.cpu.spatial import ShapeTransform, SpatialCustomTransform
+from smauglab.transforms.cpu.artifact import ArtifactTransform
+from smauglab.transforms.cpu.contrast import ConvTransform, FunctionTransform, HistogramEqualTransform
+from smauglab.transforms.cpu.fromSeg import RedistributeTransform
+from smauglab.transforms.cpu.spatial import ShapeTransform, SpatialCustomTransform
 
 
 class AugTransforms(ComposeTransforms):
@@ -335,10 +335,10 @@ if __name__ == "__main__":
 
     import cv2
 
-    from auglab import configs
-    from auglab.transforms.gpu.transforms import AugTransformsGPU
-    from auglab.utils.image import Image, resample_nib
-    from auglab.utils.utils import normalize
+    from smauglab import configs
+    from smauglab.transforms.gpu.transforms import AugTransformsGPU
+    from smauglab.utils.image import Image, resample_nib
+    from smauglab.utils.utils import normalize
 
     configs_path = importlib.resources.files(configs)
     json_path = configs_path / "transform_params_hybrid_TAGE.json"

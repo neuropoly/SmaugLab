@@ -17,14 +17,14 @@ from pathlib import Path
 
 import torch
 
-from auglab.transforms.gpu.base import AugmentationSequentialCustom
-from unit_tests.helpers import AugLabTestCase, first_output
+from smauglab.transforms.gpu.base import AugmentationSequentialCustom
+from unit_tests.helpers import SmaugLabTestCase, first_output
 
 TRANSFORM_MODULES = [
-    "auglab.transforms.gpu.contrast",
-    "auglab.transforms.gpu.spatial",
-    "auglab.transforms.gpu.fromSeg",
-    "auglab.transforms.gpu.domain_transfer",
+    "smauglab.transforms.gpu.contrast",
+    "smauglab.transforms.gpu.spatial",
+    "smauglab.transforms.gpu.fromSeg",
+    "smauglab.transforms.gpu.domain_transfer",
 ]
 
 # Not augmentations: helper modules that happen to be nn.Module subclasses.
@@ -74,7 +74,7 @@ def build_kwargs(cls, signature) -> dict:
 def skip_reason(cls) -> str | None:
     """Some transforms depend on assets that do not exist on a fresh checkout."""
     if cls.__name__ == "RandomDomainTransferGPU":
-        from auglab.transforms.gpu.domain_transfer import DEFAULT_BANK_PATH
+        from smauglab.transforms.gpu.domain_transfer import DEFAULT_BANK_PATH
 
         if not Path(DEFAULT_BANK_PATH).is_file():
             return f"domain transfer bank not available at {DEFAULT_BANK_PATH}"
@@ -90,7 +90,7 @@ class TestTransformDiscovery(unittest.TestCase):
         )
 
 
-class TestTransformsRunStandalone(AugLabTestCase):
+class TestTransformsRunStandalone(SmaugLabTestCase):
     def _pipeline(self, cls, signature):
         """Drive a single transform the way AugTransformsGPU does."""
         return AugmentationSequentialCustom(

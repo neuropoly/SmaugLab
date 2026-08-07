@@ -13,7 +13,7 @@ import unittest
 import torch
 
 from unit_tests.helpers import (
-    AugLabTestCase,
+    SmaugLabTestCase,
     all_config_paths,
     first_output,
     gpu_config_paths,
@@ -37,10 +37,10 @@ class TestConfigsArePresent(unittest.TestCase):
                 self.assertIsInstance(payload, dict, f"{config_path.name} should hold a JSON object")
 
 
-class TestGpuConfigs(AugLabTestCase):
+class TestGpuConfigs(SmaugLabTestCase):
     def test_gpu_config_builds_and_runs(self):
         """Build the pipeline from each config and push one volume through it."""
-        from auglab.transforms.gpu.transforms import AugTransformsGPU
+        from smauglab.transforms.gpu.transforms import AugTransformsGPU
 
         for config_path in GPU_CONFIGS:
             with self.subTest(config=config_path.name):
@@ -56,7 +56,7 @@ class TestGpuConfigs(AugLabTestCase):
 
     def test_gpu_config_is_deterministic_under_a_seed(self):
         """Same seed, same output -- otherwise published experiments are not reproducible."""
-        from auglab.transforms.gpu.transforms import AugTransformsGPU
+        from smauglab.transforms.gpu.transforms import AugTransformsGPU
 
         def run_once(config_path):
             # Some transforms reach for the stdlib/numpy RNGs, not just torch's,

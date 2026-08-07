@@ -13,7 +13,7 @@ A clear and concise description of what goes wrong.
 Steps to reproduce the behaviour, ideally with the exact command:
 
 ```bash
-# e.g. AUGLAB_PARAMS_GPU_JSON=/abs/path/params.json nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU
+# e.g. SMAUGLAB_PARAMS_GPU_JSON=/abs/path/params.json nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU
 ```
 
 **Config JSON**
@@ -35,7 +35,7 @@ The full traceback, not just the last line.
 ```
 
 **Environment**
-- AugLab version or commit:
+- SmaugLab version or commit:
 - Python version:
 - PyTorch version and CUDA build:
 - nnU-Net version (if applicable):

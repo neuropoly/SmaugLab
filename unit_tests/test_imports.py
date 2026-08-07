@@ -12,22 +12,22 @@ import importlib.util
 import unittest
 from pathlib import Path
 
-import auglab
+import smauglab
 
 # Requires the optional `nnunetv2` extra; skipped rather than failed when absent.
-OPTIONAL_PREFIXES = ("auglab.trainers", "auglab.add_trainer")
+OPTIONAL_PREFIXES = ("smauglab.trainers", "smauglab.add_trainer")
 
 
 def module_names() -> list[str]:
-    """Every .py file under auglab/, as a dotted module name.
+    """Every .py file under smauglab/, as a dotted module name.
 
     Deliberately a filesystem walk rather than pkgutil.walk_packages: several
     subdirectories (transforms/, transforms/cpu/, transforms/gpu/, utils/) have
-    no __init__.py, so auglab resolves as a PEP 420 namespace package and
+    no __init__.py, so smauglab resolves as a PEP 420 namespace package and
     walk_packages only reaches 4 of the ~24 modules. Walking the tree keeps
     this test honest regardless of how the package is laid out.
     """
-    roots = [Path(p) for p in auglab.__path__]
+    roots = [Path(p) for p in smauglab.__path__]
     names = set()
     for root in roots:
         for path in root.rglob("*.py"):
@@ -39,7 +39,7 @@ def module_names() -> list[str]:
                 parts.pop()
             if not parts:
                 continue
-            names.add(".".join(["auglab", *parts]))
+            names.add(".".join(["smauglab", *parts]))
     return sorted(names)
 
 
@@ -73,8 +73,8 @@ class TestModuleImports(unittest.TestCase):
 
     def test_public_pipeline_entrypoints_are_importable(self):
         """The classes users actually construct must be reachable from the package."""
-        from auglab.transforms.gpu.transforms import AugTransformsGPU
-        from auglab.transforms.gpu.transforms_list import (
+        from smauglab.transforms.gpu.transforms import AugTransformsGPU
+        from smauglab.transforms.gpu.transforms_list import (
             AugTransformsGPURandomOrder,
             AugTransformsGPURandomOrderTA,
         )
