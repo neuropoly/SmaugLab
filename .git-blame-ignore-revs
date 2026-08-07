@@ -1,0 +1,9 @@
+# Revisions to skip in `git blame`.
+#
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# GitHub picks this file up automatically.
+
+# style: apply ruff autofix and formatter (#34)
+4c78918e1be261ca2373f1fbfb302654c7803a03

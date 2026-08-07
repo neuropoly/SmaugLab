@@ -1,0 +1,51 @@
+{
+    "TYPE": "LABEL",
+    "CONTRASTS": "T2w",
+    "DATASETS_PATH": "/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets",
+    "TRAINING": [
+        {
+            "IMAGE": "data-multi-subject/sub-mpicbs07/anat/sub-mpicbs07_T2w.nii.gz",
+            "LABEL": "data-multi-subject/derivatives/labels/sub-mpicbs07/anat/sub-mpicbs07_T2w_label-SC_seg.nii.gz"
+        },
+        {
+            "IMAGE": "data-multi-subject/sub-milan06/anat/sub-milan06_T2w.nii.gz",
+            "LABEL": "data-multi-subject/derivatives/labels/sub-milan06/anat/sub-milan06_T2w_label-SC_seg.nii.gz"
+        },
+        {
+            "IMAGE": "data-multi-subject/sub-tokyo750w02/anat/sub-tokyo750w02_T2w.nii.gz",
+            "LABEL": "data-multi-subject/derivatives/labels/sub-tokyo750w02/anat/sub-tokyo750w02_T2w_label-SC_seg.nii.gz"
+        },
+        {
+            "IMAGE": "data-multi-subject/sub-tehranS02/anat/sub-tehranS02_T2w.nii.gz",
+            "LABEL": "data-multi-subject/derivatives/labels/sub-tehranS02/anat/sub-tehranS02_T2w_label-SC_seg.nii.gz"
+        },
+        {
+            "IMAGE": "data-multi-subject/sub-barcelona02/anat/sub-barcelona02_T2w.nii.gz",
+            "LABEL": "data-multi-subject/derivatives/labels/sub-barcelona02/anat/sub-barcelona02_T2w_label-SC_seg.nii.gz"
+        },
+        {
+            "IMAGE": "data-multi-subject/sub-balgrist03/anat/sub-balgrist03_T2w.nii.gz",
+            "LABEL": "data-multi-subject/derivatives/labels/sub-balgrist03/anat/sub-balgrist03_T2w_label-SC_seg.nii.gz"
+        },
+        {
+            "IMAGE": "data-multi-subject/sub-cardiff03/anat/sub-cardiff03_T2w.nii.gz",
+            "LABEL": "data-multi-subject/derivatives/labels/sub-cardiff03/anat/sub-cardiff03_T2w_label-SC_seg.nii.gz"
+        },
+        {
+            "IMAGE": "data-multi-subject/sub-vuiisIngenia03/anat/sub-vuiisIngenia03_T2w.nii.gz",
+            "LABEL": "data-multi-subject/derivatives/labels/sub-vuiisIngenia03/anat/sub-vuiisIngenia03_T2w_label-SC_seg.nii.gz"
+        }
+    ],
+    "VALIDATION": [
+        {
+            "IMAGE": "data-multi-subject/sub-ubc05/anat/sub-ubc05_T2w.nii.gz",
+            "LABEL": "data-multi-subject/derivatives/labels/sub-ubc05/anat/sub-ubc05_T2w_label-SC_seg.nii.gz"
+        }
+    ],
+    "TESTING": [
+        {
+            "IMAGE": "data-multi-subject/sub-tokyoSkyra02/anat/sub-tokyoSkyra02_T2w.nii.gz",
+            "LABEL": "data-multi-subject/derivatives/labels/sub-tokyoSkyra02/anat/sub-tokyoSkyra02_T2w_label-SC_seg.nii.gz"
+        }
+    ]
+}

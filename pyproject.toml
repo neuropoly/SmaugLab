@@ -1,13 +1,28 @@
-[project]
-name = "auglab"
-version = "20260109"
-requires-python = ">=3.10"
-description = "AugLab investigates the influence of different data augmentation strategies on MRI training performance."
+[tool.poetry]
+name = "smauglab"
+# Placeholder only. The real version is substituted at build time by
+# poetry-dynamic-versioning from the git tag. Do not bump this by hand.
+version = "0.0.0"
+description = "SmaugLab investigates the influence of different data augmentation strategies on MRI training performance."
 readme = "README.md"
 authors = [
-    { name = "Nathan Molinier", email = "nathan.molinier@polymtl.ca"},
-    { name = "Hendrik Möller"},
+    "Nathan Molinier <nathan.molinier@polymtl.ca>",
+    "Hendrik Möller <hendrik.moeller[AT]tum.de>",
 ]
+# poetry-core writes only the FIRST entry of `authors` AND only the FIRST entry
+# of `maintainers` into the wheel metadata; every later entry is silently
+# dropped (setuptools used to emit both authors). So the two lists have to name
+# different people or someone disappears from the published package:
+#   authors[0]     -> Author: / Author-email:   (Nathan)
+#   maintainers[0] -> Maintainer:               (Hendrik)
+# Verified by inspecting the built wheel's METADATA -- do not reorder these
+# without checking it again.
+maintainers = [
+    "Hendrik Möller",
+    "Nathan Molinier",
+]
+homepage = "https://github.com/neuropoly/SmaugLab"
+repository = "https://github.com/neuropoly/SmaugLab"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
@@ -17,44 +32,232 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 keywords = [
-    'deep learning',
-    'image segmentation',
-    'nnU-Net',
-    'nnunet',
-    'magnetic resonance imaging',
-    'online augmentation',
-    'offline augmentation',
-    'mri'
+    "deep learning",
+    "image segmentation",
+    "nnU-Net",
+    "nnunet",
+    "magnetic resonance imaging",
+    "online augmentation",
+    "offline augmentation",
+    "mri",
 ]
-dependencies = [
-    "batchgeneratorsv2",
-    "kornia",
-    "torchio"
-]
+# smauglab has no __init__.py anywhere, so it is a PEP 420 namespace package.
+# poetry-core still walks the tree correctly; the CI build job and
+# unit_tests/test_packaging.py assert the wheel really contains every module.
+packages = [{ include = "smauglab" }]
+# The config JSONs are package data, not code, so they need listing explicitly.
+# A wheel without them is broken: smauglab resolves its default config through
+# importlib.resources at runtime.
+include = [{ path = "smauglab/configs/**/*.json", format = ["sdist", "wheel"] }]
 
-[project.optional-dependencies]
+[tool.poetry.dependencies]
+python = ">=3.10"
+batchgenerators = "*"
+batchgeneratorsv2 = "*"
+# smauglab subclasses kornia's private augmentation internals
+# (_AugmentationBase, RigidAffineAugmentationBase3D, augmentation.container.ops,
+# _adapted_rsampling, _tuple_range_reader). Those move between minor releases,
+# so the range is capped and both ends are exercised by the kornia-compat job
+# in .github/workflows/tests.yml. Verified working: 0.7.3 - 0.8.3.
+kornia = ">=0.7.3,<0.9"
+nibabel = "*"
+numpy = "*"
+progress = "*"
+scipy = "*"
+torchio = "*"
+torchvision = "*"
+
+# Optional dependencies are declared as extras rather than poetry groups so
+# that plain `pip install -e ".[dev]"` keeps working. Nothing here requires the
+# poetry CLI or a poetry.lock -- only the build backend is poetry's.
+monai = { version = "*", extras = ["all"], optional = true }
+tqdm = { version = "*", optional = true }
+wandb = { version = "*", optional = true }
+nnunetv2 = { version = "*", optional = true }
+build = { version = "*", optional = true }
+coverage = { version = ">=7", optional = true }
+pre-commit = { version = "*", optional = true }
+pytest = { version = ">=8", optional = true }
+pytest-cov = { version = "*", optional = true }
+# Pinned to the same version as the ruff-pre-commit rev in
+# .pre-commit-config.yaml. Ruff adds rules between releases, so an unpinned
+# local ruff will disagree with the one CI runs.
+ruff = { version = "==0.16.1", optional = true }
+twine = { version = "*", optional = true }
+
+[tool.poetry.extras]
 nnunetv2 = ["nnunetv2"]
-all = [
-    "monai[all]",
-    "progress",
-    "numpy",
-    "tqdm",
-    "wandb",
-]
+all = ["monai", "tqdm", "wandb"]
+dev = ["build", "coverage", "pre-commit", "pytest", "pytest-cov", "ruff", "twine"]
 
-[project.scripts]
-auglab_add_nnunettrainer = "auglab.add_trainer:main"
-
-[project.urls]
-homepage = "https://github.com/neuropoly/AugLab"
-repository = "https://github.com/neuropoly/AugLab"
+[tool.poetry.scripts]
+smauglab_add_nnunettrainer = "smauglab.add_trainer:main"
 
 [build-system]
-requires = ["pip>=23", "setuptools>=67"]
-build-backend = "setuptools.build_meta"
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"
 
-[tool.setuptools]
-include-package-data = true
+[tool.poetry-dynamic-versioning]
+enable = true
+# Strip an optional r/v/release- prefix; the rest becomes the version.
+# The default pattern rejects the "r" prefix already in use (r20260615).
+# Handles release and pre-release tags (r20260801, v1.2.3, v1.0.0rc1,
+# v2.0.0-beta1). A ".post" tag is not supported and fails the build loudly
+# rather than silently dropping the suffix.
+pattern = "^(?:[rvV]|release[-_])?(?P<base>\\d+(\\.\\d+)*)(?:[-.]?(?P<stage>[a-zA-Z]+)\\.?(?P<revision>\\d+)?)?"
+# On a tag, the version is exactly the tag. Between tags, bump and mark .dev so
+# the build still sorts AFTER the release it follows -- a plain "{base}.devN"
+# would sort *before* it. No local version (+g<sha>), because PyPI rejects those.
+#
+# stage/revision must be carried through, or a pre-release tag like v1.0.0rc1
+# would build as plain "1.0.0" and collide with the real 1.0.0 release.
+format-jinja = """
+{%- if distance == 0 -%}
+{{ serialize_pep440(base, stage=stage, revision=revision) }}
+{%- else -%}
+{{ serialize_pep440(bump_version(base), stage=stage, revision=revision, dev=distance) }}
+{%- endif -%}
+"""
 
-[tool.setuptools.package-data]
-'auglab' = ['data/**.json']
+[tool.ruff]
+line-length = 140
+indent-width = 4
+target-version = "py310"
+exclude = [
+    "*.ipynb",
+    ".eggs",
+    ".venv",
+    "*.egg-info",
+    "build",
+    "dist",
+    "venv",
+]
+
+[tool.ruff.lint]
+select = [
+    "A",
+    "ARG",
+    "B",
+    "BLE",
+    "C4",
+    "E",
+    "F",
+    "FLY",
+    "FURB",
+    "G",
+    "I",
+    "ICN",
+    "INT",
+    "N",
+    "NPY",
+    "PERF",
+    "PGH",
+    "PIE",
+    "PL",
+    "RUF",
+    "SIM",
+    "TID",
+    "TRY",
+    "UP",
+    "W",
+]
+
+ignore = [
+    "A001",    # builtin shadowed by a variable (pervasive: `input`, `filter`, `type`)
+    "A002",    # builtin shadowed by an argument (same, and part of the public API)
+    "ARG002",  # unused method argument (required by the batchgenerators/kornia interfaces)
+    "ARG004",  # unused static method argument (same reason)
+    "B905",    # zip() without strict=
+    "BLE001",  # blind `except Exception`
+    "E501",    # line too long (the formatter handles what it can)
+    "E741",    # ambiguous variable name (`l` for label is idiomatic here)
+    "F811",    # redefinition (triggered by the __main__ demo blocks)
+    "FURB171", # membership test against a single-item container
+    "N801",    # class name not CapWords (transform names mirror nnU-Net's)
+    "N802",    # function name not lowercase
+    "N803",    # argument name not lowercase (tensors are `X`, `Y`)
+    "N806",    # variable in function should be lowercase (same)
+    "N812",    # lowercase imported as non-lowercase (`import torch.nn.functional as F`)
+    "N999",    # invalid module name (`nnUNetTrainerDAExt`)
+    "NPY002",  # legacy np.random (reproducibility of published experiments)
+    "PERF203", # try/except in a loop
+    "PGH003",  # blanket type: ignore
+    "PLC0415", # import not at top of file (deliberate, for optional heavy deps)
+    "PLR0911", # too many return statements
+    "PLR0912", # too many branches
+    "PLR0913", # too many arguments (augmentation configs are wide by nature)
+    "PLR0915", # too many statements
+    "PLR0917", # too many positional arguments
+    "PLR2004", # magic value in comparison
+    "PLW0108", # unnecessary lambda
+    "RUF002",  # ambiguous unicode in docstrings
+    "RUF003",  # ambiguous unicode in comments
+    "RUF059",  # unused unpacked variable
+    "RUF100",  # unused noqa
+    "SIM105",  # contextlib.suppress instead of try/except/pass
+    "SIM118",  # `key in dict` instead of `key in dict.keys()`
+    "TRY003",  # long message outside the exception class
+    "UP007",   # Optional/Union instead of `X | Y`
+]
+
+# Allow fix for all enabled rules (when `--fix` is provided).
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.per-file-ignores]
+# Re-exports are the point of an __init__.
+"**/__init__.py" = ["F401"]
+# Tests are not an importable package and assert against literals.
+"unit_tests/**" = ["INP001", "PLR2004"]
+# Standalone scripts, not part of the installed package.
+"scripts/**" = ["INP001"]
+# The trainers mirror nnU-Net's upstream signatures verbatim, including its
+# `device: torch.device = torch.device("cuda")` default. Diverging would break
+# the drop-in contract with nnUNetTrainer.
+"smauglab/trainers/**" = ["B008"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 20
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Enable reformatting of code snippets in docstrings.
+docstring-code-format = true
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["unit_tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore::UserWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.coverage.run]
+source = ["smauglab"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "def __repr__",
+    "def __str__",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

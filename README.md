@@ -1,13 +1,17 @@
 [![arXiv](https://img.shields.io/badge/Preprint-arXiv:2605.03098-orange)](https://arxiv.org/abs/2605.03098)
-[![Python Versions](https://img.shields.io/pypi/pyversions/spineps)](https://pypi.org/project/spineps/)
+[![PyPI](https://img.shields.io/pypi/v/smauglab)](https://pypi.org/project/smauglab/)
+[![Python Versions](https://img.shields.io/pypi/pyversions/smauglab)](https://pypi.org/project/smauglab/)
+[![tests](https://github.com/neuropoly/SmaugLab/actions/workflows/tests.yml/badge.svg)](https://github.com/neuropoly/SmaugLab/actions/workflows/tests.yml)
+[![lint](https://github.com/neuropoly/SmaugLab/actions/workflows/lint.yml/badge.svg)](https://github.com/neuropoly/SmaugLab/actions/workflows/lint.yml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-# AugLab
+# SmaugLab
 This repository investigates the influence of different data augmentation strategies on MRI training performance.
 
 ## Citation
 
-If you use AugLab, please make sure to cite the following paper:
+If you use SmaugLab, please make sure to cite the following paper:
 
 ```
 @article{molinier2026one,
@@ -21,9 +25,9 @@ If you use AugLab, please make sure to cite the following paper:
 ## What is available ?
 
 This repository contains:
-- A nnUNet [trainer](https://github.com/neuropoly/AugLab/blob/bed6c1b5cf8ec3dbe6165daca507bf431cad65e5/auglab/trainers/nnUNetTrainerDAExt.py) with extensive data augmentations
-- A basic Monai segmentation [script](https://github.com/neuropoly/AugLab/blob/bed6c1b5cf8ec3dbe6165daca507bf431cad65e5/scripts/train_monai.py) incorporating data augmentations
-- A [script](https://github.com/neuropoly/AugLab/blob/bed6c1b5cf8ec3dbe6165daca507bf431cad65e5/scripts/generate_augmentations.py) generating augmentations from input images and segmentations
+- A nnUNet [trainer](https://github.com/neuropoly/SmaugLab/blob/bed6c1b5cf8ec3dbe6165daca507bf431cad65e5/smauglab/trainers/nnUNetTrainerDAExt.py) with extensive data augmentations
+- A basic Monai segmentation [script](https://github.com/neuropoly/SmaugLab/blob/bed6c1b5cf8ec3dbe6165daca507bf431cad65e5/scripts/train_monai.py) incorporating data augmentations
+- A [script](https://github.com/neuropoly/SmaugLab/blob/bed6c1b5cf8ec3dbe6165daca507bf431cad65e5/scripts/generate_augmentations.py) generating augmentations from input images and segmentations
 
 ## How to install ?
 
@@ -44,11 +48,11 @@ This repository contains:
 3. Clone this repository:
    - Git clone
    ```bash
-   git clone git@github.com:neuropoly/AugLab.git
-   cd AugLab
+   git clone git@github.com:neuropoly/SmaugLab.git
+   cd SmaugLab
    ```
 
-4. Install AugLab using one of the following commands:
+4. Install SmaugLab using one of the following commands:
    > **Note:** If you pull a new version from GitHub, make sure to rerun this command with the flag `--upgrade`
    - nnunetv2 only usage (tested with nnunetv2==2.6.2)
    ```bash
@@ -65,29 +69,29 @@ This repository contains:
 python3 -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118 --upgrade
 ```
 
-## Run nnunet training with AugLab trainer
+## Run nnunet training with SmaugLab trainer
 
-To use the AugLab trainer with nnUNet, first add the trainer to your nnUNet installation by running:
+To use the SmaugLab trainer with nnUNet, first add the trainer to your nnUNet installation by running:
 ```bash
-auglab_add_nnunettrainer --trainer nnUNetTrainerDAExt
+smauglab_add_nnunettrainer --trainer nnUNetTrainerDAExt
 ```
 
-Then, when you run nnUNet training as usual, specifying the AugLab trainer, for example:
+Then, when you run nnUNet training as usual, specifying the SmaugLab trainer, for example:
 ```bash
 nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU -p nnUNetPlans
 ```
 
-You can also specify your data augmentation parameters by providing a JSON file using the environment variable `AUGLAB_PARAMS_GPU_JSON`:
-> **Note:** By default [auglab/configs/transform_params_gpu.json](https://github.com/neuropoly/AugLab/blob/main/auglab/configs/transform_params_gpu.json) is used if no file is specified.
+You can also specify your data augmentation parameters by providing a JSON file using the environment variable `SMAUGLAB_PARAMS_GPU_JSON`:
+> **Note:** By default [smauglab/configs/transform_params_gpu.json](https://github.com/neuropoly/SmaugLab/blob/main/smauglab/configs/transform_params_gpu.json) is used if no file is specified.
 ```bash
-AUGLAB_PARAMS_GPU_JSON=/path/to/your/params.json nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU -p nnUNetPlans
+SMAUGLAB_PARAMS_GPU_JSON=/path/to/your/params.json nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU -p nnUNetPlans
 ```
 
 > ⚠️ **Warning** : To avoid any paths issues, please specify an absolute path to your JSON file.
 
-## Run Monai training with AugLab augmentations
+## Run Monai training with SmaugLab augmentations
 
-> To use AugLab augmentations in a MONAI training pipeline, refer to the example [training script](https://github.com/neuropoly/AugLab/blob/main/scripts/train_monai.py). Key implementation lines required for proper integration are marked with a 🐞 emoji in the comments.
+> To use SmaugLab augmentations in a MONAI training pipeline, refer to the example [training script](https://github.com/neuropoly/SmaugLab/blob/main/scripts/train_monai.py). Key implementation lines required for proper integration are marked with a 🐞 emoji in the comments.
 
 To run the Monai training script directly, you need to provide a config JSON (`config.json`) file with paths to the images and labels (ground truth) for TRAINING, VALIDATION and TESTING sets like this:
 ```json
@@ -122,25 +126,39 @@ To run the Monai training script directly, you need to provide a config JSON (`c
 }
 ```
 
-Then run the training script with the following command, specifying the path to your config JSON file and the path to your data augmentation parameters JSON file (if you want to use custom parameters, otherwise the default [transform_params_gpu.json](https://github.com/neuropoly/AugLab/blob/main/auglab/configs/transform_params_gpu.json) is used):
+Then run the training script with the following command, specifying the path to your config JSON file and the path to your data augmentation parameters JSON file (if you want to use custom parameters, otherwise the default [transform_params_gpu.json](https://github.com/neuropoly/SmaugLab/blob/main/smauglab/configs/transform_params_gpu.json) is used):
 ```bash
 python scripts/train_monai.py --config <your_path>/config.json --transforms <your_path>/transform_params_gpu.json
 ```
 
 Additional parameters can be specified—see `python scripts/train_monai.py -h` for details. If anything is unclear, feel free to open an issue.
 
+## Contributing
+
+Development setup, the test suite, and the release process are documented in
+[CONTRIBUTING.md](CONTRIBUTING.md). The short version:
+
+```bash
+pip install -e ".[dev]"
+pre-commit install
+pytest
+```
+
+Pull requests are gated on Ruff (lint + format) and the test suite across
+Python 3.10–3.12.
+
 ## How to use my data ?
 
-Scripts developped in this repository use JSON files to specify image and segmentation paths: see this [example](https://github.com/neuropoly/AugLab/blob/16653a84e031c40e25a72e946c2724494606b21c/auglab/configs/data/data.json).
+Scripts developped in this repository use JSON files to specify image and segmentation paths: see this [example](https://github.com/neuropoly/SmaugLab/blob/16653a84e031c40e25a72e946c2724494606b21c/smauglab/configs/data/data.json).
 
 ## How do I specify my parameters ?
 
-To track parameters used during data augmentation, JSON files are also used: see this [example](https://github.com/neuropoly/AugLab/blob/16653a84e031c40e25a72e946c2724494606b21c/auglab/configs/transform_params.json)
+To track parameters used during data augmentation, JSON files are also used: see this [example](https://github.com/neuropoly/SmaugLab/blob/16653a84e031c40e25a72e946c2724494606b21c/smauglab/configs/transform_params.json)
 
 
 ## Citation
 
-If you use AugLab, please make sure to cite the following paper:
+If you use SmaugLab, please make sure to cite the following paper:
 
 ```
 @article{molinier2026one,

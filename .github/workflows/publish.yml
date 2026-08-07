@@ -1,0 +1,117 @@
+name: publish to PyPI
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Which index to upload to
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: build and upload
+    runs-on: ubuntu-latest
+    # Requires the PYPI_API_TOKEN (and, for dry runs, TEST_PYPI_API_TOKEN)
+    # repository secret. Until that is set by an admin this job cannot upload.
+    environment: pypi
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # poetry-dynamic-versioning derives the version from the git tag;
+          # a shallow clone has no tags and would build as 0.0.0.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check the built version came from the release tag
+        # poetry-dynamic-versioning derives the version from the tag, so the two cannot
+        # disagree the way a hand-maintained project.version could. What can
+        # still go wrong is the tag not matching [tool.poetry-dynamic-versioning].pattern,
+        # or the checkout arriving without tags -- both of which silently yield
+        # the 0.0.0 fallback or a .dev version. Catch that before uploading.
+        if: github.event_name == 'release'
+        run: |
+          python - <<'PY'
+          import glob, os, pathlib, re, sys
+
+          from packaging.version import InvalidVersion, Version
+
+          tag = os.environ["RELEASE_TAG"]
+          # Same prefixes as [tool.poetry-dynamic-versioning].pattern.
+          expected = re.sub(r"^(?:[rvV]|release[-_])", "", tag)
+          built = {pathlib.Path(p).name.split("-")[1] for p in glob.glob("dist/*.whl")}
+
+          print(f"tag={tag!r} expected={expected!r} built={sorted(built)}")
+
+          # Compare parsed versions, not strings: a tag like v2.0.0-beta1 is
+          # legitimately normalised to 2.0.0b1 in the artifact name.
+          try:
+              if {Version(b) for b in built} != {Version(expected)}:
+                  raise InvalidVersion
+          except InvalidVersion:
+              sys.exit(
+                  f"built version {sorted(built)} does not match release tag '{tag}'. "
+                  "Either the tag does not match [tool.poetry-dynamic-versioning].pattern in "
+                  "pyproject.toml, or the checkout has no tags (needs fetch-depth: 0)."
+              )
+          PY
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+      - name: Refuse to publish a fallback version
+        run: |
+          python - <<'PY'
+          import glob, pathlib, sys
+
+          built = {pathlib.Path(p).name.split("-")[1] for p in glob.glob("dist/*.whl")}
+          if "0.0.0" in built:
+              sys.exit(
+                  "refusing to publish 0.0.0 -- poetry-dynamic-versioning found no git tag, so the "
+                  "version is the fallback rather than a real release"
+              )
+          print(f"version looks real: {sorted(built)}")
+          PY
+
+      - name: Check distribution metadata
+        run: twine check dist/*
+
+      - name: Verify the wheel ships the package data
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          if "smauglab/configs/transform_params_gpu.json" not in names:
+              sys.exit("refusing to publish: wheel has no config JSONs")
+          if len([n for n in names if n.endswith(".py")]) < 20:
+              sys.exit("refusing to publish: wheel is missing modules")
+          print("wheel contents look complete")
+          PY
+
+      - name: Upload to PyPI
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.repository == 'pypi')
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        # Uploads the sdist as well as the wheel; smauglab currently has no sdist
+        # on PyPI, which blocks anyone who needs to build from source.
+        run: twine upload dist/*
