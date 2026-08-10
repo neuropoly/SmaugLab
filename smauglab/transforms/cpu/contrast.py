@@ -1,3 +1,5 @@
+from typing import Union
+
 import torch
 import torch.nn.functional as F
 from batchgeneratorsv2.transforms.base.basic_transform import ImageOnlyTransform
@@ -20,6 +22,9 @@ class ConvTransform(ImageOnlyTransform):
         self.retain_stats = retain_stats
 
     def get_parameters(self, **data_dict) -> dict:
+        # Scharr yields one kernel per spatial direction, Laplace a single kernel;
+        # _apply_to_image dispatches on kernel_type to tell the two apart.
+        kernel: Union[torch.Tensor, list[torch.Tensor]]
         spatial_dims = len(data_dict["image"].shape) - 1
         if spatial_dims == 2:
             if self.kernel_type == "Laplace":

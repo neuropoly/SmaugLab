@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Union
 
 import torch
@@ -27,6 +28,8 @@ class DownsampleSegForDSTransformCustom:
             List of downsampled tensors, each with shape [batch, channels, spatial_dims...]
         """
         results = []
+        # Per-axis scale factors: either broadcast from a scalar or taken as given.
+        s: Sequence[float]
         for ds_scale in self.ds_scales:
             if not isinstance(ds_scale, (tuple, list)):
                 # If single scale value, apply to all spatial dimensions

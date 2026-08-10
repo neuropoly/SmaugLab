@@ -1,5 +1,6 @@
 import math
 import random
+from collections.abc import Callable
 from typing import Any, Union
 
 import torch
@@ -66,7 +67,7 @@ def _apply_region_mode(
                 o = torch.randint(0, 2, (seg_mask.shape[1],), device=seg_mask.device, dtype=seg_mask.dtype)
                 m[i] = m[i] * o.view(-1, 1, 1, 1)  # Broadcasting o to match the dimensions of m
 
-        m = torch.argmax(m, axis=1) > 0
+        m = torch.argmax(m, dim=1) > 0
         m = m.to(transformed.dtype)
         if mode == "out":
             m = 1.0 - m
@@ -84,7 +85,7 @@ def _apply_region_mode(
             # Create a tensor with random one and zero
             o = torch.randint(0, 2, (seg_mask.shape[0],), device=seg_mask.device, dtype=seg_mask.dtype)
             m = m * o.view(-1, 1, 1, 1)  # Broadcasting o to match the dimensions of m
-        m = torch.argmax(m, axis=0) > 0
+        m = torch.argmax(m, dim=0) > 0
         m = m.to(transformed.dtype)
         if mode == "out":
             m = 1.0 - m
@@ -145,7 +146,11 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         self.kernel_sizes = kwargs.get("kernel_sizes", [1, 3, 5, 7])  # multi-scale default
         self.mix_prob = kwargs.get("mix_prob", 0.0)  # probability to mix with original
 
-    def get_kernel(self, device: torch.device) -> torch.Tensor:
+    def get_kernel(self, device: torch.device) -> Union[Tensor, list[Tensor]]:
+        # Scharr is the odd one out: it returns the three directional kernels as a
+        # list, which apply_transform convolves separately and sums. Every other
+        # kernel type returns a single tensor.
+        kernel: Union[Tensor, list[Tensor]]
         if self.kernel_type == "Laplace":
             kernel = -1.0 * torch.ones(3, 3, 3, dtype=torch.float32, device=device)
             kernel[1, 1, 1] = 26.0
@@ -218,10 +223,14 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                 orig_means = channel_data.mean(dim=reduce_dims)
                 orig_stds = channel_data.std(dim=reduce_dims)
 
+            # The asserts below restate what get_kernel guarantees per kernel_type:
+            # only Scharr yields a list, and only its branch iterates.
             if self.kernel_type in ["Laplace", "GaussianBlur"]:
+                assert isinstance(kernel, Tensor)
                 x = apply_convolution(channel_data, kernel, dim=3)
             elif self.kernel_type == "UnsharpMask":
                 # blur selected channel, compute mask and add scaled mask back Isharp​=I+α(I−G​∗I)
+                assert isinstance(kernel, Tensor)
                 blurred = apply_convolution(channel_data, kernel, dim=3)
                 mask = channel_data - blurred
                 unsharp_amount = torch.rand(1, device=input.device) * self.unsharp_amount
@@ -239,6 +248,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
                 out = []
                 for b in range(channel_data.shape[0]):
                     kernel = self.get_kernel(device=input.device)
+                    assert isinstance(kernel, Tensor)
 
                     conv = apply_convolution(channel_data[b : b + 1], kernel, dim=3).squeeze(0)
 
@@ -315,7 +325,7 @@ def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torc
     return img
 
 
-def get_gaussian_kernel1d(kernel_size: int, sigma: float, dtype: torch.dtype, device: torch.device) -> Tensor:
+def get_gaussian_kernel1d(kernel_size: int, sigma: Union[float, Tensor], dtype: torch.dtype, device: torch.device) -> Tensor:
     """Create a 1D Gaussian kernel."""
 
     x = torch.arange(kernel_size, dtype=dtype, device=device)
@@ -325,7 +335,7 @@ def get_gaussian_kernel1d(kernel_size: int, sigma: float, dtype: torch.dtype, de
     return kernel1d
 
 
-def get_gaussian_kernel3d(kernel_size: int, sigma: torch.Tensor, dtype: torch.dtype, device: torch.device) -> Tensor:
+def get_gaussian_kernel3d(kernel_size: int, sigma: Union[float, Tensor], dtype: torch.dtype, device: torch.device) -> Tensor:
     """
     Create a 3D Gaussian kernel by multiplying 1D kernels along each axis.
     Args:
@@ -439,7 +449,7 @@ class RandomBrightnessGPU(ImageOnlyTransform):
 
     def __init__(
         self,
-        brightness_range: list[float, float] = (0.9, 1.1),
+        brightness_range: tuple[float, float] = (0.9, 1.1),
         apply_to_channel: list[int] | None = None,  # Apply to first channel by default
         same_on_batch: bool = False,
         in_seg: float = 0.0,
@@ -513,7 +523,7 @@ class RandomGammaGPU(ImageOnlyTransform):
 
     def __init__(
         self,
-        gamma_range: list[float, float] = (0.9, 1.1),
+        gamma_range: tuple[float, float] = (0.9, 1.1),
         invert_image: bool = False,
         apply_to_channel: list[int] | None = None,  # Apply to first channel by default
         retain_stats: bool = False,
@@ -630,7 +640,7 @@ class RandomContrastGPU(ImageOnlyTransform):
 
     def __init__(
         self,
-        contrast_range: list[float, float] = (0.9, 1.1),
+        contrast_range: tuple[float, float] = (0.9, 1.1),
         apply_to_channel: list[int] | None = None,  # Apply to first channel by default
         retain_stats: bool = False,
         same_on_batch: bool = False,
@@ -728,7 +738,7 @@ class RandomFunctionGPU(ImageOnlyTransform):
 
     def __init__(
         self,
-        func: callable = lambda x: x**2,
+        func: Callable[[Tensor], Tensor] = lambda x: x**2,
         apply_to_channel: list[int] | None = None,  # Apply to first channel by default
         retain_stats: bool = False,
         same_on_batch: bool = False,

@@ -76,6 +76,7 @@ wandb = { version = "*", optional = true }
 nnunetv2 = { version = "*", optional = true }
 build = { version = "*", optional = true }
 coverage = { version = ">=7", optional = true }
+mypy = { version = ">=1.10", optional = true }
 pre-commit = { version = "*", optional = true }
 pytest = { version = ">=8", optional = true }
 pytest-cov = { version = "*", optional = true }
@@ -88,7 +89,7 @@ twine = { version = "*", optional = true }
 [tool.poetry.extras]
 nnunetv2 = ["nnunetv2"]
 all = ["monai", "tqdm", "wandb"]
-dev = ["build", "coverage", "pre-commit", "pytest", "pytest-cov", "ruff", "twine"]
+dev = ["build", "coverage", "mypy", "pre-commit", "pytest", "pytest-cov", "ruff", "twine"]
 
 [tool.poetry.scripts]
 smauglab_add_nnunettrainer = "smauglab.add_trainer:main"
@@ -237,6 +238,28 @@ docstring-code-format = true
 
 # Like Black, automatically detect the appropriate line ending.
 line-ending = "auto"
+
+[tool.mypy]
+# Checked in CI by the `typecheck` job in .github/workflows/lint.yml, which has to
+# install the real dependencies first: with kornia and torch absent every type
+# collapses to Any and the run passes while checking nothing.
+#
+# The floor of the supported range, not the version CI happens to run on -- this is
+# what `requires-python = ">=3.10"` promises.
+python_version = "3.10"
+# Pragmatic rather than strict. Nothing in the dependency stack ships stubs
+# (kornia, batchgeneratorsv2, torchio, nnunetv2, nibabel, progress), and full
+# annotation coverage is not enforced -- tighten with disallow_untyped_defs
+# incrementally rather than in one pass.
+ignore_missing_imports = true
+warn_redundant_casts = true
+# smauglab/, smauglab/transforms/ and smauglab/utils/ have no __init__.py (PEP 420,
+# see the `packages` note above), so mypy cannot derive module names without these.
+namespace_packages = true
+explicit_package_bases = true
+# Only the shipped package is gated. Tests and standalone scripts are not installed
+# and assert against literals, which reads badly to a type checker.
+exclude = ["unit_tests/", "scripts/"]
 
 [tool.pytest.ini_options]
 testpaths = ["unit_tests"]
