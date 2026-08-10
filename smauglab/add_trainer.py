@@ -1,6 +1,7 @@
 import argparse
 import importlib.resources
 import shutil
+from pathlib import Path
 
 import nnunetv2
 
@@ -30,8 +31,13 @@ def main():
 
 def add_trainer(trainer_name: str, overwrite: bool = False):
 
-    # Find trainer path
-    trainers_path = importlib.resources.files(trainers)
+    # Find trainer path.
+    # importlib.resources returns a Traversable, which only promises open()/read_bytes()
+    # -- not .exists(), and not something shutil.copy accepts. Copying *into* the
+    # installed nnunetv2 package needs a real directory on disk regardless (nnU-Net
+    # cannot run from a zipped install), so resolve both ends to concrete paths here.
+    # Same idiom as unit_tests/helpers.py.
+    trainers_path = Path(str(importlib.resources.files(trainers)))
     if trainer_name == "nnUNetTrainerDAExt":
         source_trainer = trainers_path / "nnUNetTrainerDAExt.py"
     elif trainer_name == "nnUNetTrainerTest":
@@ -40,7 +46,7 @@ def add_trainer(trainer_name: str, overwrite: bool = False):
         raise ValueError(f"Trainer {trainer_name} not recognized.")
 
     # Find nnUNet path
-    nnunetv2_path = importlib.resources.files(nnunetv2)
+    nnunetv2_path = Path(str(importlib.resources.files(nnunetv2)))
     nnunet_trainers_path = nnunetv2_path / "training" / "nnUNetTrainer"
 
     # Copy trainer

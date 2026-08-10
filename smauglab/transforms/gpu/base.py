@@ -29,6 +29,10 @@ from torch.nn import Module
 
 DataType = Union[Tensor, list[Tensor], Boxes, Keypoints]
 SequenceDataType = Union[list[Tensor], list[list[Tensor]], list[Boxes], list[Keypoints]]
+# Anything AugmentationSequentialCustom accepts as a stage. Every smauglab GPU
+# transform qualifies, via ImageOnlyTransform or RigidAffineAugmentationBase3D.
+# Narrower than nn.Module, which is what lets the `*transforms` splat type-check.
+TransformType = Union[_AugmentationBase, ImageSequential]
 
 
 class ImageOnlyTransform(RigidAffineAugmentationBase3D):
@@ -305,7 +309,14 @@ class AugmentationSequentialOpsCustom(AugmentationSequentialOps):
         keys = [dk.name for dk in _data_keys]
         if "MASK" in keys:
             mask_index = keys.index("MASK")
-            param.data["seg"] = arg[mask_index]
+            # kornia types ParamItem.data as dict | list[ParamItem] | None and the
+            # inputs as the wider DataType, but the MASK entry of a leaf
+            # augmentation is always a params dict holding a plain tensor. Asserted
+            # rather than ignored so a violated assumption still fails loudly.
+            mask = arg[mask_index]
+            assert isinstance(param.data, dict)
+            assert isinstance(mask, Tensor)
+            param.data["seg"] = mask
 
         outputs = []
         for inp, dcate in zip(arg, _data_keys):

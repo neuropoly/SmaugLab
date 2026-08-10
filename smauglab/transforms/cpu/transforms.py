@@ -28,9 +28,14 @@ class AugTransforms(ComposeTransforms):
         self,
         json_path: str,
         do_dummy_2d_data_aug: bool,
-        patch_size: Union[np.ndarray, tuple[int]],
+        # tuple[int, ...], not tuple[int]: these are 3D patch shapes and axis
+        # tuples, so the one-element form was never what callers pass.
+        patch_size: Union[np.ndarray, tuple[int, ...]],
         rotation_for_DA: RandomScalar,
-        mirror_axes: tuple[int],
+        # Accepted for signature compatibility with the nnU-Net trainers but
+        # unused -- the mirror axes are read from the JSON config instead, see
+        # _build_transforms below. Callers legitimately pass None.
+        mirror_axes: tuple[int, ...] | None,
     ):
         # Load transform parameters from JSON
         config_path = os.path.join(json_path)
@@ -48,7 +53,11 @@ class AugTransforms(ComposeTransforms):
         super().__init__(transforms=self.transforms)
 
     def _build_transforms(
-        self, do_dummy_2d_data_aug: bool, patch_size: Union[np.ndarray, tuple[int]], rotation_for_DA: RandomScalar, mirror_axes: tuple[int]
+        self,
+        do_dummy_2d_data_aug: bool,
+        patch_size: Union[np.ndarray, tuple[int, ...]],
+        rotation_for_DA: RandomScalar,
+        mirror_axes: tuple[int, ...] | None,
     ):
         transform_params = self.transform_params
         transforms = []
@@ -341,7 +350,7 @@ if __name__ == "__main__":
     from smauglab.utils.utils import normalize
 
     configs_path = importlib.resources.files(configs)
-    json_path = configs_path / "transform_params_hybrid_TAGE.json"
+    json_path = str(configs_path / "transform_params_hybrid_TAGE.json")
 
     # Load images and masks tensors
     img_path = "/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/data-multi-subject/sub-amu02/anat/sub-amu02_T1w.nii.gz"
@@ -384,8 +393,8 @@ if __name__ == "__main__":
     nb_col = 6
     for key in ["image", "segmentation"]:
         output = []
-        line = []
-        aug = [[]]
+        line: list[np.ndarray] = []
+        aug: list[list[str]] = [[]]
         for _idx, (augment, _dic) in enumerate(tensor_dict.items()):
             if len(line) < nb_col:
                 img = 255 * normalize(np.sum(tensor_dict[augment][key].detach().numpy(), axis=0, keepdims=True)[0, 64])

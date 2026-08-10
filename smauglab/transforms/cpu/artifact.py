@@ -49,7 +49,7 @@ class ArtifactTransform(BasicTransform):
             data_dict["image"], data_dict["segmentation"] = self._apply_to_image(data_dict["image"], data_dict["segmentation"], **params)
         return data_dict
 
-    def _apply_to_image(self, img: torch.Tensor, seg: torch.Tensor, **params) -> torch.Tensor:
+    def _apply_to_image(self, img: torch.Tensor, seg: torch.Tensor, **params) -> tuple[torch.Tensor, torch.Tensor]:
         if params["motion"]:
             img, seg = aug_motion(img, seg)
         if params["ghosting"]:

@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-from smauglab.transforms.gpu.base import AugmentationSequentialCustom, ImageOnlyTransform
+from smauglab.transforms.gpu.base import AugmentationSequentialCustom, ImageOnlyTransform, TransformType
 from smauglab.transforms.gpu.contrast import (
     RandomBiasFieldGPU,
     RandomBrightnessGPU,
@@ -45,8 +45,11 @@ class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
             *transforms, data_keys=["input", "mask"], same_on_batch=True
         )  # Same_on_batch to ensure mask are aligned with images correctly (custom) see AugmentationSequentialOpsCustom in base.py
 
-    def _build_transforms(self) -> list[nn.Module]:
-        transforms = []
+    def _build_transforms(self) -> list[TransformType]:
+        # Annotated rather than inferred: an empty list takes its element type from
+        # the first append, which would pin it to whichever transform the config
+        # happens to enable first and reject every sibling appended after it.
+        transforms: list[TransformType] = []
 
         # Flipping transforms
         flip_params = self.transform_params.get("FlipTransform")
@@ -75,7 +78,7 @@ class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
             )
 
         ## Transfer augmentations (TA)
-        ta_transforms = []
+        ta_transforms: list[ImageOnlyTransform] = []
         # Inverse transform (max - pixel_value)
         inverse_params = self.transform_params.get("InverseTransform")
         if inverse_params is not None:
@@ -200,7 +203,7 @@ class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
             )
 
         ## General enhancement (GE)
-        ge_transforms = []
+        ge_transforms: list[ImageOnlyTransform] = []
         # Clamping transform
         clamp_params = self.transform_params.get("ClampTransform")
         if clamp_params is not None:
@@ -370,8 +373,11 @@ class AugTransformsGPURandomOrderTA(AugmentationSequentialCustom):
             *transforms, data_keys=["input", "mask"], same_on_batch=True
         )  # Same_on_batch to ensure mask are aligned with images correctly (custom) see AugmentationSequentialOpsCustom in base.py
 
-    def _build_transforms(self) -> list[nn.Module]:
-        transforms = []
+    def _build_transforms(self) -> list[TransformType]:
+        # Annotated rather than inferred: an empty list takes its element type from
+        # the first append, which would pin it to whichever transform the config
+        # happens to enable first and reject every sibling appended after it.
+        transforms: list[TransformType] = []
 
         # Flipping transforms
         flip_params = self.transform_params.get("FlipTransform")
@@ -400,7 +406,7 @@ class AugTransformsGPURandomOrderTA(AugmentationSequentialCustom):
             )
 
         ## Transfer augmentations (TA)
-        ta_transforms = []
+        ta_transforms: list[ImageOnlyTransform] = []
         # Inverse transform (max - pixel_value)
         inverse_params = self.transform_params.get("InverseTransform")
         if inverse_params is not None:
@@ -772,7 +778,7 @@ if __name__ == "__main__":
     from smauglab.utils.image import Image, resample_nib
 
     configs_path = importlib.resources.files(configs)
-    json_path = configs_path / "transform_params_gpu.json"
+    json_path = str(configs_path / "transform_params_gpu.json")
     augmentor = AugTransformsGPU(json_path)
 
     # Load images and masks tensors

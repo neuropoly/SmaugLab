@@ -44,7 +44,7 @@ class nnUNetTrainerDAExt(nnUNetTrainer):
 
     @staticmethod
     def get_training_transforms(
-        patch_size: Union[np.ndarray, tuple[int]],
+        patch_size: Union[np.ndarray, tuple[int, ...]],
         rotation_for_DA: RandomScalar,
         deep_supervision_scales: Union[list, tuple, None],
         mirror_axes: tuple[int, ...],
@@ -173,7 +173,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
 
     @staticmethod
     def get_training_transforms(
-        patch_size: Union[np.ndarray, tuple[int]],
+        patch_size: Union[np.ndarray, tuple[int, ...]],
         rotation_for_DA: RandomScalar,
         deep_supervision_scales: Union[list, tuple, None],
         mirror_axes: tuple[int, ...],
@@ -371,7 +371,7 @@ class nnUNetTrainerDAExtHybrid(nnUNetTrainer):
 
     @staticmethod
     def get_training_transforms(
-        patch_size: Union[np.ndarray, tuple[int]],
+        patch_size: Union[np.ndarray, tuple[int, ...]],
         rotation_for_DA: RandomScalar,
         deep_supervision_scales: Union[list, tuple, None],
         mirror_axes: tuple[int, ...],

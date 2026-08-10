@@ -274,7 +274,12 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
 
         out = input.clone()
         L, NC = self.L, self.num_classes
-        lut_bank = self.lut_bank.to(input.device)
+        # nn.Module.__getattr__ is typed to return Tensor | Module, so a registered
+        # buffer reads back as the union however it was registered. Narrowed here
+        # rather than at each _sample_blended_luts call below.
+        lut_bank = self.lut_bank
+        assert isinstance(lut_bank, Tensor)
+        lut_bank = lut_bank.to(input.device)
         n_seg_c = min(seg.shape[1], NC)
 
         # soft per-class weights from Gaussian-blurred one-hot masks (Σ_c w_c ≈ 1)

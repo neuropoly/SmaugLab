@@ -180,9 +180,11 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
                 # Vectorized dilation for all regions (3 iterations)
                 dilated = masks.float()
-                dilation_iterations = torch.randint(
-                    self.dilation_iterations_range[0], self.dilation_iterations_range[1] + 1, (1,), device=input.device
-                )[0].item()
+                dilation_iterations = int(
+                    torch.randint(self.dilation_iterations_range[0], self.dilation_iterations_range[1] + 1, (1,), device=input.device)[
+                        0
+                    ].item()
+                )
                 for _ in range(dilation_iterations):
                     if spatial_dims == 3:
                         dilated = F.max_pool3d(dilated.unsqueeze(0), 3, 1, 1).squeeze(0)
@@ -501,7 +503,6 @@ def _next_shared_seed() -> int:
     return seed
 
 
-@staticmethod
 def _minmax_norm(x: torch.Tensor, eps: float = 1e-8) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Per-sample min-max normalise to [0, 1]. Returns (normed, min, max)."""
     B = x.shape[0]
@@ -511,12 +512,10 @@ def _minmax_norm(x: torch.Tensor, eps: float = 1e-8) -> tuple[torch.Tensor, torc
     return (x - vmin) / (vmax - vmin + eps), vmin, vmax
 
 
-@staticmethod
 def _minmax_denorm(x_norm: torch.Tensor, vmin: torch.Tensor, vmax: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     return x_norm * (vmax - vmin + eps) + vmin
 
 
-@staticmethod
 def _zscore_renorm(x: torch.Tensor, bg_threshold: float = 1e-6) -> torch.Tensor:
     """Per-sample foreground-masked z-score. Mirrors nnUNet's use_mask_for_norm=True.
 

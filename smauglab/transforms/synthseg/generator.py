@@ -259,9 +259,12 @@ class SynthSegGenerator(nn.Module):
             )
         displacement = None
         if self.apply_nonlinear and self.nonlin_std and self.nonlin_std > 0:
+            # Unpacked rather than tuple(...): random_svf_field wants a 3-tuple, and
+            # labels is always (B, C, D, H, W) here.
+            lbl_d, lbl_h, lbl_w = labels.shape[2:]
             displacement = FN.random_svf_field(
                 batch,
-                tuple(labels.shape[2:]),
+                (lbl_d, lbl_h, lbl_w),
                 device,
                 nonlin_std=self.nonlin_std,
                 nonlin_scale=self.nonlin_scale,
@@ -355,7 +358,10 @@ class SynthSegGenerator(nn.Module):
 
     def _simulate_resolution(self, image: torch.Tensor) -> torch.Tensor:
         device = image.device
-        out_shape = tuple(image.shape[2:])
+        # Unpacked rather than tuple(...): mimic_acquisition wants a 3-tuple, and
+        # image is always (B, C, D, H, W) here.
+        out_d, out_h, out_w = image.shape[2:]
+        out_shape = (out_d, out_h, out_w)
         atlas_res = torch.full((3,), self.atlas_res, device=device)
 
         channels = []
