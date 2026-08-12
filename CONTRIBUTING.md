@@ -1,4 +1,4 @@
-# Contributing to AugLab
+# Contributing to SmaugLab
 
 Thanks for contributing. This page covers the development setup, the checks CI
 runs, and how versioning and releases work.
@@ -6,8 +6,8 @@ runs, and how versioning and releases work.
 ## Development setup
 
 ```bash
-git clone git@github.com:neuropoly/AugLab.git
-cd AugLab
+git clone git@github.com:neuropoly/SmaugLab.git
+cd SmaugLab
 
 python3 -m venv venv
 source venv/bin/activate
@@ -41,15 +41,29 @@ data on disk, so it is fast enough to gate every pull request.
 
 | File | What it covers |
 | --- | --- |
-| `test_imports.py` | Every module under `auglab/` imports cleanly |
+| `helpers.py` | `SmaugLabTestCase` base class (RNG seeding, test volumes) and config lookup |
+| `test_imports.py` | Every module under `smauglab/` imports cleanly |
 | `test_configs.py` | Every shipped config parses, builds a pipeline, runs a forward pass, and is reproducible under a fixed seed |
 | `test_transforms_gpu.py` | Each GPU transform in isolation |
 | `test_packaging.py` | Builds the real wheel and checks its contents |
 
+Tests are `unittest.TestCase` subclasses, so they run under either runner:
+
+```bash
+pytest                                        # what CI uses
+python -m unittest discover -s unit_tests -t .
+```
+
+Cases that vary over configs or transforms use `subTest`, so one bad config
+does not hide the rest and the failure names the offending item — look for
+`SUBFAILED(config=...)` in the output. Derive new test classes from
+`SmaugLabTestCase` to get seeded RNGs and the shared `tiny_volume()` /
+`tiny_seg()` helpers.
+
 Transforms in `test_transforms_gpu.py` are discovered by introspection, so a
 new transform class is covered as soon as it lands — as long as it can be built
 with default arguments. If yours needs configuration, cover it by adding a
-config JSON under `auglab/configs/`, which `test_configs.py` picks up
+config JSON under `smauglab/configs/`, which `test_configs.py` picks up
 automatically.
 
 Note that these are smoke and contract tests: they check that transforms run,
@@ -81,41 +95,15 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 ## Versioning
 
 The version comes from the git tag via
-[poetry-dynamic-versioning](https://github.com/mtkennerly/poetry-dynamic-versioning),
-the same arrangement as [TPTBox](https://github.com/Hendrik-code/TPTBox). The
-`version = "0.0.0"` in `pyproject.toml` is a placeholder — **never bump it by
+[poetry-dynamic-versioning](https://github.com/mtkennerly/poetry-dynamic-versioning). The `version = "0.0.0"` in `pyproject.toml` is a placeholder — **never bump it by
 hand**; it is substituted at build time.
 
 To release, tag a commit and publish a GitHub release; `publish.yml` does the
 rest.
 
-| Tag | Version built |
-| --- | --- |
-| `r20260801` | `20260801` |
-| `v20260801` / `20260801` | `20260801` |
-| `v1.2.3` | `1.2.3` |
-| `v1.0.0rc1` | `1.0.0rc1` |
-| `v2.0.0-beta1` | `2.0.0b1` (PEP 440 normalised) |
-| *(23 commits past `r20260615`)* | `20260616.dev23` |
-
-An optional `r`/`v`/`release-` prefix is stripped; see
-`[tool.poetry-dynamic-versioning].pattern`. A `.post` tag is not supported and
-fails the build loudly rather than silently dropping the suffix.
-
-Two things to know:
-
-- Anything that builds or installs the package needs the **tags** present, so
-  every workflow checkout uses `fetch-depth: 0`. Building outside a git
-  checkout fails with *"Unable to detect version control system"* rather than
-  producing a wrong version. Published sdists are unaffected — the concrete
-  version is baked into their `pyproject.toml` at build time.
-- The build backend is poetry's, but **you do not need the `poetry` CLI or a
-  `poetry.lock`**. Optional dependencies are declared as extras rather than
-  poetry groups precisely so that `pip install -e ".[dev]"` keeps working.
-
 ## Dependency pins
 
-`kornia` is capped at `>=0.7.3,<0.9`. AugLab subclasses kornia's *private*
+`kornia` is capped at `>=0.7.3,<0.9`. SmaugLab subclasses kornia's *private*
 augmentation internals (`_AugmentationBase`, `RigidAffineAugmentationBase3D`,
 `augmentation.container.ops`, `_adapted_rsampling`, `_tuple_range_reader`),
 which move between minor releases — 0.8.3 removed `kornia.core.Module` and the
@@ -123,6 +111,6 @@ whole `kornia.utils.helpers` module. The `kornia-compat` CI job runs the suite
 against both ends of the supported range, so a break shows up here rather than
 in a user's training run.
 
-`auglab/transforms/gpu/contrast.py` imports the private
+`smauglab/transforms/gpu/contrast.py` imports the private
 `torchvision.transforms._functional_tensor`. It still exists as of torchvision
 0.28, but carries the same risk.

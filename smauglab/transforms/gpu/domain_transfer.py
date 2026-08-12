@@ -43,7 +43,7 @@ from torch import Tensor
 from torch.distributions import Dirichlet
 from torch.nn import functional as F
 
-from auglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform
 
 # Default transfer LUT bank (built by embeddaug/analysis/playground/build_transfer_bank.py).
 DEFAULT_BANK_PATH = "/DATA/NAS/ongoing_projects/hendrik/nathan-transferaug/embeddaug/analysis/playground/results/domain_transfer_bank.npz"
@@ -274,7 +274,12 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
 
         out = input.clone()
         L, NC = self.L, self.num_classes
-        lut_bank = self.lut_bank.to(input.device)
+        # nn.Module.__getattr__ is typed to return Tensor | Module, so a registered
+        # buffer reads back as the union however it was registered. Narrowed here
+        # rather than at each _sample_blended_luts call below.
+        lut_bank = self.lut_bank
+        assert isinstance(lut_bank, Tensor)
+        lut_bank = lut_bank.to(input.device)
         n_seg_c = min(seg.shape[1], NC)
 
         # soft per-class weights from Gaussian-blurred one-hot masks (Σ_c w_c ≈ 1)

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any, Union
 
 import torch
@@ -13,9 +14,11 @@ from torch import Tensor
 try:  # kornia < 0.8.3
     from kornia.utils.helpers import _extract_device_dtype
 except ImportError:  # kornia >= 0.8.3 moved it and dropped kornia.utils.helpers
-    from kornia.core.utils import _extract_device_dtype
+    # A conditional import is a redefinition by construction. The fallback is what
+    # the kornia-compat matrix in tests.yml exercises, so it stays.
+    from kornia.core.utils import _extract_device_dtype  # type: ignore[no-redef]
 
-from auglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform
 
 
 # Affine transform
@@ -416,7 +419,9 @@ class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
 
     def __init__(
         self,
-        flip_axis: int = [0, 1, 2],
+        # Both forms are accepted and normalised below; the annotation said `int`
+        # while the default was a list and every caller passes a list.
+        flip_axis: Union[int, Sequence[int]] = [0, 1, 2],
         same_on_batch: bool = False,
         p: float = 1.0,
         keepdim: bool = True,
@@ -497,7 +502,9 @@ class FlipGenerator3D(RandomGeneratorBase):
 
     def make_samplers(self, device: torch.device, dtype: torch.dtype) -> None:
         # use uniform samplers per axis and threshold at 0.5
-        self._samplers = [UniformDistribution(0.0, 1.0, validate_args=False) for _ in range(3)]
+        # list[Any], not list[UniformDistribution]: kornia's _extract_device_dtype
+        # takes a heterogeneous list, and list is invariant.
+        self._samplers: list[Any] = [UniformDistribution(0.0, 1.0, validate_args=False) for _ in range(3)]
 
     def forward(self, batch_shape: tuple[int, ...], same_on_batch: bool = False) -> dict[str, torch.Tensor]:
         batch_size = batch_shape[0]
@@ -535,7 +542,10 @@ class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
     def __init__(
         self,
         crop: tuple[float, float] = (1.0, 1.0),
-        pos: tuple[float, float, float] = (0.5, 1),  # Fraction of the pos
+        # A (low, high) range like `crop`, not a per-axis triple: CropGenerator3D
+        # feeds it to _tuple_range_reader(..., 3, ...), which broadcasts the range
+        # across all three axes. The annotation said triple, the default was a pair.
+        pos: tuple[float, float] = (0.5, 1.0),  # Fraction of the pos
         same_on_batch: bool = False,
         p: float = 1.0,
         keepdim: bool = True,

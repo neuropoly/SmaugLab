@@ -27,10 +27,10 @@ from nnunetv2.utilities.helpers import dummy_context
 from torch import autocast
 from torch import distributed as dist
 
-from auglab import configs
-from auglab.trainers.utils import DownsampleSegForDSTransformCustom
-from auglab.transforms.cpu.transforms import AugTransforms
-from auglab.transforms.gpu.transforms import AugTransformsGPU
+from smauglab import configs
+from smauglab.trainers.utils import DownsampleSegForDSTransformCustom
+from smauglab.transforms.cpu.transforms import AugTransforms
+from smauglab.transforms.gpu.transforms import AugTransformsGPU
 
 
 class nnUNetTrainerDAExt(nnUNetTrainer):
@@ -48,7 +48,7 @@ class nnUNetTrainerDAExt(nnUNetTrainer):
 
     @staticmethod
     def get_training_transforms(
-        patch_size: Union[np.ndarray, tuple[int]],
+        patch_size: Union[np.ndarray, tuple[int, ...]],
         rotation_for_DA: RandomScalar,
         deep_supervision_scales: Union[list, tuple, None],
         mirror_axes: tuple[int, ...],
@@ -65,7 +65,7 @@ class nnUNetTrainerDAExt(nnUNetTrainer):
         ### Adds transforms
         # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)
-        json_path = os.environ.get("AUGLAB_PARAMS_CPU_JSON", str(configs_path / "transform_params.json"))
+        json_path = os.environ.get("SMAUGLAB_PARAMS_CPU_JSON", str(configs_path / "transform_params.json"))
         transforms.append(
             AugTransforms(
                 json_path=json_path,
@@ -159,9 +159,9 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
 
         # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)
-        json_path = os.environ.get("AUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
+        json_path = os.environ.get("SMAUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
         self.transforms = AugTransformsGPU(json_path=json_path).to(self.device)
-        print(f"Using AugLab GPU transforms with parameters from: {json_path}")
+        print(f"Using SmaugLab GPU transforms with parameters from: {json_path}")
 
         # Load JSON parameters for validation augmentation checkpoints
         with open(json_path) as f:
@@ -184,7 +184,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
 
     @staticmethod
     def get_training_transforms(
-        patch_size: Union[np.ndarray, tuple[int]],
+        patch_size: Union[np.ndarray, tuple[int, ...]],
         rotation_for_DA: RandomScalar,
         deep_supervision_scales: Union[list, tuple, None],
         mirror_axes: tuple[int, ...],
@@ -199,7 +199,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         transforms = []
 
         configs_path = importlib.resources.files(configs)
-        json_path = os.environ.get("AUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
+        json_path = os.environ.get("SMAUGLAB_PARAMS_GPU_JSON", str(configs_path / "transform_params_gpu.json"))
         with open(json_path) as f:
             config = json.load(f)
 
@@ -544,9 +544,9 @@ class nnUNetTrainerDAExtHybrid(nnUNetTrainer):
 
         # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)
-        json_path = os.environ.get("AUGLAB_PARAMS_HYBRID_JSON", str(configs_path / "transform_params_hybrid.json"))
+        json_path = os.environ.get("SMAUGLAB_PARAMS_HYBRID_JSON", str(configs_path / "transform_params_hybrid.json"))
         self.transforms = AugTransformsGPU(json_path=json_path).to(self.device)
-        print(f"Using AugLab hybrid transforms with parameters from: {json_path}")
+        print(f"Using SmaugLab hybrid transforms with parameters from: {json_path}")
 
         # Copy json transfrom parameters to output folder
         shutil.copy(json_path, os.path.join(self.output_folder, "transform_params_hybrid_used_for_training.json"))
@@ -562,7 +562,7 @@ class nnUNetTrainerDAExtHybrid(nnUNetTrainer):
 
     @staticmethod
     def get_training_transforms(
-        patch_size: Union[np.ndarray, tuple[int]],
+        patch_size: Union[np.ndarray, tuple[int, ...]],
         rotation_for_DA: RandomScalar,
         deep_supervision_scales: Union[list, tuple, None],
         mirror_axes: tuple[int, ...],
@@ -579,7 +579,7 @@ class nnUNetTrainerDAExtHybrid(nnUNetTrainer):
         ### Adds transforms
         # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)
-        json_path = os.environ.get("AUGLAB_PARAMS_HYBRID_JSON", str(configs_path / "transform_params_hybrid.json"))
+        json_path = os.environ.get("SMAUGLAB_PARAMS_HYBRID_JSON", str(configs_path / "transform_params_hybrid.json"))
         transforms.append(
             AugTransforms(
                 json_path=json_path,

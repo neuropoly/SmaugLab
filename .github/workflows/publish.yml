@@ -100,26 +100,18 @@ jobs:
           import glob, sys, zipfile
 
           names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
-          if "auglab/configs/transform_params_gpu.json" not in names:
+          if "smauglab/configs/transform_params_gpu.json" not in names:
               sys.exit("refusing to publish: wheel has no config JSONs")
           if len([n for n in names if n.endswith(".py")]) < 20:
               sys.exit("refusing to publish: wheel is missing modules")
           print("wheel contents look complete")
           PY
 
-      - name: Upload to TestPyPI
-        if: github.event_name == 'workflow_dispatch' && inputs.repository == 'testpypi'
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
-          TWINE_REPOSITORY: testpypi
-        run: twine upload dist/*
-
       - name: Upload to PyPI
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.repository == 'pypi')
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        # Uploads the sdist as well as the wheel; auglab currently has no sdist
+        # Uploads the sdist as well as the wheel; smauglab currently has no sdist
         # on PyPI, which blocks anyone who needs to build from source.
         run: twine upload dist/*

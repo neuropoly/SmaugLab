@@ -23,4 +23,3 @@
 
 - [ ] Augmentation behaviour is unchanged, or the change is intentional and described above
 - [ ] New transforms are reachable from a config JSON
-- [ ] `project.version` in `pyproject.toml` bumped, if this should be released

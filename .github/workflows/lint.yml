@@ -31,3 +31,40 @@ jobs:
           python-version: "3.12"
 
       - uses: pre-commit/action@v3.0.1
+
+  # mypy is a CI job rather than a pre-commit hook because it needs the project's
+  # dependencies importable to be worth anything: without kornia and torch installed
+  # every annotation resolves to Any and the check passes while checking nothing.
+  # That install is too heavy for a hook contributors run on every commit.
+  #
+  # Config lives in [tool.mypy] in pyproject.toml. `smauglab/` only -- unit_tests/
+  # and scripts/ are excluded there.
+  typecheck:
+    name: mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # poetry-dynamic-versioning derives the version from the git tag;
+          # a shallow clone has no tags and would build as 0.0.0.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install CPU-only PyTorch
+        # Must come first, same as in tests.yml: the default index serves the CUDA
+        # build (several GB of nvidia-* wheels), which is slow and can fill the
+        # runner disk. Nothing here needs a GPU.
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install SmaugLab
+        run: pip install -e ".[dev]"
+
+      - name: Run mypy
+        run: mypy smauglab/

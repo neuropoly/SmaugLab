@@ -1,23 +1,28 @@
 [tool.poetry]
-name = "auglab"
+name = "smauglab"
 # Placeholder only. The real version is substituted at build time by
-# poetry-dynamic-versioning from the git tag -- same arrangement as
-# Hendrik-code/TPTBox. Do not bump this by hand.
+# poetry-dynamic-versioning from the git tag. Do not bump this by hand.
 version = "0.0.0"
-description = "AugLab investigates the influence of different data augmentation strategies on MRI training performance."
+description = "SmaugLab investigates the influence of different data augmentation strategies on MRI training performance."
 readme = "README.md"
 authors = [
     "Nathan Molinier <nathan.molinier@polymtl.ca>",
+    "Hendrik Möller <hendrik.moeller[AT]tum.de>",
 ]
-# poetry-core only ever writes the FIRST author into the wheel metadata, so a
-# second entry in `authors` would silently vanish from the published package
-# (setuptools used to emit both). Listing Hendrik as a maintainer keeps the
-# attribution in the metadata as `Maintainer:`.
+# poetry-core writes only the FIRST entry of `authors` AND only the FIRST entry
+# of `maintainers` into the wheel metadata; every later entry is silently
+# dropped (setuptools used to emit both authors). So the two lists have to name
+# different people or someone disappears from the published package:
+#   authors[0]     -> Author: / Author-email:   (Nathan)
+#   maintainers[0] -> Maintainer:               (Hendrik)
+# Verified by inspecting the built wheel's METADATA -- do not reorder these
+# without checking it again.
 maintainers = [
     "Hendrik Möller",
+    "Nathan Molinier",
 ]
-homepage = "https://github.com/neuropoly/AugLab"
-repository = "https://github.com/neuropoly/AugLab"
+homepage = "https://github.com/neuropoly/SmaugLab"
+repository = "https://github.com/neuropoly/SmaugLab"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
@@ -36,20 +41,20 @@ keywords = [
     "offline augmentation",
     "mri",
 ]
-# auglab has no __init__.py anywhere, so it is a PEP 420 namespace package.
+# smauglab has no __init__.py anywhere, so it is a PEP 420 namespace package.
 # poetry-core still walks the tree correctly; the CI build job and
 # unit_tests/test_packaging.py assert the wheel really contains every module.
-packages = [{ include = "auglab" }]
+packages = [{ include = "smauglab" }]
 # The config JSONs are package data, not code, so they need listing explicitly.
-# A wheel without them is broken: auglab resolves its default config through
+# A wheel without them is broken: smauglab resolves its default config through
 # importlib.resources at runtime.
-include = [{ path = "auglab/configs/**/*.json", format = ["sdist", "wheel"] }]
+include = [{ path = "smauglab/configs/**/*.json", format = ["sdist", "wheel"] }]
 
 [tool.poetry.dependencies]
 python = ">=3.10"
 batchgenerators = "*"
 batchgeneratorsv2 = "*"
-# auglab subclasses kornia's private augmentation internals
+# smauglab subclasses kornia's private augmentation internals
 # (_AugmentationBase, RigidAffineAugmentationBase3D, augmentation.container.ops,
 # _adapted_rsampling, _tuple_range_reader). Those move between minor releases,
 # so the range is capped and both ends are exercised by the kornia-compat job
@@ -71,6 +76,7 @@ wandb = { version = "*", optional = true }
 nnunetv2 = { version = "*", optional = true }
 build = { version = "*", optional = true }
 coverage = { version = ">=7", optional = true }
+mypy = { version = ">=1.10", optional = true }
 pre-commit = { version = "*", optional = true }
 pytest = { version = ">=8", optional = true }
 pytest-cov = { version = "*", optional = true }
@@ -83,10 +89,10 @@ twine = { version = "*", optional = true }
 [tool.poetry.extras]
 nnunetv2 = ["nnunetv2"]
 all = ["monai", "tqdm", "wandb"]
-dev = ["build", "coverage", "pre-commit", "pytest", "pytest-cov", "ruff", "twine"]
+dev = ["build", "coverage", "mypy", "pre-commit", "pytest", "pytest-cov", "ruff", "twine"]
 
 [tool.poetry.scripts]
-auglab_add_nnunettrainer = "auglab.add_trainer:main"
+smauglab_add_nnunettrainer = "smauglab.add_trainer:main"
 
 [build-system]
 requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
@@ -212,7 +218,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 # The trainers mirror nnU-Net's upstream signatures verbatim, including its
 # `device: torch.device = torch.device("cuda")` default. Diverging would break
 # the drop-in contract with nnUNetTrainer.
-"auglab/trainers/**" = ["B008"]
+"smauglab/trainers/**" = ["B008"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 20
@@ -233,6 +239,28 @@ docstring-code-format = true
 # Like Black, automatically detect the appropriate line ending.
 line-ending = "auto"
 
+[tool.mypy]
+# Checked in CI by the `typecheck` job in .github/workflows/lint.yml, which has to
+# install the real dependencies first: with kornia and torch absent every type
+# collapses to Any and the run passes while checking nothing.
+#
+# The floor of the supported range, not the version CI happens to run on -- this is
+# what `requires-python = ">=3.10"` promises.
+python_version = "3.10"
+# Pragmatic rather than strict. Nothing in the dependency stack ships stubs
+# (kornia, batchgeneratorsv2, torchio, nnunetv2, nibabel, progress), and full
+# annotation coverage is not enforced -- tighten with disallow_untyped_defs
+# incrementally rather than in one pass.
+ignore_missing_imports = true
+warn_redundant_casts = true
+# smauglab/, smauglab/transforms/ and smauglab/utils/ have no __init__.py (PEP 420,
+# see the `packages` note above), so mypy cannot derive module names without these.
+namespace_packages = true
+explicit_package_bases = true
+# Only the shipped package is gated. Tests and standalone scripts are not installed
+# and assert against literals, which reads badly to a type checker.
+exclude = ["unit_tests/", "scripts/"]
+
 [tool.pytest.ini_options]
 testpaths = ["unit_tests"]
 filterwarnings = [
@@ -245,7 +273,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["auglab"]
+source = ["smauglab"]
 
 [tool.coverage.report]
 exclude_lines = [

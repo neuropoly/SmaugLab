@@ -28,13 +28,13 @@ from monai.transforms import (
 from torch import optim
 from tqdm import tqdm
 
-from auglab import configs
+from smauglab import configs
 
-# Import AugLab GPU transforms 🐞
-from auglab.transforms.gpu.transforms import AugTransformsGPU
+# Import SmaugLab GPU transforms 🐞
+from smauglab.transforms.gpu.transforms import AugTransformsGPU
 
-# Import AugLab custom transforms
-from auglab.utils.utils import (
+# Import SmaugLab custom transforms
+from smauglab.utils.utils import (
     adjust_learning_rate,
     compute_dsc,
     fetch_image_config,
@@ -55,7 +55,7 @@ def get_parser():
         help="Config JSON file where every label used for TRAINING, VALIDATION and TESTING has its path specified ~/<your_path>/config_data.json (Required)",
     )
     parser.add_argument(
-        "--transforms", default=None, help='Transforms JSON with GPU parameters default="auglab/configs/transform_params_gpu.json"'
+        "--transforms", default=None, help='Transforms JSON with GPU parameters default="smauglab/configs/transform_params_gpu.json"'
     )
     parser.add_argument(
         "--model",
@@ -141,11 +141,11 @@ def main():
         split="VALIDATION",
     )
 
-    # Load AugLab transform parameters 🐞
+    # Load SmaugLab transform parameters 🐞
     configs_path = importlib.resources.files(configs)
     gpu_transforms_path = args.transforms if args.transforms is not None else configs_path / "transform_params_gpu.json"
 
-    # Compose MONAI and AugLab transforms
+    # Compose MONAI and SmaugLab transforms
     pixdim = args.pixdim
     patch_size = args.patch_size
     train_transforms = Compose(
@@ -210,7 +210,7 @@ def main():
 
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=5, pin_memory=False, persistent_workers=False)
 
-    # Load AugLab GPU transforms and set on device 🐞
+    # Load SmaugLab GPU transforms and set on device 🐞
     gpu_transforms = AugTransformsGPU(json_path=gpu_transforms_path).to(device)
 
     # Create model

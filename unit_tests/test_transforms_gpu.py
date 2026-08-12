@@ -12,25 +12,26 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import unittest
 from pathlib import Path
 
-import pytest
 import torch
 
-from auglab.transforms.gpu.base import AugmentationSequentialCustom
+from smauglab.transforms.gpu.base import AugmentationSequentialCustom
+from unit_tests.helpers import SmaugLabTestCase, first_output
 
 TRANSFORM_MODULES = [
-    "auglab.transforms.gpu.contrast",
-    "auglab.transforms.gpu.spatial",
-    "auglab.transforms.gpu.fromSeg",
-    "auglab.transforms.gpu.domain_transfer",
+    "smauglab.transforms.gpu.contrast",
+    "smauglab.transforms.gpu.spatial",
+    "smauglab.transforms.gpu.fromSeg",
+    "smauglab.transforms.gpu.domain_transfer",
 ]
 
 # Not augmentations: helper modules that happen to be nn.Module subclasses.
 NOT_A_TRANSFORM = {"DifferentiableHistogram3D"}
 
 
-def _discover():
+def discover_transforms():
     """Collect transform classes that can be constructed without arguments."""
     found = []
     for module_name in TRANSFORM_MODULES:
@@ -53,10 +54,10 @@ def _discover():
     return sorted(found, key=lambda item: item[0])
 
 
-DISCOVERED = _discover()
+DISCOVERED = discover_transforms()
 
 
-def _build_kwargs(cls, signature) -> dict:
+def build_kwargs(cls, signature) -> dict:
     """Construction arguments that make a transform actually do something.
 
     `p` is forced to 1.0 because most transforms default to a low probability
@@ -70,65 +71,72 @@ def _build_kwargs(cls, signature) -> dict:
     return kwargs
 
 
-def _skip_reason(cls) -> str | None:
+def skip_reason(cls) -> str | None:
     """Some transforms depend on assets that do not exist on a fresh checkout."""
     if cls.__name__ == "RandomDomainTransferGPU":
-        from auglab.transforms.gpu.domain_transfer import DEFAULT_BANK_PATH
+        from smauglab.transforms.gpu.domain_transfer import DEFAULT_BANK_PATH
 
         if not Path(DEFAULT_BANK_PATH).is_file():
             return f"domain transfer bank not available at {DEFAULT_BANK_PATH}"
     return None
 
 
-def test_discovery_found_transforms():
-    assert len(DISCOVERED) >= 15, f"expected the bulk of the GPU transforms, found {len(DISCOVERED)}"
+class TestTransformDiscovery(unittest.TestCase):
+    def test_discovery_found_transforms(self):
+        self.assertGreaterEqual(
+            len(DISCOVERED),
+            15,
+            f"expected the bulk of the GPU transforms, found {len(DISCOVERED)}",
+        )
 
 
-@pytest.mark.parametrize(
-    ("cls", "signature"),
-    [(cls, sig) for _, cls, sig in DISCOVERED],
-    ids=[name for name, _, _ in DISCOVERED],
-)
-def test_transform_runs_on_a_tiny_volume(cls, signature, tiny_volume, tiny_seg):
-    """Drive each transform the way AugTransformsGPU does and check the output."""
-    reason = _skip_reason(cls)
-    if reason:
-        pytest.skip(reason)
+class TestTransformsRunStandalone(SmaugLabTestCase):
+    def _pipeline(self, cls, signature):
+        """Drive a single transform the way AugTransformsGPU does."""
+        return AugmentationSequentialCustom(
+            cls(**build_kwargs(cls, signature)),
+            data_keys=["input", "mask"],
+            same_on_batch=True,
+        )
 
-    # Force the transform to actually fire; the default probability is often low.
-    pipeline = AugmentationSequentialCustom(cls(**_build_kwargs(cls, signature)), data_keys=["input", "mask"], same_on_batch=True)
+    def test_transform_runs_on_a_tiny_volume(self):
+        for label, cls, signature in DISCOVERED:
+            with self.subTest(transform=label):
+                reason = skip_reason(cls)
+                if reason:
+                    self.skipTest(reason)
 
-    result = pipeline(tiny_volume, tiny_seg)
-    image = result[0] if isinstance(result, (list, tuple)) else result
+                volume, seg = self.tiny_volume(), self.tiny_seg()
+                image = first_output(self._pipeline(cls, signature)(volume, seg))
 
-    assert image.shape == tiny_volume.shape, f"{cls.__name__} changed the volume shape"
-    assert image.dtype.is_floating_point
-    assert torch.isfinite(image).all(), f"{cls.__name__} produced NaN or Inf"
+                self.assertIsImageLike(image, volume, cls.__name__)
+
+    def test_transform_leaves_the_mask_intact(self):
+        """Image-only transforms must not silently alter the segmentation labels.
+
+        Spatial transforms legitimately move the mask, so only the label *set*
+        is checked -- values must stay in {0, 1}, never interpolated into
+        something in between.
+        """
+        for label, cls, signature in DISCOVERED:
+            with self.subTest(transform=label):
+                reason = skip_reason(cls)
+                if reason:
+                    self.skipTest(reason)
+
+                result = self._pipeline(cls, signature)(self.tiny_volume(), self.tiny_seg())
+                if not isinstance(result, (list, tuple)) or len(result) < 2:
+                    self.skipTest(f"{cls.__name__} does not return a mask")
+
+                mask = result[1]
+                self.assertTrue(bool(torch.isfinite(mask).all()), f"{cls.__name__} produced a non-finite mask")
+                unique = torch.unique(mask)
+                self.assertLessEqual(
+                    unique.numel(),
+                    2,
+                    f"{cls.__name__} interpolated the mask into {unique.numel()} values",
+                )
 
 
-@pytest.mark.parametrize(
-    ("cls", "signature"),
-    [(cls, sig) for _, cls, sig in DISCOVERED],
-    ids=[name for name, _, _ in DISCOVERED],
-)
-def test_transform_leaves_the_mask_intact(cls, signature, tiny_volume, tiny_seg):
-    """Image-only transforms must not silently alter the segmentation labels.
-
-    Spatial transforms legitimately move the mask, so only the label *set* is
-    checked -- values must stay in {0, 1}, never interpolated into something in
-    between.
-    """
-    reason = _skip_reason(cls)
-    if reason:
-        pytest.skip(reason)
-
-    pipeline = AugmentationSequentialCustom(cls(**_build_kwargs(cls, signature)), data_keys=["input", "mask"], same_on_batch=True)
-
-    result = pipeline(tiny_volume, tiny_seg)
-    if not isinstance(result, (list, tuple)) or len(result) < 2:
-        pytest.skip(f"{cls.__name__} does not return a mask")
-
-    mask = result[1]
-    assert torch.isfinite(mask).all(), f"{cls.__name__} produced a non-finite mask"
-    unique = torch.unique(mask)
-    assert unique.numel() <= 2, f"{cls.__name__} interpolated the mask into {unique.numel()} values"
+if __name__ == "__main__":
+    unittest.main()
