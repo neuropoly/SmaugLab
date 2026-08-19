@@ -5,7 +5,7 @@ Two entry points are provided:
 * :class:`RandomSynthSegGPU` -- an :class:`ImageOnlyTransform` that *replaces*
   the image with a GMM-synthesised one derived from ``params['seg']``. It is
   intensity-only (no internal spatial deformation), so it composes with SmaugLab's
-  existing geometric transforms (``RandomAffine3DCustom``, ``RandomFlipTransformGPU``,
+  existing geometric transforms (``RandomAffineGPU``, ``RandomFlipTransformGPU``,
   ...) inside an :class:`AugmentationSequentialCustom`: place those *before* it so
   the mask is deformed first and SynthSeg generates from the deformed labels,
   keeping image and label aligned. Drop it into a ``transform_params_gpu.json``
@@ -28,60 +28,21 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
+from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform
 from smauglab.transforms.synthseg.generator import SynthSegGenerator
 
-# Keys understood from the JSON config / kwargs, forwarded to SynthSegGenerator.
-_GENERATOR_KEYS = {
-    "generation_labels",
-    "output_labels",
-    "n_neutral_labels",
-    "generation_classes",
-    "n_channels",
-    "prior_distributions",
-    "prior_means",
-    "prior_stds",
-    "flipping",
-    "flip_axis",
-    "scaling_bounds",
-    "rotation_bounds",
-    "shearing_bounds",
-    "translation_bounds",
-    "nonlin_std",
-    "nonlin_scale",
-    "svf_integration_steps",
-    "bias_field_std",
-    "bias_scale",
-    "gamma_std",
-    "clip",
-    "normalise",
-    "randomise_res",
-    "max_res_iso",
-    "max_res_aniso",
-    "data_res",
-    "thickness",
-    "blur_range",
-    "atlas_res",
-    "output_shape",
-    "em_label_completion",
-    "em_n_foreground_clusters",
-    "em_background_clusters_range",
-    "em_background_label",
-    "em_n_iters",
-    "em_max_fit_voxels",
-    "em_same_on_batch",
-    "apply_affine",
-    "apply_nonlinear",
-    "apply_bias_field",
-    "apply_intensity_augmentation",
-    "apply_resolution",
-}
 
-
-def _filter_generator_kwargs(params: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in params.items() if k in _GENERATOR_KEYS}
-
-
+@register(
+    aug_id=AugId.SYNTHSEG,
+    backend=Backend.GPU,
+    group=AugType.TA,
+    order=30,
+    forwards_to=SynthSegGenerator,
+    # Forced below to keep the synthesis intensity-only; a config setting any of
+    # these would be silently overridden, so they are rejected instead.
+    context_params=("apply_affine", "apply_nonlinear", "flipping", "output_shape"),
+)
 class RandomSynthSegGPU(ImageOnlyTransform):
     """Replace the image with a SynthSeg GMM synthesis of ``params['seg']``.
 
@@ -104,12 +65,19 @@ class RandomSynthSegGPU(ImageOnlyTransform):
         apply_to_channel: list[int] | None = None,
         same_on_batch: bool = False,
         p: float = 0.5,
+        p_batch: float = 1.0,
         keepdim: bool = True,
         **kwargs: Any,
     ) -> None:
-        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.apply_to_channel = apply_to_channel if apply_to_channel is not None else [0]
-        gen_kwargs = _filter_generator_kwargs(kwargs)
+        # Forwarded straight through, so SynthSegGenerator's own signature is the only
+        # definition of what is accepted. This used to go through a hand-maintained
+        # _GENERATOR_KEYS set that silently dropped anything not in it -- meaning a
+        # typo'd generator parameter did nothing at all and said nothing about it.
+        # The registry declares forwards_to=SynthSegGenerator so config validation
+        # sees both signatures as one.
+        gen_kwargs = dict(kwargs)
         # Intensity-only: never deform/flip internally (geometry comes from the
         # surrounding sequential, which also transports the mask).
         gen_kwargs.update(apply_affine=False, apply_nonlinear=False, flipping=False, output_shape=None)
@@ -167,7 +135,12 @@ class SynthSegTransformsGPU(nn.Module):
 
         self.probability = float(config.get("probability", 1.0))
         self.return_onehot = bool(config.get("return_onehot", False))
-        self.generator = SynthSegGenerator(**_filter_generator_kwargs(config))
+        # Everything except this driver's own two keys belongs to the generator.
+        # Removing exactly those, rather than keeping a hand-listed allowlist of
+        # generator parameters, means an unrecognised key raises here instead of
+        # being silently discarded.
+        gen_kwargs = {k: v for k, v in config.items() if k not in {"probability", "return_onehot"}}
+        self.generator = SynthSegGenerator(**gen_kwargs)
 
     @torch.no_grad()
     def forward(self, data: Tensor, target: Tensor):

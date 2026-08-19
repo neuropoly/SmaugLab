@@ -41,9 +41,11 @@ keywords = [
     "offline augmentation",
     "mri",
 ]
-# smauglab has no __init__.py anywhere, so it is a PEP 420 namespace package.
-# poetry-core still walks the tree correctly; the CI build job and
-# unit_tests/test_packaging.py assert the wheel really contains every module.
+# smauglab is a regular package: every directory has an __init__.py. It used to be a
+# PEP 420 namespace package, which was dropped because the augmentation registry needs
+# a deterministic import-time population point, and because a namespace package lets a
+# stray smauglab/ elsewhere on sys.path silently merge into this one.
+# The CI build job and unit_tests/test_packaging.py assert the wheel contains every module.
 packages = [{ include = "smauglab" }]
 # The config JSONs are package data, not code, so they need listing explicitly.
 # A wheel without them is broken: smauglab resolves its default config through
@@ -92,6 +94,7 @@ all = ["monai", "tqdm", "wandb"]
 dev = ["build", "coverage", "mypy", "pre-commit", "pytest", "pytest-cov", "ruff", "twine"]
 
 [tool.poetry.scripts]
+smauglab = "smauglab.cli:main"
 smauglab_add_nnunettrainer = "smauglab.add_trainer:main"
 
 [build-system]
@@ -253,10 +256,6 @@ python_version = "3.10"
 # incrementally rather than in one pass.
 ignore_missing_imports = true
 warn_redundant_casts = true
-# smauglab/, smauglab/transforms/ and smauglab/utils/ have no __init__.py (PEP 420,
-# see the `packages` note above), so mypy cannot derive module names without these.
-namespace_packages = true
-explicit_package_bases = true
 # Only the shipped package is gated. Tests and standalone scripts are not installed
 # and assert against literals, which reads badly to a type checker.
 exclude = ["unit_tests/", "scripts/"]

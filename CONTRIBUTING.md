@@ -32,7 +32,17 @@ pytest -m "not slow"         # skip the wheel-building packaging tests
 pre-commit run --all-files   # everything CI's lint job runs
 ruff check .                 # lint only
 ruff format .                # format in place
+mypy smauglab/               # CI's typecheck job
+smauglab matrix --check      # are the generated README matrix and template current?
 ```
+
+`smauglab matrix --check` is a CI step rather than a pre-commit hook: populating
+the registry imports torch and kornia, which is far too slow to pay on every
+commit. Run `smauglab matrix --write` when you add an augmentation.
+
+Some tests need the domain-transfer LUT bank, which is built offline and not
+shipped. They skip without it; export `SMAUGLAB_DOMAIN_BANK=/path/to/bank.npz`
+to run them.
 
 ## The test suite
 
@@ -43,7 +53,13 @@ data on disk, so it is fast enough to gate every pull request.
 | --- | --- |
 | `helpers.py` | `SmaugLabTestCase` base class (RNG seeding, test volumes) and config lookup |
 | `test_imports.py` | Every module under `smauglab/` imports cleanly |
+| `test_registry.py` | Registry mechanics, against synthetic classes |
+| `test_registered_augmentations.py` | The real registry, and that the generated matrix and template are current |
+| `test_variant_leaves.py` | Each variant leaf fixes its variant and hides it from the config surface |
+| `test_builder.py` | Pipeline order, bucketing, runtime context, and strict validation |
+| `test_migration.py` | Migrated configs reproduce the pre-registry builder exactly |
 | `test_configs.py` | Every shipped config parses, builds a pipeline, runs a forward pass, and is reproducible under a fixed seed |
+| `test_trainers.py` | The nnU-Net trainer builds what each config asks for, and puts deep supervision in the right place |
 | `test_transforms_gpu.py` | Each GPU transform in isolation |
 | `test_packaging.py` | Builds the real wheel and checks its contents |
 
@@ -60,15 +76,89 @@ does not hide the rest and the failure names the offending item — look for
 `SmaugLabTestCase` to get seeded RNGs and the shared `tiny_volume()` /
 `tiny_seg()` helpers.
 
-Transforms in `test_transforms_gpu.py` are discovered by introspection, so a
-new transform class is covered as soon as it lands — as long as it can be built
-with default arguments. If yours needs configuration, cover it by adding a
-config JSON under `smauglab/configs/`, which `test_configs.py` picks up
-automatically.
+Transforms in `test_transforms_gpu.py` come from the registry, so a new
+augmentation is covered the moment it is registered — no list to update, and no
+denylist of helper classes. Transforms with a required constructor argument are
+covered through `test_configs.py` instead, which picks up any config JSON added
+under `smauglab/configs/`.
+
+`test_migration.py` replays `fixtures/legacy_effective_kwargs.json`: a record of
+every constructor call the pre-registry builder made, captured while it still
+existed. It is what proves the config rename changed no behaviour, so treat it as
+append-only — regenerating it from current code would make it prove nothing.
 
 Note that these are smoke and contract tests: they check that transforms run,
 preserve shape, stay finite, and do not corrupt the segmentation labels. They
 do not verify that an augmentation is *visually* or *statistically* correct.
+
+## The nnU-Net trainer
+
+There is one trainer class, `nnUNetTrainerDAExtGPU`. It reads a config and builds
+whatever the config names: the `CPU` section runs in the dataloader worker, the `GPU`
+section runs on the batch in `train_step`. Three classes used to encode that split in
+their names; the config already carried it.
+
+The name is load-bearing and must not change: nnU-Net writes the trainer class name
+into every checkpoint and resolves the class from it at inference, so renaming it
+would make every previously trained model unloadable.
+
+Two behaviours are decided from the config rather than hardcoded:
+
+* **Deep supervision** is downsampled in `train_step` when there are GPU
+  augmentations (the mask is deformed there) and in the dataloader when there are
+  not. Getting this backwards trains against targets that no longer match the image.
+* **Pipeline arrangement** comes from `pipeline.mode` -- `sequential`,
+  `random_order` or `random_order_ta`.
+
+## Adding an augmentation
+
+Config keys are class names, exactly, and parameters are constructor arguments,
+exactly. Both are checked against the registry, so an augmentation is reachable
+from a config only once it is registered.
+
+1. **Write the class.** No `**kwargs` — parameter validation reads the signature,
+   so anything hidden behind it is invisible to a config and to `smauglab show`.
+   Declare `p` and `p_batch` explicitly on GPU transforms. Give every parameter a
+   default that is the value you actually want, not a `None` sentinel you resolve
+   in the body: the signature is what the generated template advertises.
+
+2. **Register it.**
+
+   ```python
+   @register(
+       aug_id=AugId.SCHARR,       # add a member if the concept is new
+       backend=Backend.GPU,
+       group=AugType.TA,          # GEO / GE / TA, used for random-order bucketing
+       order=90,                  # pipeline position; 10-spaced, unique per backend
+   )
+   class RandomScharrGPU(_RandomConvBaseGPU): ...
+   ```
+
+   Third-party classes cannot be decorated; register those in
+   `smauglab/transforms/cpu/external.py` instead.
+
+   Less common fields: `forwards_to` when the constructor genuinely passes kwargs
+   on to another class, `context_params` for values the trainer supplies at
+   runtime, `param_adapters` when a value must be wrapped before use, and
+   `external_asset` when it needs a file the wheel does not ship.
+
+3. **Regenerate and commit the artefacts.**
+
+   ```bash
+   smauglab matrix --write
+   ```
+
+4. **Check it.**
+
+   ```bash
+   smauglab show YourTransform
+   pytest unit_tests/test_registry.py unit_tests/test_registered_augmentations.py
+   ```
+
+If a variant differs only by one fixed argument — a kernel, a function, an
+inversion flag — give it its own thin subclass rather than exposing the argument.
+One class per config key is what keeps a config from expressing the same
+augmentation two different ways.
 
 ## Style
 

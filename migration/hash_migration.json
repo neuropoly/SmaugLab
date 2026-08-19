@@ -1,0 +1,337 @@
+{
+  "_comment": "Experiment directories are named Dataset{id}-{trainer}-aug-{transform_hash}-c-{config_hash}. Renaming the config keys changed every config's content, and rewriting the GPU builder changed the transform source file, so both halves moved. Runs made before the migration keep their old names; this maps them onto the configs that now produce the same augmentations.",
+  "transform_hash": {
+    "old": "7579cee8",
+    "new": "44975815",
+    "_comment": "sha256 of smauglab/transforms/gpu/transforms.py, which the registry-driven builder replaced"
+  },
+  "config_hash": {
+    "configs/synthseg_params.json": {
+      "old": "bbab46b4",
+      "new": "074e798a"
+    },
+    "configs/transform_params.json": {
+      "old": "f08f10c9",
+      "new": "10c4c547"
+    },
+    "configs/transform_params_gpu.json": {
+      "old": "27056a10",
+      "new": "49138fe4"
+    },
+    "configs/transform_params_gpu_basedon3d250af0-noGE.json": {
+      "old": "5b7d3b56",
+      "new": "f5e5afe9"
+    },
+    "configs/transform_params_gpu_basedon3d250af0-noTA-heavyFunction.json": {
+      "old": "de5a089c",
+      "new": "cf003b53"
+    },
+    "configs/transform_params_gpu_basedon3d250af0-noTA-nobias.json": {
+      "old": "1d5604d8",
+      "new": "a98193c9"
+    },
+    "configs/transform_params_gpu_basedon3d250af0-noTA.json": {
+      "old": "dc49d802",
+      "new": "a646512e"
+    },
+    "configs/transform_params_gpu_basedon3d250af0.json": {
+      "old": "f87d9f40",
+      "new": "bdf7884c"
+    },
+    "configs/transform_params_gpu_default01-23-List-TA05.json": {
+      "old": "6d730468",
+      "new": "27bbd673"
+    },
+    "configs/transform_params_gpu_default01-23-List-TA08.json": {
+      "old": "f9d53901",
+      "new": "02364ce2"
+    },
+    "configs/transform_params_gpu_default01-23-List.json": {
+      "old": "dbb6c7bd",
+      "new": "7731d57a"
+    },
+    "configs/transform_params_gpu_default01-23-Scharr.json": {
+      "old": "34798f3b",
+      "new": "981ef0b2"
+    },
+    "configs/transform_params_gpu_default01-23-focus.json": {
+      "old": "fce90d66",
+      "new": "b82fffdb"
+    },
+    "configs/transform_params_gpu_default01-23-noGE.json": {
+      "old": "fb357cc3",
+      "new": "e7451c63"
+    },
+    "configs/transform_params_gpu_default01-23-noMirror-RandConv.json": {
+      "old": "7ef2f45d",
+      "new": "cb016cfb"
+    },
+    "configs/transform_params_gpu_default01-23-noMirror.json": {
+      "old": "7b1f514e",
+      "new": "7def1352"
+    },
+    "configs/transform_params_gpu_default01-23-noTA.json": {
+      "old": "256756f0",
+      "new": "15e5bf37"
+    },
+    "configs/transform_params_gpu_default01-23.json": {
+      "old": "0b639cf1",
+      "new": "c69b9872"
+    },
+    "configs/transform_params_gpu_default01-23_CropTransform.json": {
+      "old": "ce22c512",
+      "new": "37c71641"
+    },
+    "configs/transform_params_gpu_default01-23_ICGT_plus.json": {
+      "old": "69826763",
+      "new": "c69b9872"
+    },
+    "configs/transform_params_gpu_default01-23_ImageContrastGPUTransform.json": {
+      "old": "4d0a6975",
+      "new": "b7078b73"
+    },
+    "configs/transform_params_gpu_default01-23_RandomDomainTransferGPU.json": {
+      "old": "b7860a93",
+      "new": "9e7d8db6"
+    },
+    "configs/transform_params_gpu_default01-23_Synthseg.json": {
+      "old": "1d9aebee",
+      "new": "4bafcfdd"
+    },
+    "configs/transform_params_gpu_default01-23_SynthsegPlus.json": {
+      "old": "a7433b53",
+      "new": "3414ba9f"
+    },
+    "configs/transform_params_gpu_inoutseg.json": {
+      "old": "638a4d3b",
+      "new": "82f778f3"
+    },
+    "configs/transform_params_gpu_palette-em.json": {
+      "old": "011beee2",
+      "new": "cf699dc2"
+    },
+    "configs/transform_params_hybrid.json": {
+      "old": "736ef018",
+      "new": "c95704cd"
+    },
+    "configs/transform_params_hybrid_TAGE.json": {
+      "old": "181aeca5",
+      "new": "c5fb06c0"
+    },
+    "configs/transform_params_one-sequence-to-segment-them-all.json": {
+      "old": "0b639cf1",
+      "new": "c69b9872"
+    },
+    "configs_paul/transform_params_gpu_default01-23.json": {
+      "old": "0b639cf1",
+      "new": "c69b9872"
+    },
+    "configs_paul/transform_params_gpu_default01-23_ImageContrastV26_6_2GPUTransform.json": {
+      "old": "edee2361",
+      "new": "910e29a0"
+    },
+    "configs_paul/transform_params_gpu_default01-23_Synthseg.json": {
+      "old": "1d9aebee",
+      "new": "4bafcfdd"
+    },
+    "configs_paul/transform_params_gpu_default01-23_Synthseg_EM.json": {
+      "old": "77e8ea61",
+      "new": "0d5d802f"
+    },
+    "configs_paul/transform_params_gpu_default01-23_smauglabAug_ImageContrastV26_6_2GPUTransform_train025.json": {
+      "old": "7d620635",
+      "new": "6a4219e8"
+    }
+  },
+  "old_to_new": {
+    "bbab46b4": {
+      "new": "074e798a",
+      "configs": [
+        "configs/synthseg_params.json"
+      ]
+    },
+    "f08f10c9": {
+      "new": "10c4c547",
+      "configs": [
+        "configs/transform_params.json"
+      ]
+    },
+    "27056a10": {
+      "new": "49138fe4",
+      "configs": [
+        "configs/transform_params_gpu.json"
+      ]
+    },
+    "5b7d3b56": {
+      "new": "f5e5afe9",
+      "configs": [
+        "configs/transform_params_gpu_basedon3d250af0-noGE.json"
+      ]
+    },
+    "de5a089c": {
+      "new": "cf003b53",
+      "configs": [
+        "configs/transform_params_gpu_basedon3d250af0-noTA-heavyFunction.json"
+      ]
+    },
+    "1d5604d8": {
+      "new": "a98193c9",
+      "configs": [
+        "configs/transform_params_gpu_basedon3d250af0-noTA-nobias.json"
+      ]
+    },
+    "dc49d802": {
+      "new": "a646512e",
+      "configs": [
+        "configs/transform_params_gpu_basedon3d250af0-noTA.json"
+      ]
+    },
+    "f87d9f40": {
+      "new": "bdf7884c",
+      "configs": [
+        "configs/transform_params_gpu_basedon3d250af0.json"
+      ]
+    },
+    "6d730468": {
+      "new": "27bbd673",
+      "configs": [
+        "configs/transform_params_gpu_default01-23-List-TA05.json"
+      ]
+    },
+    "f9d53901": {
+      "new": "02364ce2",
+      "configs": [
+        "configs/transform_params_gpu_default01-23-List-TA08.json"
+      ]
+    },
+    "dbb6c7bd": {
+      "new": "7731d57a",
+      "configs": [
+        "configs/transform_params_gpu_default01-23-List.json"
+      ]
+    },
+    "34798f3b": {
+      "new": "981ef0b2",
+      "configs": [
+        "configs/transform_params_gpu_default01-23-Scharr.json"
+      ]
+    },
+    "fce90d66": {
+      "new": "b82fffdb",
+      "configs": [
+        "configs/transform_params_gpu_default01-23-focus.json"
+      ]
+    },
+    "fb357cc3": {
+      "new": "e7451c63",
+      "configs": [
+        "configs/transform_params_gpu_default01-23-noGE.json"
+      ]
+    },
+    "7ef2f45d": {
+      "new": "cb016cfb",
+      "configs": [
+        "configs/transform_params_gpu_default01-23-noMirror-RandConv.json"
+      ]
+    },
+    "7b1f514e": {
+      "new": "7def1352",
+      "configs": [
+        "configs/transform_params_gpu_default01-23-noMirror.json"
+      ]
+    },
+    "256756f0": {
+      "new": "15e5bf37",
+      "configs": [
+        "configs/transform_params_gpu_default01-23-noTA.json"
+      ]
+    },
+    "0b639cf1": {
+      "new": "c69b9872",
+      "configs": [
+        "configs/transform_params_gpu_default01-23.json",
+        "configs/transform_params_one-sequence-to-segment-them-all.json",
+        "configs_paul/transform_params_gpu_default01-23.json"
+      ]
+    },
+    "ce22c512": {
+      "new": "37c71641",
+      "configs": [
+        "configs/transform_params_gpu_default01-23_CropTransform.json"
+      ]
+    },
+    "69826763": {
+      "new": "c69b9872",
+      "configs": [
+        "configs/transform_params_gpu_default01-23_ICGT_plus.json"
+      ]
+    },
+    "4d0a6975": {
+      "new": "b7078b73",
+      "configs": [
+        "configs/transform_params_gpu_default01-23_ImageContrastGPUTransform.json"
+      ]
+    },
+    "b7860a93": {
+      "new": "9e7d8db6",
+      "configs": [
+        "configs/transform_params_gpu_default01-23_RandomDomainTransferGPU.json"
+      ]
+    },
+    "1d9aebee": {
+      "new": "4bafcfdd",
+      "configs": [
+        "configs/transform_params_gpu_default01-23_Synthseg.json",
+        "configs_paul/transform_params_gpu_default01-23_Synthseg.json"
+      ]
+    },
+    "a7433b53": {
+      "new": "3414ba9f",
+      "configs": [
+        "configs/transform_params_gpu_default01-23_SynthsegPlus.json"
+      ]
+    },
+    "638a4d3b": {
+      "new": "82f778f3",
+      "configs": [
+        "configs/transform_params_gpu_inoutseg.json"
+      ]
+    },
+    "011beee2": {
+      "new": "cf699dc2",
+      "configs": [
+        "configs/transform_params_gpu_palette-em.json"
+      ]
+    },
+    "736ef018": {
+      "new": "c95704cd",
+      "configs": [
+        "configs/transform_params_hybrid.json"
+      ]
+    },
+    "181aeca5": {
+      "new": "c5fb06c0",
+      "configs": [
+        "configs/transform_params_hybrid_TAGE.json"
+      ]
+    },
+    "edee2361": {
+      "new": "910e29a0",
+      "configs": [
+        "configs_paul/transform_params_gpu_default01-23_ImageContrastV26_6_2GPUTransform.json"
+      ]
+    },
+    "77e8ea61": {
+      "new": "0d5d802f",
+      "configs": [
+        "configs_paul/transform_params_gpu_default01-23_Synthseg_EM.json"
+      ]
+    },
+    "7d620635": {
+      "new": "6a4219e8",
+      "configs": [
+        "configs_paul/transform_params_gpu_default01-23_smauglabAug_ImageContrastV26_6_2GPUTransform_train025.json"
+      ]
+    }
+  }
+}

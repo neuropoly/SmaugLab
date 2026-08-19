@@ -1,98 +1,158 @@
 {
-  "retain_stats": true,
-  "mirror_axes": [0,1,2],
-  "ArtifactTransform": {
-    "motion": false,
-    "ghosting": false,
-    "spike": false,
-    "bias_field": false,
-    "blur": false,
-    "noise": false,
-    "swap": false,
-    "random_pick": false,
-    "probability": 0.7
-  },
-  "SpatialCustomTransform": {
-    "flip": false,
-    "affine": false,
-    "elastic": false,
-    "anisotropy": false,
-    "random_pick": false,
-    "probability": 0.6
-  },
-  "ConvTransform": {
-    "kernel_type": "Laplace",
-    "absolute": false,
-    "retain_stats": false,
-    "probability": 0.15
-  },
-  "RedistributeTransform": {
-    "classes": null,
-    "in_seg": 0.2,
-    "retain_stats": false,
-    "probability": 0.5
-  },
-  "ShapeTransform": {
-    "shape_min": 1,
-    "ignore_axes": [1,2],
-    "probability": 0.4
-  },
-  "HistogramEqualTransform": {
-    "probability": 0.1
-  },
-  "FunctionTransform": {
-    "probability": 0.05
-  },
-  "GaussianNoiseTransform": {
-    "noise_variance": [0, 0.1],
-    "p_per_channel": 1,
-    "synchronize_channels": true,
-    "probability": 0.1
-  },
-  "GaussianBlurTransform": {
-    "blur_sigma": [0.5, 1.0],
-    "synchronize_channels": false,
-    "synchronize_axes": false,
-    "p_per_channel": 0.5,
-    "benchmark": true,
-    "probability": 0.2
-  },
-  "MultiplicativeBrightnessTransform": {
-    "multiplier_range": [0.75, 1.25],
-    "synchronize_channels": false,
-    "p_per_channel": 1,
-    "probability": 0.15
-  },
-  "ContrastTransform": {
-    "contrast_range": [0.75, 1.25],
-    "preserve_range": true,
-    "synchronize_channels": false,
-    "p_per_channel": 1,
-    "probability": 0.15
-  },
-  "SimulateLowResolutionTransform": {
-    "scale": [0.3, 1],
-    "synchronize_channels": true,
-    "synchronize_axes": false,
-    "ignore_axes": [],
-    "allowed_channels": null,
-    "p_per_channel": 0.5,
-    "probability": 0.2
-  },
-  "GammaTransform_invert": {
-    "gamma": [0.7, 1.5],
-    "p_invert_image": 1,
-    "synchronize_channels": false,
-    "p_per_channel": 1,
-    "p_retain_stats": 1,
-    "probability": 0.1
-  },
-  "GammaTransform": {
-    "gamma": [0.7, 1.5],
-    "p_invert_image": 0,
-    "synchronize_channels": false,
-    "p_per_channel": 1,
-    "p_retain_stats": 1,
-    "probability": 0.3
-  }
+    "CPU": {
+        "LaplaceConvTransform": {
+            "absolute": false,
+            "retain_stats": true,
+            "p": 0.15
+        },
+        "Log1pTransform": {
+            "p": 0.05,
+            "retain_stats": true
+        },
+        "SqrtTransform": {
+            "p": 0.05,
+            "retain_stats": true
+        },
+        "SinTransform": {
+            "p": 0.05,
+            "retain_stats": true
+        },
+        "ExpTransform": {
+            "p": 0.05,
+            "retain_stats": true
+        },
+        "SigmoidTransform": {
+            "p": 0.05,
+            "retain_stats": true
+        },
+        "HistogramEqualTransform": {
+            "p": 0.1,
+            "retain_stats": true
+        },
+        "RedistributeTransform": {
+            "in_seg": 0.2,
+            "retain_stats": true,
+            "p": 0.5
+        },
+        "ShapeTransform": {
+            "shape_min": 1,
+            "ignore_axes": [
+                1,
+                2
+            ],
+            "p": 0.4
+        },
+        "ArtifactTransform": {
+            "motion": false,
+            "ghosting": false,
+            "spike": false,
+            "bias_field": false,
+            "blur": false,
+            "noise": false,
+            "swap": false,
+            "random_pick": false,
+            "p": 0.7
+        },
+        "SpatialCustomTransform": {
+            "flip": false,
+            "affine": false,
+            "elastic": false,
+            "anisotropy": false,
+            "random_pick": false,
+            "p": 0.6
+        },
+        "GaussianNoiseTransform": {
+            "noise_variance": [
+                0,
+                0.1
+            ],
+            "p_per_channel": 1,
+            "synchronize_channels": true,
+            "p": 0.1
+        },
+        "GaussianBlurTransform": {
+            "blur_sigma": [
+                0.5,
+                1.0
+            ],
+            "synchronize_channels": false,
+            "synchronize_axes": false,
+            "p_per_channel": 0.5,
+            "benchmark": true,
+            "p": 0.2
+        },
+        "MultiplicativeBrightnessTransform": {
+            "multiplier_range": [
+                0.75,
+                1.25
+            ],
+            "synchronize_channels": false,
+            "p_per_channel": 1,
+            "p": 0.15
+        },
+        "ContrastTransform": {
+            "contrast_range": [
+                0.75,
+                1.25
+            ],
+            "preserve_range": true,
+            "synchronize_channels": false,
+            "p_per_channel": 1,
+            "p": 0.15
+        },
+        "SimulateLowResolutionTransform": {
+            "scale": [
+                0.3,
+                1
+            ],
+            "synchronize_channels": true,
+            "synchronize_axes": false,
+            "ignore_axes": [],
+            "allowed_channels": null,
+            "p_per_channel": 0.5,
+            "p": 0.2
+        },
+        "InvertedGammaTransform": {
+            "gamma": [
+                0.7,
+                1.5
+            ],
+            "synchronize_channels": false,
+            "p_per_channel": 1,
+            "p_retain_stats": 1,
+            "p": 0.1
+        },
+        "GammaTransform": {
+            "gamma": [
+                0.7,
+                1.5
+            ],
+            "p_invert_image": 0,
+            "synchronize_channels": false,
+            "p_per_channel": 1,
+            "p_retain_stats": 1,
+            "p": 0.3
+        },
+        "MirrorTransform": {
+            "allowed_axes": [
+                0,
+                1,
+                2
+            ]
+        },
+        "SpatialTransform": {
+            "patch_center_dist_from_border": 0,
+            "random_crop": false,
+            "p_elastic_deform": 0,
+            "p_rotation": 0,
+            "p_scaling": 0,
+            "scaling": [
+                0.7,
+                1.4
+            ],
+            "p_synchronize_scaling_across_axes": 1,
+            "bg_style_seg_sampling": false,
+            "mode_seg": "nearest"
+        }
+    }
 }

@@ -87,20 +87,32 @@ def gpu_config_paths() -> list[Path]:
     return sorted(paths)
 
 
-def requires_external_asset(config_path: Path) -> str | None:
-    """Return a skip reason if a config needs an asset that is not on this machine.
+def domain_bank_missing() -> str | None:
+    """Return a skip reason if the domain-transfer LUT bank is not on this machine.
 
-    RandomDomainTransferGPU loads a precomputed histogram bank from an absolute
-    path baked into the module, which only exists on the authors' machines.
-    Rather than fail CI, skip those configs and say why.
+    The bank is a large offline-built artefact that ships with neither the wheel nor
+    the repo, so it is only present where someone has exported SMAUGLAB_DOMAIN_BANK.
+    Rather than fail CI, skip and say why.
     """
-    from smauglab.transforms.gpu.domain_transfer import DEFAULT_BANK_PATH
+    from smauglab.transforms.gpu.domain_transfer import BANK_PATH_ENV_VAR, resolve_bank_path
 
+    try:
+        resolve_bank_path()
+    except FileNotFoundError:
+        return f"domain transfer bank not available (set {BANK_PATH_ENV_VAR})"
+    return None
+
+
+def requires_external_asset(config_path: Path) -> str | None:
+    """Return a skip reason if a config needs an asset that is not on this machine."""
     params = json.loads(config_path.read_text())
     params = params.get("GPU", params)
     if not isinstance(params, dict):
         return None
     uses_transfer = params.get("RandomDomainTransferGPU") or params.get("DomainTransferTransform")
-    if uses_transfer and not Path(DEFAULT_BANK_PATH).is_file():
-        return f"domain transfer bank not available at {DEFAULT_BANK_PATH}"
-    return None
+    if not uses_transfer:
+        return None
+    # A config may name its own bank; only fall back to the env var when it does not.
+    if isinstance(uses_transfer, dict) and uses_transfer.get("bank_path"):
+        return None if Path(uses_transfer["bank_path"]).is_file() else f"domain transfer bank not available at {uses_transfer['bank_path']}"
+    return domain_bank_missing()

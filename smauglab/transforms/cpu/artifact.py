@@ -5,7 +5,15 @@ import torch
 import torchio as tio
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
 
+from smauglab.registry import AugId, AugType, Backend, register
 
+
+@register(
+    aug_id=AugId.ARTIFACT,
+    backend=Backend.CPU,
+    group=AugType.TA,
+    order=60,
+)
 class ArtifactTransform(BasicTransform):
     def __init__(self, motion=False, ghosting=False, spike=False, bias_field=False, blur=False, noise=False, swap=False, random_pick=False):
         """

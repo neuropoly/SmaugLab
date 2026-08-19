@@ -65,7 +65,7 @@ Defaults match `BrainGenerator.__init__` (which overrides several
 
 - **3D only** (5D `(B, C, D, H, W)` tensors), matching SmaugLab's GPU transforms.
 - Affine transforms are applied **about the volume centre** (like SmaugLab's
-  `RandomAffine3DCustom`), rather than the corner-origin used by neuron's
+  `RandomAffineGPU`), rather than the corner-origin used by neuron's
   `affine_to_shift`. This keeps the anatomy in frame and is the standard choice;
   the visual augmentation is equivalent.
 - The SVF is integrated at full resolution after upsampling the coarse velocity
@@ -156,11 +156,11 @@ the deformed labels:
 
 ```python
 from smauglab.transforms.gpu.base import AugmentationSequentialCustom
-from smauglab.transforms.gpu.spatial import RandomAffine3DCustom
+from smauglab.transforms.gpu.spatial import RandomAffineGPU
 from smauglab.transforms.synthseg import RandomSynthSegGPU
 
 aug = AugmentationSequentialCustom(
-    RandomAffine3DCustom(degrees=15, scale=[0.8, 1.2], p=1.0),
+    RandomAffineGPU(degrees=15, scale=[0.8, 1.2], p=1.0),
     RandomSynthSegGPU(generation_labels=None, n_channels=1,
                       bias_field_std=0.7, gamma_std=0.5, randomise_res=True, p=1.0),
     data_keys=["input", "mask"], same_on_batch=True,

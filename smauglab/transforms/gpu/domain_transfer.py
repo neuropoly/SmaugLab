@@ -35,6 +35,8 @@ configs are unchanged):
 """
 
 import math
+import os
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -43,10 +45,33 @@ from torch import Tensor
 from torch.distributions import Dirichlet
 from torch.nn import functional as F
 
+from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform
 
-# Default transfer LUT bank (built by embeddaug/analysis/playground/build_transfer_bank.py).
-DEFAULT_BANK_PATH = "/DATA/NAS/ongoing_projects/hendrik/nathan-transferaug/embeddaug/analysis/playground/results/domain_transfer_bank.npz"
+# The transfer LUT bank is a multi-hundred-MB artefact built offline by
+# embeddaug/analysis/playground/build_transfer_bank.py, so it is not shipped in the
+# wheel. Point this env var at it; there is deliberately no baked-in default, because
+# the previous one was an absolute path into a single machine's NAS home directory and
+# silently made this transform unusable for everyone else.
+BANK_PATH_ENV_VAR = "SMAUGLAB_DOMAIN_BANK"
+
+
+def resolve_bank_path(bank_path: str | None = None) -> str:
+    """Locate the domain-transfer LUT bank, explicit argument first, then the env var.
+
+    Raises with the fix spelled out rather than letting np.load report a bare
+    FileNotFoundError on a path the caller never chose.
+    """
+    resolved = bank_path or os.environ.get(BANK_PATH_ENV_VAR)
+    if not resolved:
+        raise FileNotFoundError(
+            "RandomDomainTransferGPU needs a transfer LUT bank. Pass bank_path=..., set it in "
+            f"the config, or export {BANK_PATH_ENV_VAR}=/path/to/domain_transfer_bank.npz "
+            "(built by embeddaug/analysis/playground/build_transfer_bank.py)."
+        )
+    if not os.path.isfile(resolved):
+        raise FileNotFoundError(f"Domain transfer bank not found at {resolved!r} (from {BANK_PATH_ENV_VAR} or bank_path).")
+    return resolved
 
 
 def _gaussian_kernel1d(sigma: float, device, dtype) -> torch.Tensor:
@@ -107,6 +132,14 @@ def _random_smooth_field01(shape, scale: float, gain: float, device, dtype) -> t
     return torch.sigmoid(gain * field + offset)
 
 
+@register(
+    aug_id=AugId.DOMAIN_TRANSFER,
+    backend=Backend.GPU,
+    group=AugType.TA,
+    order=50,
+    external_asset=BANK_PATH_ENV_VAR,
+    smoke_kwargs={"any_source": True},
+)
 class RandomDomainTransferGPU(ImageOnlyTransform):
     """Randomly transfer an image's appearance to another sequence/cluster (see module docstring)."""
 
@@ -115,10 +148,10 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         bank_path: str | None = None,
         source_label: str | None = None,
         targets: list[str] | None = None,
-        include_self: bool = True,
+        include_self: bool = False,
         any_source: bool = False,
         sigma: float = 2.0,
-        apply_to_channel: list[int] | None = None,
+        apply_to_channel: Sequence[int] = (0,),
         zscore_io: str = "auto",
         pct: float = 1.0,
         blend_targets: int = 1,
@@ -131,14 +164,11 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         spatial_mix_gain: float = 3.0,
         same_on_batch: bool = False,
         p: float = 0.2,
+        p_batch: float = 1.0,
         keepdim: bool = True,
-        **kwargs,
     ) -> None:
-        if apply_to_channel is None:
-            apply_to_channel = [0]
-        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
-        bank_path = bank_path or DEFAULT_BANK_PATH
-        data = np.load(bank_path, allow_pickle=True)
+        super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
+        data = np.load(resolve_bank_path(bank_path), allow_pickle=True)
         self.labels: list[str] = [str(x) for x in data["labels"].tolist()]
         self.L = int(data["L"])
         self.num_classes = int(data["num_classes"])

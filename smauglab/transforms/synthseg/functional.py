@@ -20,7 +20,7 @@ Spatial conventions
   the ``(x, y, z) = (W, H, D)`` order expected by ``F.grid_sample`` at the very
   end, with ``align_corners=True`` so that integer voxel indices map exactly.
 * Affine transforms are applied about the volume centre (standard practice and
-  matching SmaugLab's existing ``RandomAffine3DCustom``), so small rotations /
+  matching SmaugLab's existing ``RandomAffineGPU``), so small rotations /
   scalings keep the anatomy in frame.
 """
 

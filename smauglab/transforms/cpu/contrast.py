@@ -2,12 +2,52 @@ from typing import Union
 
 import torch
 import torch.nn.functional as F
+from batchgeneratorsv2.helpers.scalar_type import RandomScalar
 from batchgeneratorsv2.transforms.base.basic_transform import ImageOnlyTransform
+from batchgeneratorsv2.transforms.intensity.contrast import BGContrast
+from batchgeneratorsv2.transforms.intensity.gamma import GammaTransform
+
+from smauglab.registry import AugId, AugType, Backend, register
 
 
-class ConvTransform(ImageOnlyTransform):
+@register(
+    aug_id=AugId.INV_GAMMA,
+    backend=Backend.CPU,
+    group=AugType.GE,
+    order=140,
+    param_adapters={"gamma": BGContrast},
+)
+class InvertedGammaTransform(GammaTransform):
+    """Gamma adjustment applied to the inverted image.
+
+    batchgeneratorsv2 expresses this as `GammaTransform(p_invert_image=1)`, which the
+    old config spelled as a `GammaTransform_invert` key -- a key with no class behind
+    it. A real class keeps the config key 1:1 with a class on this backend too, and
+    means the inversion cannot be requested two different ways.
+    """
+
+    def __init__(
+        self,
+        gamma: RandomScalar = (0.7, 1.5),
+        synchronize_channels: bool = False,
+        p_per_channel: float = 1,
+        p_retain_stats: float = 1,
+    ):
+        super().__init__(
+            gamma=gamma,
+            p_invert_image=1,
+            synchronize_channels=synchronize_channels,
+            p_per_channel=p_per_channel,
+            p_retain_stats=p_retain_stats,
+        )
+
+
+class _ConvBaseTransform(ImageOnlyTransform):
     """
     Applies a Laplace/Scharr filter to the image to highlight edges.
+
+    Shared implementation. Configs address the per-kernel leaves below, which mirror
+    the GPU split so both backends of one augmentation share an `aug_id`.
 
     Based on https://github.com/spinalcordtoolbox/disc-labeling-playground/blob/main/src/ply/models/transform.py
     """
@@ -97,6 +137,42 @@ class ConvTransform(ImageOnlyTransform):
         return img
 
 
+# One class per kernel, mirroring the GPU split so a config key names a class on
+# either backend and `kernel_type` disappears from the config surface.
+
+
+@register(
+    aug_id=AugId.LAPLACE,
+    backend=Backend.CPU,
+    group=AugType.TA,
+    order=10,
+)
+class LaplaceConvTransform(_ConvBaseTransform):
+    """Laplacian edge enhancement."""
+
+    def __init__(self, absolute: bool = False, retain_stats: bool = False):
+        super().__init__(kernel_type="Laplace", absolute=absolute, retain_stats=retain_stats)
+
+
+@register(
+    aug_id=AugId.SCHARR,
+    backend=Backend.CPU,
+    group=AugType.TA,
+    order=15,
+)
+class ScharrConvTransform(_ConvBaseTransform):
+    """Scharr gradient-magnitude edge filter."""
+
+    def __init__(self, absolute: bool = True, retain_stats: bool = False):
+        super().__init__(kernel_type="Scharr", absolute=absolute, retain_stats=retain_stats)
+
+
+@register(
+    aug_id=AugId.HISTOGRAM_EQUAL,
+    backend=Backend.CPU,
+    group=AugType.TA,
+    order=30,
+)
 class HistogramEqualTransform(ImageOnlyTransform):
     """
     Update image intensity using histogram manipulations
@@ -144,7 +220,7 @@ class HistogramEqualTransform(ImageOnlyTransform):
         return img
 
 
-class FunctionTransform(ImageOnlyTransform):
+class _FunctionBaseTransform(ImageOnlyTransform):
     """
     Apply different functions to image pixels
 
@@ -178,6 +254,90 @@ class FunctionTransform(ImageOnlyTransform):
                 img[c] = (img[c] - mean) / torch.clamp(std, min=1e-7)
                 img[c] = img[c] * orig_std + orig_mean
         return img
+
+
+# One class per elementwise function; `function` is not expressible in JSON, so the
+# old config had a single key that the builder fanned out over a hardcoded lambda
+# list. Spelled out longhand rather than as torch.log1p / torch.sigmoid, which
+# differ in the last ulp and would move the seeded determinism hashes.
+
+
+def _log1p(x: torch.Tensor) -> torch.Tensor:
+    return torch.log(1 + x)
+
+
+def _sigmoid(x: torch.Tensor) -> torch.Tensor:
+    return 1 / (1 + torch.exp(-x))
+
+
+class _NamedFunctionTransform(_FunctionBaseTransform):
+    """Shared constructor for the fixed-function leaves. Not registered itself."""
+
+    #: Set by each leaf.
+    function_impl: staticmethod
+
+    def __init__(self, retain_stats: bool = False):
+        super().__init__(function=type(self).function_impl, retain_stats=retain_stats)
+
+
+@register(
+    aug_id=AugId.FUNC_LOG1P,
+    backend=Backend.CPU,
+    group=AugType.TA,
+    order=20,
+)
+class Log1pTransform(_NamedFunctionTransform):
+    """Apply log(1 + x)."""
+
+    function_impl = staticmethod(_log1p)
+
+
+@register(
+    aug_id=AugId.FUNC_SQRT,
+    backend=Backend.CPU,
+    group=AugType.TA,
+    order=21,
+)
+class SqrtTransform(_NamedFunctionTransform):
+    """Apply sqrt(x)."""
+
+    function_impl = staticmethod(torch.sqrt)
+
+
+@register(
+    aug_id=AugId.FUNC_SIN,
+    backend=Backend.CPU,
+    group=AugType.TA,
+    order=22,
+)
+class SinTransform(_NamedFunctionTransform):
+    """Apply sin(x)."""
+
+    function_impl = staticmethod(torch.sin)
+
+
+@register(
+    aug_id=AugId.FUNC_EXP,
+    backend=Backend.CPU,
+    group=AugType.TA,
+    order=23,
+)
+class ExpTransform(_NamedFunctionTransform):
+    """Apply exp(x)."""
+
+    function_impl = staticmethod(torch.exp)
+
+
+@register(
+    aug_id=AugId.FUNC_SIGMOID,
+    backend=Backend.CPU,
+    group=AugType.TA,
+    order=24,
+)
+class SigmoidTransform(_NamedFunctionTransform):
+    """Apply the logistic sigmoid 1 / (1 + exp(-x))."""
+
+    function_impl = staticmethod(_sigmoid)
 
 
 def apply_filter(x: torch.Tensor, kernel: torch.Tensor, **kwargs) -> torch.Tensor:
@@ -231,6 +391,12 @@ def apply_filter(x: torch.Tensor, kernel: torch.Tensor, **kwargs) -> torch.Tenso
     return output.view(batch, chns, *output.shape[2:])
 
 
+@register(
+    aug_id=AugId.ZSCORE,
+    backend=Backend.CPU,
+    group=AugType.GE,
+    order=170,
+)
 class ZscoreNormalization(ImageOnlyTransform):
     """
     Z-score normalization of image

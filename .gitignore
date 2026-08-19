@@ -40,10 +40,28 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+# Repo-wide, so per-experiment config JSONs and personal scratch directories stay
+# out (see 7ff2088). The cost is that a genuinely new *package* file needs an
+# explicit un-ignore below -- `git add -f` alone is not enough, because anything
+# still ignored is invisible to `git status` and gets silently left behind.
 *.json
 *.yaml
 *.nii
 *.nii.gz
+
+# Generated from the registry and checked by CI (`smauglab matrix --check`), and
+# shipped as package data by pyproject's `include`.
+!smauglab/configs/all_augmentations.json
+
+# Test fixtures. unit_tests/test_cli.py points LEGACY at one of these.
+!unit_tests/fixtures/**
+
+# The pre-registry config migrator, which config.py's MIGRATE_HINT and the README
+# both point users at. Listed by extension rather than `migration/**`, which would
+# re-include migration/__pycache__ -- an un-ignore beats the earlier __pycache__/ rule.
+!migration/*.py
+!migration/*.json
+!migration/*.md
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import pkgutil
 import unittest
-from pathlib import Path
 
 import smauglab
 
@@ -19,27 +19,23 @@ OPTIONAL_PREFIXES = ("smauglab.trainers", "smauglab.add_trainer")
 
 
 def module_names() -> list[str]:
-    """Every .py file under smauglab/, as a dotted module name.
+    """Every module and subpackage under smauglab/, as a dotted module name.
 
-    Deliberately a filesystem walk rather than pkgutil.walk_packages: several
-    subdirectories (transforms/, transforms/cpu/, transforms/gpu/, utils/) have
-    no __init__.py, so smauglab resolves as a PEP 420 namespace package and
-    walk_packages only reaches 4 of the ~24 modules. Walking the tree keeps
-    this test honest regardless of how the package is laid out.
+    smauglab is a regular package (every directory has an __init__.py), so
+    walk_packages reaches the whole tree. Subpackages are kept, not filtered out:
+    their __init__.py files hold real code now (smauglab/__init__.py resolves the
+    version) and are worth importing too.
+
+    `onerror` matters: without it, walk_packages swallows an ImportError raised
+    while probing a subpackage and silently returns a short list, turning a real
+    breakage into a quietly passing test. Re-raising surfaces it here instead.
     """
-    roots = [Path(p) for p in smauglab.__path__]
-    names = set()
-    for root in roots:
-        for path in root.rglob("*.py"):
-            if "__pycache__" in path.parts:
-                continue
-            relative = path.relative_to(root).with_suffix("")
-            parts = list(relative.parts)
-            if parts[-1] == "__init__":
-                parts.pop()
-            if not parts:
-                continue
-            names.add(".".join(["smauglab", *parts]))
+
+    def onerror(_name: str) -> None:
+        raise  # noqa: PLE0704 -- re-raises whatever walk_packages was handling
+
+    names = {module.name for module in pkgutil.walk_packages(smauglab.__path__, prefix="smauglab.", onerror=onerror)}
+    names.add("smauglab")
     return sorted(names)
 
 

@@ -5,7 +5,15 @@ import torch
 import torchio as tio
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform, ImageOnlyTransform
 
+from smauglab.registry import AugId, AugType, Backend, register
 
+
+@register(
+    aug_id=AugId.SPATIAL_CUSTOM,
+    backend=Backend.CPU,
+    group=AugType.GEO,
+    order=70,
+)
 class SpatialCustomTransform(BasicTransform):
     def __init__(self, flip=False, affine=False, elastic=False, anisotropy=False, random_pick=False):
         """
@@ -134,6 +142,12 @@ def aug_anisotropy(img, seg, downsampling=7):
 ### Shape transform
 
 
+@register(
+    aug_id=AugId.SHAPE,
+    backend=Backend.CPU,
+    group=AugType.GE,
+    order=50,
+)
 class ShapeTransform(ImageOnlyTransform):
     def __init__(self, shape_min=1, ignore_axes=()):
         """

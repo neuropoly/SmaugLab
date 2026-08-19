@@ -68,3 +68,11 @@ jobs:
 
       - name: Run mypy
         run: mypy smauglab/
+
+      # The README augmentation matrix and smauglab/configs/all_augmentations.json are
+      # generated from the registry. Checked here rather than in a pre-commit hook: the
+      # generator has to import torch and kornia to populate the registry, which is far
+      # too slow to run on every commit. Contributors run the script when they add an
+      # augmentation; this is the backstop when they forget.
+      - name: Check generated registry artifacts are current
+        run: smauglab matrix --check

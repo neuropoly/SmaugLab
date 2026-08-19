@@ -1,0 +1,176 @@
+"""The real registry, and the artifacts generated from it.
+
+test_registry.py covers the mechanism against synthetic classes. This file covers
+the actual augmentations: that every one is registered coherently, that the
+generated matrix and template config are not stale, and that every registered
+augmentation is genuinely constructible.
+
+Together these are the answer to "which augmentations exist and which backends
+have them" -- previously recoverable only by reading four `if` ladders side by side.
+"""
+
+from __future__ import annotations
+
+import inspect
+import json
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+from smauglab import registry
+from smauglab.registry import AugId, Backend
+
+REPO = Path(__file__).resolve().parent.parent
+TEMPLATE = REPO / "smauglab" / "configs" / "all_augmentations.json"
+
+
+class TestRegistryIsPopulated(unittest.TestCase):
+    def test_both_backends_have_augmentations(self):
+        self.assertGreaterEqual(len(registry.names(Backend.GPU)), 25)
+        self.assertGreaterEqual(len(registry.names(Backend.CPU)), 20)
+
+    def test_no_monai_implementations_yet(self):
+        """Tracked, not built. If this starts failing, the matrix gained a real cell."""
+        self.assertEqual(registry.names(Backend.MONAI), [])
+
+    def test_every_aug_id_is_used(self):
+        """An unused AugId is a concept nothing implements -- almost always a typo."""
+        used = {entry.aug_id for entry in registry.entries()}
+        self.assertEqual(set(AugId) - used, set(), "AugId members with no implementation on any backend")
+
+    def test_class_name_is_the_config_key(self):
+        for entry in registry.entries():
+            with self.subTest(entry=entry.name):
+                self.assertEqual(entry.cls.__name__, entry.name)
+
+    def test_orders_are_unique_per_backend(self):
+        for backend in Backend:
+            orders = [entry.order for entry in registry.entries(backend)]
+            with self.subTest(backend=backend.value):
+                self.assertEqual(len(orders), len(set(orders)))
+
+    def test_no_registered_class_hides_parameters_behind_kwargs(self):
+        """**kwargs would make signature-derived validation accept anything."""
+        for entry in registry.entries():
+            with self.subTest(entry=entry.name):
+                if registry._has_var_keyword(entry.cls):
+                    self.assertIsNotNone(
+                        entry.forwards_to,
+                        f"{entry.name} takes **kwargs without declaring forwards_to",
+                    )
+
+    def test_gpu_transforms_expose_the_kornia_probability_parameters(self):
+        for entry in registry.entries(Backend.GPU):
+            accepted = registry.accepted_params(entry)
+            with self.subTest(entry=entry.name):
+                self.assertIn("p", accepted)
+                self.assertIn("p_batch", accepted)
+
+    def test_probability_is_never_a_parameter_name(self):
+        """It was renamed to `p`; a survivor would mean a half-done migration."""
+        for entry in registry.entries():
+            with self.subTest(entry=entry.name):
+                self.assertNotIn("probability", registry.accepted_params(entry))
+
+    def test_legacy_config_keys_do_not_resolve(self):
+        """The hard break, on the names that actually appear in the old configs."""
+        for legacy in (
+            "ScharrTransform",
+            "UnsharpMaskTransform",
+            "RandomConvTransform",
+            "SynthSeg",
+            "AffineTransform",
+            "FlipTransform",
+            "RandomPALETTETransform",
+            "GammaTransform_invert",
+            "ImageContrastGPUTransform",
+            "PaletteSynthesisTransform",
+        ):
+            with self.subTest(legacy=legacy), self.assertRaises(registry.UnknownAugmentationError):
+                registry.get(legacy, Backend.GPU)
+
+
+class TestEveryEntryIsConstructible(unittest.TestCase):
+    """The registry may not advertise an augmentation that cannot be built."""
+
+    def test_constructible_with_declared_defaults(self):
+        for entry in registry.entries():
+            with self.subTest(entry=f"{entry.backend.value}.{entry.name}"):
+                if entry.external_asset:
+                    from unit_tests.helpers import domain_bank_missing
+
+                    reason = domain_bank_missing()
+                    if reason:
+                        self.skipTest(reason)
+                required = registry.required_params(entry)
+                if required:
+                    # Legitimate: a few third-party CPU transforms take mandatory
+                    # arguments that only a config or the trainer can supply.
+                    self.assertTrue(
+                        entry.backend is Backend.CPU or entry.context_params,
+                        f"{entry.name} requires {sorted(required)} but nothing supplies them",
+                    )
+                    continue
+                entry.cls(**dict(entry.smoke_kwargs))
+
+
+class TestGeneratedArtifactsAreCurrent(unittest.TestCase):
+    """`smauglab matrix --check` is the anti-staleness guarantee.
+
+    Run as a subprocess rather than re-deriving the comparison here, so the test
+    exercises the same code path a developer and CI run.
+    """
+
+    def test_readme_matrix_and_template_are_up_to_date(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "smauglab.cli", "matrix", "--check"],
+            capture_output=True,
+            text=True,
+            cwd=REPO,
+            check=False,  # a non-zero exit is the assertion below, not an error here
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"generated artifacts are stale:\n{result.stdout}{result.stderr}",
+        )
+
+    def test_template_covers_exactly_the_registered_augmentations(self):
+        payload = json.loads(TEMPLATE.read_text())
+        for backend in (Backend.GPU, Backend.CPU):
+            with self.subTest(backend=backend.value):
+                self.assertEqual(set(payload[backend.value]), set(registry.names(backend)))
+
+    def test_template_parameters_are_all_accepted(self):
+        """Every key in the template must survive the validation stage 6 will apply."""
+        payload = json.loads(TEMPLATE.read_text())
+        for backend in (Backend.GPU, Backend.CPU):
+            for name, params in payload[backend.value].items():
+                entry = registry.get(name, backend)
+                accepted = set(registry.accepted_params(entry))
+                with self.subTest(entry=f"{backend.value}.{name}"):
+                    self.assertEqual(set(params) - accepted, set())
+
+    def test_forced_parameters_are_not_offered(self):
+        """RandomSynthSegGPU overrides these internally; offering them would lie."""
+        payload = json.loads(TEMPLATE.read_text())
+        synthseg = payload["GPU"]["RandomSynthSegGPU"]
+        for forced in ("apply_affine", "apply_nonlinear", "flipping", "output_shape"):
+            with self.subTest(param=forced):
+                self.assertNotIn(forced, synthseg)
+
+
+class TestForwardedSignatures(unittest.TestCase):
+    def test_synthseg_accepts_its_generator_parameters(self):
+        """forwards_to unions the two signatures, replacing a hand-listed allowlist."""
+        from smauglab.transforms.synthseg.generator import SynthSegGenerator
+
+        entry = registry.get("RandomSynthSegGPU", Backend.GPU)
+        accepted = set(registry.accepted_params(entry))
+        generator = set(inspect.signature(SynthSegGenerator).parameters) - set(entry.context_params)
+        self.assertEqual(generator - accepted, set(), "generator parameters missing from the accepted set")
+
+
+if __name__ == "__main__":
+    unittest.main()
