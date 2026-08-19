@@ -436,27 +436,26 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
 
     @staticmethod
     def _valaug_sidecar_path(checkpoint_path: str) -> str:
-        root, ext = os.path.splitext(checkpoint_path)
-        return f"{'/'.join(root.split('/')[:-1])}/checkpoint_best_validation_aug_parameters{ext}"
+        return os.path.join(os.path.dirname(checkpoint_path), "checkpoint_best_validation_aug_parameters.json")
 
     def save_checkpoint(self, filename: str) -> None:
         super().save_checkpoint(filename)
         if self.local_rank == 0 and not self.disable_checkpointing:
-            torch.save(
-                {
-                    "ema_dice_validation": self.ema_dice_validation,
-                    "best_ema_dice_validation": self.best_ema_dice_validation,
-                    "validation_augmentation_checkpoints": self.validation_augmentation_checkpoints,
-                },
-                self._valaug_sidecar_path(filename),
-            )
+            payload = {
+                "ema_dice_validation": [float(x) if x is not None else None for x in self.ema_dice_validation],
+                "best_ema_dice_validation": [float(x) if x is not None else None for x in self.best_ema_dice_validation],
+                "validation_augmentation_checkpoints": list(self.validation_augmentation_checkpoints),
+            }
+            with open(self._valaug_sidecar_path(filename), "w") as f:
+                json.dump(payload, f, indent=2)
 
     def load_checkpoint(self, filename_or_checkpoint: Union[dict, str]) -> None:
         super().load_checkpoint(filename_or_checkpoint)
         if isinstance(filename_or_checkpoint, str):
             sidecar = self._valaug_sidecar_path(filename_or_checkpoint)
             if os.path.isfile(sidecar):
-                state = torch.load(sidecar, map_location="cpu")
+                with open(sidecar) as f:
+                    state = json.load(f)
                 # Only adopt persisted EMA state if the configured checkpoints list is unchanged;
                 # otherwise the per-index slots no longer correspond and we restart tracking.
                 if state.get("validation_augmentation_checkpoints") == self.validation_augmentation_checkpoints:
