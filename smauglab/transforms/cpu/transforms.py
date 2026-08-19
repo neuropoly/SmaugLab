@@ -4,7 +4,7 @@ The ~250-line `if` ladder this replaces also read three values from outside the
 config: `patch_size` and `rotation` come from nnU-Net at runtime (declared as
 `context_params` on the registry entries), a top-level `retain_stats` was pushed
 into several blocks, and `mode_seg="nearest"` was hardcoded. The first is injected
-by the builder; the other two were folded into the configs by `smauglab migrate`.
+by the builder; the other two were folded into the configs by the `migration/` script.
 """
 
 from typing import Union

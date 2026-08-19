@@ -195,9 +195,10 @@ class RandomAffineGPU(RigidAffineAugmentationBase3D):
             Convert "resample" arguments to "nearest" by default.
 
         """
-        resample_method: Resample | None
-        if "resample" in flags:
-            resample_method = flags["resample"]
+        # `resample_method` was declared but only *assigned* inside the `if`, so the
+        # restore below raised UnboundLocalError whenever flags carried no "resample".
+        resample_method: Resample | None = flags.get("resample")
+        if resample_method is not None:
             flags["resample"] = Resample.get("nearest")
         output = self.apply_transform(input, params, flags, transform)
         if resample_method is not None:
@@ -246,12 +247,17 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
 
         scales = params["scale"]  # shape [B, 3]
 
-        if flags["data_keys"][0] is DataKey.IMAGE:
+        # Only MaskSequentialOpsCustom injects "data_keys" (see gpu/base.py), so a bare
+        # `flags["data_keys"]` raised KeyError for every other caller -- calling this
+        # transform standalone, or from inside RandomChooseXTransformsGPU, which passes
+        # the transform's own `flags`. Defaulting to IMAGE is what those callers mean.
+        data_keys = flags.get("data_keys") or [DataKey.INPUT]
+        if data_keys[0] in (DataKey.INPUT, DataKey.IMAGE):
             resample = "trilinear"
-        elif flags["data_keys"][0] is DataKey.MASK:
+        elif data_keys[0] is DataKey.MASK:
             resample = "nearest"
         else:
-            raise ValueError(f"Unsupported data key {flags['data_keys'][0]} for RandomLowResTransformGPU. Expected IMAGE or MASK.")
+            raise ValueError(f"Unsupported data key {data_keys[0]} for RandomLowResTransformGPU. Expected IMAGE or MASK.")
 
         # Define interpolation modes
         interp_down = resample
@@ -308,6 +314,24 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
         return output
 
 
+def _choose_axis(batch_size: int, device: torch.device, same_on_batch: bool) -> torch.Tensor:
+    """Pick the single axis to act on, per batch element. Returns `[B]` indices.
+
+    Drawn here, from `forward`, rather than in `make_samplers`. kornia calls
+    `make_samplers` once and caches the samplers it builds, so an axis picked there was
+    fixed for the transform's lifetime -- "degrade a random axis" degraded the *same*
+    axis for a whole training run.
+    """
+    keep = torch.randint(0, 3, (1 if same_on_batch else batch_size,), device=device)
+    return keep.expand(batch_size) if same_on_batch else keep
+
+
+def _keep_one_axis(values: torch.Tensor, keep: torch.Tensor, neutral: float) -> torch.Tensor:
+    """Keep column `keep[b]` of a `[B, 3]` draw and set the other two to `neutral`."""
+    selected = torch.arange(3, device=values.device).unsqueeze(0) == keep.unsqueeze(1)
+    return torch.where(selected, values, torch.full_like(values, neutral))
+
+
 class ScaleGenerator3D(RandomGeneratorBase):
     def __init__(self, scale: tuple[float, float], one_dim: bool = False) -> None:
         super().__init__()
@@ -316,13 +340,6 @@ class ScaleGenerator3D(RandomGeneratorBase):
 
     def make_samplers(self, device: torch.device, dtype: torch.dtype) -> None:
         scale = _tuple_range_reader(self.scale, 3, device, dtype)
-        if self.one_dim:
-            # Pick a random dimension to apply scaling
-            dim = torch.randint(0, 3, (1,)).item()
-            for i in range(3):
-                if i != dim:
-                    scale[i, 0] = 1.0
-                    scale[i, 1] = 1.0
         self.scalex_sampler = UniformDistribution(scale[0, 0], scale[0, 1], validate_args=False)
         self.scaley_sampler = UniformDistribution(scale[1, 0], scale[1, 1], validate_args=False)
         self.scalez_sampler = UniformDistribution(scale[2, 0], scale[2, 1], validate_args=False)
@@ -336,6 +353,10 @@ class ScaleGenerator3D(RandomGeneratorBase):
         scaley = _adapted_rsampling((batch_size,), self.scaley_sampler, same_on_batch)
         scalez = _adapted_rsampling((batch_size,), self.scalez_sampler, same_on_batch)
         scale = torch.stack([scalex, scaley, scalez], dim=1)
+
+        if self.one_dim:
+            # A scale of 1.0 leaves an axis at full resolution.
+            scale = _keep_one_axis(scale, _choose_axis(batch_size, scale.device, same_on_batch), 1.0)
 
         return {"scale": torch.as_tensor(scale, device=_device, dtype=_dtype)}
 
@@ -476,16 +497,24 @@ class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
 
         batch_size, C, D, H, W = input.shape
 
-        # Expect params to contain 'flip' tensor of shape [B, 3] with 0/1 values
-        # flips = None
-        # if params is not None and 'flip' in params:
-        #    flips = params['flip']
+        # params["flip"] is [B, 3] of 0/1 flags over (z, y, x), produced by
+        # FlipGenerator3D. Reading it is what makes this transform random: the loop
+        # below used to recompute the same `flip_axis`-derived list for every b and
+        # ignore the sampled flags entirely, so every call flipped all configured axes
+        # identically -- three seeded calls gave byte-identical output, and the
+        # generator (including its "at least one axis" guarantee) was dead code.
+        flips = params.get("flip")
 
         out = input.clone()
-        # For each batch element, build list of spatial dims to flip (D,H,W -> dims 2,3,4)
+        # For each batch element, build list of spatial dims to flip. `input[b]` is
+        # [C, D, H, W], so spatial axis i sits at dim 1 + i.
         for b in range(batch_size):
-            # fb expected as length-3 tensor for (z,y,x)
-            flip_dims = [1 + axis for axis in range(3) if axis in self.flip_axis]
+            if flips is None:
+                # No sampled flags (a caller invoking apply_transform directly): fall
+                # back to flipping every configured axis.
+                flip_dims = [1 + axis for axis in range(3) if axis in self.flip_axis]
+            else:
+                flip_dims = [1 + axis for axis in range(3) if axis in self.flip_axis and bool(flips[b, axis])]
 
             if len(flip_dims) > 0:
                 out[b] = torch.flip(input[b], dims=tuple(flip_dims))
@@ -682,25 +711,11 @@ class CropGenerator3D(RandomGeneratorBase):
 
     def make_samplers(self, device: torch.device, dtype: torch.dtype) -> None:
         crop = _tuple_range_reader(self.crop, 3, device, dtype)
-        if self.one_dim:
-            # Pick a random dimension to apply cropping
-            dim = torch.randint(0, 3, (1,)).item()
-            for i in range(3):
-                if i != dim:
-                    crop[i, 0] = 1.0
-                    crop[i, 1] = 1.0
         self.cropx_sampler = UniformDistribution(crop[0, 0], crop[0, 1], validate_args=False)
         self.cropy_sampler = UniformDistribution(crop[1, 0], crop[1, 1], validate_args=False)
         self.cropz_sampler = UniformDistribution(crop[2, 0], crop[2, 1], validate_args=False)
 
         pos = _tuple_range_reader(self.pos, 3, device, dtype)
-        if self.one_dim:
-            # Pick a random dimension to apply cropping
-            dim = torch.randint(0, 3, (1,)).item()
-            for i in range(3):
-                if i != dim:
-                    pos[i, 0] = 1.0
-                    pos[i, 1] = 1.0
         self.posx_sampler = UniformDistribution(pos[0, 0], pos[0, 1], validate_args=False)
         self.posy_sampler = UniformDistribution(pos[1, 0], pos[1, 1], validate_args=False)
         self.posz_sampler = UniformDistribution(pos[2, 0], pos[2, 1], validate_args=False)
@@ -721,5 +736,18 @@ class CropGenerator3D(RandomGeneratorBase):
         posy = _adapted_rsampling((batch_size,), self.posy_sampler, same_on_batch)
         posz = _adapted_rsampling((batch_size,), self.posz_sampler, same_on_batch)
         pos = torch.stack([posx, posy, posz], dim=1)
+
+        if self.one_dim:
+            # One axis for both: `make_samplers` drew a separate `dim` for crop and for
+            # pos, so the crop could be taken along one axis while the position that
+            # placed it was randomised along another.
+            keep = _choose_axis(batch_size, crop.device, same_on_batch)
+            # A crop fraction of 1.0 keeps the whole axis. The *position*, though, is
+            # the crop centre as a fraction of the axis, so its neutral value is 0.5
+            # (centred) -- the previous code copied the crop's 1.0 onto it, which put
+            # the box centre on the far edge and left the crop flush against it after
+            # clamping.
+            crop = _keep_one_axis(crop, keep, 1.0)
+            pos = _keep_one_axis(pos, keep, 0.5)
 
         return {"crop": torch.as_tensor(crop, device=_device, dtype=_dtype), "pos": torch.as_tensor(pos, device=_device, dtype=_dtype)}

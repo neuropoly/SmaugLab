@@ -70,7 +70,10 @@ class _ConvBaseTransform(ImageOnlyTransform):
             if self.kernel_type == "Laplace":
                 kernel = torch.tensor([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]], dtype=torch.float32)
             elif self.kernel_type == "Scharr":
-                kernel_x = torch.tensor([[-3, 0, 3], [-10, 0, -10], [-3, 0, 3]], dtype=torch.float32)
+                # Middle row is [-10, 0, 10]. It read [-10, 0, -10], which sums to -20
+                # instead of 0, so this was not a gradient operator at all. The 3-D
+                # kernel below and both GPU kernels were always right.
+                kernel_x = torch.tensor([[-3, 0, 3], [-10, 0, 10], [-3, 0, 3]], dtype=torch.float32)
                 kernel_y = torch.tensor([[-3, -10, -3], [0, 0, 0], [3, 10, 3]], dtype=torch.float32)
                 kernel = [kernel_x, kernel_y]
         elif spatial_dims == 3:

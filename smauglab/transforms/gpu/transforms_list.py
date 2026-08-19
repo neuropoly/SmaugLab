@@ -83,9 +83,18 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
                 continue
             if not hasattr(t, "apply_transform"):
                 raise TypeError(f"All transforms must implement apply_transform like ImageOnlyTransform. Got {type(t)}")
-            # Most contrast transforms perform their random sampling inside apply_transform.
+            # Most contrast transforms perform their random sampling inside
+            # apply_transform, so an empty params dict is all they need. The ones with a
+            # kornia `_param_generator` (the spatial transforms) read their draw out of
+            # `params` instead, and calling apply_transform directly skips the
+            # forward_parameters step that fills it -- they used to raise
+            # "params must contain 'scale'" from inside a bucket. Sampling here keeps
+            # the bucket usable for both kinds.
+            t_params = child_params
+            if getattr(t, "_param_generator", None) is not None:
+                t_params = {**child_params, **t.forward_parameters(x.shape)}
             t_flags = getattr(t, "flags", {})
-            x = t.apply_transform(x, child_params, t_flags, transform=None)
+            x = t.apply_transform(x, t_params, t_flags, transform=None)
         return x
 
     @torch.no_grad()  # disable gradients for efficiency
@@ -96,7 +105,10 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
             return self._apply_mix(input, seg)
 
         batch_size = input.shape[0]
-        out = input
+        # A clone, not `out = input`: the loop writes back through `out[i:i+1]`, so
+        # without it the caller's batch is modified in place. Every sibling transform
+        # in gpu/spatial.py clones.
+        out = input.clone()
         for i in range(batch_size):
             xi = out[i : i + 1]
             seg_i = None

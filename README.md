@@ -184,9 +184,11 @@ smauglab list --group TA               # just the transfer augmentations
 smauglab show RandomScharrGPU          # one augmentation's parameters and defaults
 smauglab validate my_config.json       # strict check, every problem reported at once
 smauglab template --backend gpu        # a config naming everything, at defaults
-smauglab migrate old_run/params.json   # bring a pre-registry config forward
 smauglab hash my_config.json           # content-addressed config identity
 ```
+
+Bringing a pre-registry config forward is a one-time job, so it is not a subcommand:
+the migrator lives in `migration/` in this repository rather than in the wheel.
 
 Config keys are class names, exactly, and parameters are constructor arguments,
 exactly. Anything else is an error rather than a silent no-op:
@@ -198,6 +200,32 @@ my_config.json: 2 problem(s)
   - GPU.RandomGaussianNoiseGPU: unknown parameter 'probability'.
       'probability' -> p
 ```
+
+## Augmentation behaviour changed in the registry release
+
+Several augmentations were silently producing something other than what they claimed.
+Fixing them changes what the pipeline emits, so **models trained before this release
+saw different augmentations and are not bit-reproducible against it**. Configs are
+unaffected -- no key, parameter or default changed. The hash discontinuity is already
+recorded in `migration/hash_migration.json`.
+
+What changed, and why each was wrong:
+
+| Augmentation | Was | Now |
+|---|---|---|
+| `RandomFlipTransformGPU` | Ignored the flip flags its generator sampled, so it flipped every configured axis, identically, on every call and for every batch element. Seeded runs gave byte-identical output. | Reads `params["flip"]`: each batch element flips an independently sampled subset. |
+| `RandomGaussianBlurGPU`, `RandomUnsharpMaskGPU` | The Gaussian kernel was sampled at `arange(k)` rather than a centred range, so its peak sat at index 0 and the "blur" also translated the image about a voxel — relative to a mask that was not translated. | Centred kernel; blurring an impulse leaves its centre of mass in place. |
+| Every GPU contrast transform with `in_seg` / `out_seg` | Reduced the mask's class axis with `argmax(...) > 0`. For an ordinary single-channel mask that is always false, so `in_seg` applied the transform *nowhere* and `out_seg` applied it *everywhere*; for a one-hot mask it dropped the first foreground class. | `amax(...) > 0`, matching `collapse_onehot_to_index`. Both knobs now do what they say. |
+| `RandomAcqTransformGPU` (and any `one_dim` generator) | Drew its "random" axis in `make_samplers`, which kornia calls once and caches — the same axis was degraded for the entire training run. `CropGenerator3D` also drew *separate* axes for the crop and for its position. | Drawn per call and per batch element, with one axis shared by crop and position. |
+| `ScharrConvTransform` (CPU, 2-D only) | The x-kernel's middle row was `[-10, 0, -10]`, so it summed to −20 and was not a gradient operator. The 3-D CPU and both GPU kernels were correct. | Middle row is `[-10, 0, 10]`. |
+| `RandomLog1pGPU`, `RandomSqrtGPU`, `RandomSinGPU`, `RandomExpGPU`, `RandomSigmoidGPU` | Normalised with a batch-wide `x.min()` / `x.max()`, so a volume's augmentation depended on which other volumes shared its batch. | Per-sample min/max, as every other transform in the file. |
+| `RandomHistogramEqualizationGPU` | Wrote through a view of the input, so its non-finite guard skipped over values already in the batch. | Works on a clone; the guard is effective. |
+| `RandomChooseXTransformsGPU` | Wrote into the caller's batch in place. Transforms with a kornia parameter generator raised `params must contain 'scale'` inside a bucket. | Clones; samples parameters for generator-based transforms. |
+| Transforms drawing blur sigmas / kernel sizes | Used Python's `random`, which `torch.manual_seed` does not reach and which diverges across DDP ranks. | `smauglab.transforms.rng.shared_choice`, driven by torch's RNG. |
+
+The regression tests are in `unit_tests/test_region_mode.py` and
+`unit_tests/test_transform_randomness.py`; each one fails against the previous
+implementation.
 
 ## Available augmentations
 

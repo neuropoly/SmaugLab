@@ -1,5 +1,4 @@
 import math
-import random
 from collections.abc import Callable, Sequence
 from typing import Any, Union
 
@@ -10,6 +9,7 @@ from torch.nn import functional as F
 
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.rng import shared_choice
 
 
 def _choose_region_mode(p_in: float, p_out: float, seg_mask: torch.Tensor | None) -> str:  # noqa: ARG001 -- seg_mask kept for signature symmetry with _apply_region_mode
@@ -29,6 +29,26 @@ def _choose_region_mode(p_in: float, p_out: float, seg_mask: torch.Tensor | None
     if out_bool and not in_bool:
         return "out"
     return "all"
+
+
+def _foreground(mask: torch.Tensor, dim: int) -> torch.Tensor:
+    """Which voxels the segmentation covers, reducing over the class axis.
+
+    This used to be `torch.argmax(mask, dim) > 0`, which is only "is anything labelled
+    here" if class 0 is background -- and it is not:
+
+    * For a single-channel [B, 1, D, H, W] mask (an ordinary nnU-Net target, and what
+      the tests build) `argmax` over a length-1 axis is always 0, so the result was
+      **all False**. `in_seg` then applied the transform nowhere and `out_seg` applied
+      it everywhere: the two knobs did nothing and the opposite of nothing.
+    * For a one-hot mask, this repository's convention (`collapse_onehot_to_index` in
+      gpu/fromSeg.py) is that channel `c` encodes label `c + 1` with background
+      implicit, so `argmax == 0` is a real foreground class and was being dropped.
+
+    `amax > 0` asks the question that was meant, and matches what
+    `collapse_onehot_to_index` already does with `seg_raw.any(dim=1)`.
+    """
+    return mask.amax(dim=dim) > 0
 
 
 def _apply_region_mode(
@@ -68,7 +88,7 @@ def _apply_region_mode(
                 o = torch.randint(0, 2, (seg_mask.shape[1],), device=seg_mask.device, dtype=seg_mask.dtype)
                 m[i] = m[i] * o.view(-1, 1, 1, 1)  # Broadcasting o to match the dimensions of m
 
-        m = torch.argmax(m, dim=1) > 0
+        m = _foreground(m, dim=1)
         m = m.to(transformed.dtype)
         if mode == "out":
             m = 1.0 - m
@@ -86,7 +106,7 @@ def _apply_region_mode(
             # Create a tensor with random one and zero
             o = torch.randint(0, 2, (seg_mask.shape[0],), device=seg_mask.device, dtype=seg_mask.dtype)
             m = m * o.view(-1, 1, 1, 1)  # Broadcasting o to match the dimensions of m
-        m = torch.argmax(m, dim=0) > 0
+        m = _foreground(m, dim=0)
         m = m.to(transformed.dtype)
         if mode == "out":
             m = 1.0 - m
@@ -206,7 +226,7 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
             kernel = get_gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
         elif self.kernel_type == "RandConv":
             # choose random odd kernel size e.g. [1,3,5,7]
-            k = int(random.choice(self.kernel_sizes))  # define kernel_sizes in __init__
+            k = int(shared_choice(self.kernel_sizes))  # define kernel_sizes in __init__
 
             std = 1.0 / math.sqrt(k * k)
             kernel = torch.randn((k, k, k), device=device) * std  # for 3D
@@ -545,9 +565,15 @@ def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torc
 
 
 def get_gaussian_kernel1d(kernel_size: int, sigma: Union[float, Tensor], dtype: torch.dtype, device: torch.device) -> Tensor:
-    """Create a 1D Gaussian kernel."""
+    """Create a 1D Gaussian kernel, centred on the middle tap.
 
-    x = torch.arange(kernel_size, dtype=dtype, device=device)
+    The sample points were `arange(kernel_size)` -- 0, 1, 2 -- which puts the peak at
+    index 0 instead of the centre. The resulting 3D kernel had its maximum at corner
+    [0,0,0], so RandomGaussianBlurGPU and RandomUnsharpMaskGPU blurred *and* translated
+    the image by about a voxel, relative to a segmentation mask that is not convolved.
+    """
+    half = (kernel_size - 1) / 2.0
+    x = torch.linspace(-half, half, kernel_size, dtype=dtype, device=device)
     pdf = torch.exp(-0.5 * (x / sigma).pow(2))
     kernel1d = pdf / pdf.sum()
 
@@ -1078,8 +1104,17 @@ class _RandomFunctionBaseGPU(ImageOnlyTransform):
                 orig_means = x.mean(dim=reduce_dims)
                 orig_stds = x.std(dim=reduce_dims)
 
-            # Normalize to make values >=0
-            x = (x - x.min()) / (x.max() - x.min() + 0.00001)
+            # Normalize to make values >=0, per sample.
+            #
+            # This used to be a bare `x.min()` / `x.max()`, which reduces over the whole
+            # [N, ...] slab: an image's augmentation then depended on which other images
+            # happened to share its batch, so the same volume augmented twice in
+            # different batches came out differently. Every other transform in this file
+            # reduces over `dim=reduce_dims` per sample.
+            keep_dims = tuple(range(1, x.dim()))
+            x_min = x.amin(dim=keep_dims, keepdim=True)
+            x_max = x.amax(dim=keep_dims, keepdim=True)
+            x = (x - x_min) / (x_max - x_min + 0.00001)
 
             # Apply function
             x = self.func(x)
@@ -1351,7 +1386,11 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         # Apply histogram equalization transform
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
-            channel_data = input[:, c]  # shape [N, ...spatial...]
+            # `.clone()`, not the bare `input[:, c]` view this used to take: the loop
+            # below assigns into `channel_data[b]`, which through a view writes straight
+            # into `input`. The NaN guard at the bottom would then `continue` over
+            # values that were already in the batch -- the guard skipped nothing.
+            channel_data = input[:, c].clone()  # shape [N, ...spatial...]
             orig = channel_data.clone()
 
             if self.retain_stats:

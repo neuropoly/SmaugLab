@@ -1,14 +1,13 @@
-import random
 from collections.abc import Sequence
 from typing import Any
 
 import torch
-import torch.distributed as dist
 from torch import Tensor, nn
 from torch.nn import functional as F
 
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.rng import shared_choice
 
 # ── PALETTE AUG helpers ──────────────────────────────────────────────────
 
@@ -438,7 +437,7 @@ class RandomPaletteGPU(ImageOnlyTransform):
         synth = torch.stack(synth_list)  # (B, N)
         synth_01 = synth.reshape(B, 1, D, H, W)
 
-        sigma = random.choice(self.blur_sigmas)
+        sigma = shared_choice(self.blur_sigmas)
         if sigma > 0.0:
             synth_01 = _gaussian_blur_3d(synth_01, sigma)
             synth = synth_01.reshape(B, N)
@@ -478,7 +477,7 @@ class RandomPaletteGPU(ImageOnlyTransform):
 
         # ── Step 3: optional second blur, then foreground z-score ─────────────
         synth_01 = synth.reshape(B, 1, D, H, W)
-        sigma2 = random.choice(self.blur_sigmas)
+        sigma2 = shared_choice(self.blur_sigmas)
         if sigma2 > 0.0:
             synth_01 = _gaussian_blur_3d(synth_01, sigma2)
             synth = synth_01.reshape(B, N)
@@ -493,20 +492,6 @@ class RandomPaletteGPU(ImageOnlyTransform):
         out = input.clone()
         out[:, 0:1] = synth_z.to(input.dtype)
         return out
-
-
-_SHARED_RNG_COUNTER = 0
-
-
-def _next_shared_seed() -> int:
-    global _SHARED_RNG_COUNTER  # noqa: PLW0603 -- module-level counter is the point: it makes successive seeds distinct
-    _SHARED_RNG_COUNTER += 1
-    seed = (int(torch.initial_seed()) + _SHARED_RNG_COUNTER) % (2**63 - 1)
-    if dist.is_available() and dist.is_initialized():
-        seed_tensor = torch.tensor([seed], dtype=torch.long)
-        dist.broadcast(seed_tensor, src=0)
-        seed = int(seed_tensor.item())
-    return seed
 
 
 def _minmax_norm(x: torch.Tensor, eps: float = 1e-8) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -536,19 +521,6 @@ def _zscore_renorm(x: torch.Tensor, bg_threshold: float = 1e-6) -> torch.Tensor:
     var = ((x - mean).pow(2) * fg_f).sum(dim=(2, 3, 4), keepdim=True) / n
     std = var.sqrt().clamp(min=1e-8)
     return torch.where(fg, (x - mean) / std, torch.zeros_like(x))
-
-
-def _shared_cpu_generator() -> torch.Generator:
-    generator = torch.Generator(device="cpu")
-    generator.manual_seed(_next_shared_seed())
-    return generator
-
-
-def _shared_rand(shape: tuple[int, ...], device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-    if not (dist.is_available() and dist.is_initialized()):
-        return torch.rand(shape, device=device, dtype=dtype)
-    rand_cpu = torch.rand(shape, generator=_shared_cpu_generator(), device="cpu", dtype=dtype)
-    return rand_cpu.to(device=device, dtype=dtype)
 
 
 def collapse_onehot_to_index(seg_raw: torch.Tensor) -> torch.Tensor:
