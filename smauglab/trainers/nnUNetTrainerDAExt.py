@@ -437,7 +437,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
     @staticmethod
     def _valaug_sidecar_path(checkpoint_path: str) -> str:
         root, ext = os.path.splitext(checkpoint_path)
-        return f"{root}_valaug{ext}"
+        return f"{'/'.join(root.split('/')[:-1])}/checkpoint_best_validation_aug_parameters{ext}"
 
     def save_checkpoint(self, filename: str) -> None:
         super().save_checkpoint(filename)
