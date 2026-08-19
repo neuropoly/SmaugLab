@@ -175,7 +175,6 @@ ignore = [
     "BLE001",  # blind `except Exception`
     "E501",    # line too long (the formatter handles what it can)
     "E741",    # ambiguous variable name (`l` for label is idiomatic here)
-    "F811",    # redefinition (triggered by the __main__ demo blocks)
     "FURB171", # membership test against a single-item container
     "N801",    # class name not CapWords (transform names mirror nnU-Net's)
     "N802",    # function name not lowercase
@@ -222,6 +221,12 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 # `device: torch.device = torch.device("cuda")` default. Diverging would break
 # the drop-in contract with nnUNetTrainer.
 "smauglab/trainers/**" = ["B008"]
+
+[tool.ruff.lint.isort]
+# scripts/_common.py is imported by the standalone scripts as a bare `_common`
+# (running `python scripts/foo.py` puts scripts/ on sys.path). Without this, isort
+# files it under third-party and sorts it in among monai/torch/wandb.
+known-first-party = ["_common"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 20

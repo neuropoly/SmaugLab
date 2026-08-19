@@ -160,6 +160,35 @@ inversion flag — give it its own thin subclass rather than exposing the argume
 One class per config key is what keeps a config from expressing the same
 augmentation two different ways.
 
+### Do not write your own kernel, blur or random draw
+
+Four separate 3-D Gaussian blurs, three bias fields and two copies of the
+Laplace/Scharr tables accumulated in this repository, each "kept local so the module
+stays self-contained". They drifted, and two of them were wrong for a long time — an
+uncentred Gaussian that translated the image as well as blurring it, and a 2-D Scharr
+kernel that summed to −20. Nothing caught either, because there was nothing to compare
+them against.
+
+* Convolution kernels, separable blurs and smooth random fields:
+  `smauglab/transforms/kernels.py`.
+* Random draws: `torch.rand` / `torch.randint`, or
+  `smauglab.transforms.rng.shared_choice` when picking from a sequence. **Never
+  `random.choice` or `numpy.random`** — `torch.manual_seed` does not reach them, so a
+  seeded run stops being reproducible and DDP ranks silently diverge. The test suite
+  will not catch this: `unit_tests/helpers.py::seed_everything` seeds all three
+  generators, and training does not.
+* Sampling that must vary per batch belongs in a generator's `forward`, not in
+  `make_samplers`. kornia calls `make_samplers` **once** and caches what it builds, so
+  a value drawn there is fixed for the transform's whole lifetime.
+* Read the input channel as `input[:, c].clone()` before writing into it. A bare
+  `input[:, c]` is a view, and assigning into it defeats the non-finite guard at the
+  end of the loop — the values are already in the batch by then.
+
+The per-channel scaffolding every intensity transform shares — `_channel_stats` /
+`_restore_stats` for `retain_stats`, and `_select_and_check` for `in_seg`/`out_seg`
+plus the non-finite guard — lives at the top of `smauglab/transforms/gpu/contrast.py`.
+Use it rather than writing the block out again.
+
 ## Style
 
 Ruff handles both linting and formatting; the configuration lives in

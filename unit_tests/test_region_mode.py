@@ -100,6 +100,25 @@ class TestApplyRegionMode(SmaugLabTestCase):
 
 
 class TestNaNGuard(SmaugLabTestCase):
+    """`_select_and_check` returns None so the caller leaves the channel untouched."""
+
+    def test_a_non_finite_result_is_rejected(self):
+        from smauglab.transforms.gpu.contrast import _select_and_check
+
+        orig = torch.ones(1, 4, 4, 4)
+        broken = torch.full((1, 4, 4, 4), float("nan"))
+        self.assertIsNone(_select_and_check("T", orig, broken, None, in_seg=0.0, out_seg=0.0))
+
+        infinite = torch.full((1, 4, 4, 4), float("inf"))
+        self.assertIsNone(_select_and_check("T", orig, infinite, None, in_seg=0.0, out_seg=0.0))
+
+    def test_a_finite_result_passes_through(self):
+        from smauglab.transforms.gpu.contrast import _select_and_check
+
+        orig = torch.ones(1, 4, 4, 4)
+        good = torch.full((1, 4, 4, 4), 2.0)
+        self.assertTrue(torch.equal(_select_and_check("T", orig, good, None, in_seg=0.0, out_seg=0.0), good))
+
     def test_histogram_equalisation_does_not_write_through_a_view(self):
         """It used to take `input[:, c]` as a view and assign into it per batch element,
         so the NaN guard's `continue` skipped over values already written to the batch."""

@@ -7,6 +7,7 @@ from torch.nn import functional as F
 
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.kernels import gaussian_blur3d
 from smauglab.transforms.rng import shared_choice
 
 # ── PALETTE AUG helpers ──────────────────────────────────────────────────
@@ -28,16 +29,14 @@ def _kmeans_1d(values: torch.Tensor, C: int, n_iter: int = 10) -> torch.Tensor:
 
 
 def _gaussian_blur_3d(x: torch.Tensor, sigma: float) -> torch.Tensor:
-    """Separable 3D Gaussian blur. x: (B, 1, D, H, W)."""
-    k_r = max(1, int(3.0 * sigma + 0.5))
-    k1d = torch.arange(-k_r, k_r + 1, dtype=x.dtype, device=x.device)
-    k1d = torch.exp(-0.5 * (k1d / sigma) ** 2)
-    k1d = k1d / k1d.sum()
-    pad = len(k1d) // 2
-    y = F.conv3d(x, k1d.view(1, 1, -1, 1, 1), padding=(pad, 0, 0))
-    y = F.conv3d(y, k1d.view(1, 1, 1, -1, 1), padding=(0, pad, 0))
-    y = F.conv3d(y, k1d.view(1, 1, 1, 1, -1), padding=(0, 0, pad))
-    return y.clamp(0, 1)
+    """Separable 3D Gaussian blur of a [0, 1] volume. x: (B, 1, D, H, W).
+
+    The blur itself is the shared one; this wrapper only keeps the clamp, which is a
+    no-op guard for the already-normalised `synth_01` inputs. The previous local copy
+    zero-padded (via conv3d's `padding=`) rather than reflecting, which darkened the
+    volume border.
+    """
+    return gaussian_blur3d(x, sigma).clamp(0, 1)
 
 
 def _voronoi_region_ids(

@@ -47,6 +47,7 @@ from torch.nn import functional as F
 
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.kernels import gaussian_blur3d, random_bias_field3d
 
 # The transfer LUT bank is a multi-hundred-MB artefact built offline by
 # embeddaug/analysis/playground/build_transfer_bank.py, so it is not shipped in the
@@ -74,45 +75,16 @@ def resolve_bank_path(bank_path: str | None = None) -> str:
     return resolved
 
 
-def _gaussian_kernel1d(sigma: float, device, dtype) -> torch.Tensor:
-    radius = max(1, round(3.0 * sigma))
-    x = torch.arange(-radius, radius + 1, device=device, dtype=dtype)
-    k = torch.exp(-0.5 * (x / sigma) ** 2)
-    return k / k.sum()
-
-
-def _gaussian_blur3d(x: torch.Tensor, sigma: float) -> torch.Tensor:
-    """Separable Gaussian blur over the 3 spatial dims of [N, C, D, H, W]."""
-    if sigma <= 0:
-        return x
-    n, c = x.shape[:2]
-    k = _gaussian_kernel1d(sigma, x.device, x.dtype)
-    r = (k.numel() - 1) // 2
-    for dim in (2, 3, 4):
-        shape = [1, 1, 1, 1, 1]
-        shape[dim] = k.numel()
-        ker = k.view(shape).repeat(c, 1, 1, 1, 1)  # [C,1,kD,kH,kW] for separable conv
-        pad = [0, 0, 0, 0, 0, 0]
-        pad[(4 - dim) * 2] = r
-        pad[(4 - dim) * 2 + 1] = r
-        x = F.conv3d(F.pad(x, pad, mode="replicate"), ker, groups=c)
-    return x
-
-
 def _random_bias_field3d(shape, std: float, scale: float, device, dtype) -> torch.Tensor:
     """Smooth positive multiplicative bias field over a ``[D, H, W]`` volume.
 
-    Samples a coarse Gaussian grid ``~ N(0, U(0, std))`` of size ``ceil(shape*scale)``,
-    trilinear-upsamples it to ``shape`` and exponentiates (Gaussian in log-space → positive,
-    multiplicative). Same pattern as ``synthseg/functional.py::bias_field`` and
-    ``contrast.py::RandomBiasFieldGPU``; kept local so this module stays self-contained.
+    The local copies of this and of the separable blur are gone: they were line-for-line
+    the same as ``synthseg/functional.py``'s, which is now
+    ``smauglab.transforms.kernels``. The "kept local so this module stays
+    self-contained" note that used to be here is what let four Gaussian blurs drift
+    apart, one of them with an uncentred kernel.
     """
-    d, h, w = shape
-    small = [max(2, math.ceil(s * scale)) for s in (d, h, w)]
-    s = torch.rand((), device=device) * std
-    field = torch.randn(1, 1, *small, device=device, dtype=dtype) * s
-    field = F.interpolate(field, size=(d, h, w), mode="trilinear", align_corners=True)
-    return torch.exp(field)[0, 0]
+    return random_bias_field3d(tuple(shape), std, scale, device, dtype)[0, 0]
 
 
 def _random_smooth_field01(shape, scale: float, gain: float, device, dtype) -> torch.Tensor:
@@ -313,7 +285,7 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         n_seg_c = min(seg.shape[1], NC)
 
         # soft per-class weights from Gaussian-blurred one-hot masks (Σ_c w_c ≈ 1)
-        w = _gaussian_blur3d(seg[:, :n_seg_c].float(), self.sigma)
+        w = gaussian_blur3d(seg[:, :n_seg_c].float(), self.sigma)
         w = w / w.sum(dim=1, keepdim=True).clamp_min(1e-6)
 
         N = input.shape[0]

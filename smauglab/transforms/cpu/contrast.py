@@ -8,6 +8,7 @@ from batchgeneratorsv2.transforms.intensity.contrast import BGContrast
 from batchgeneratorsv2.transforms.intensity.gamma import GammaTransform
 
 from smauglab.registry import AugId, AugType, Backend, register
+from smauglab.transforms.kernels import laplace_kernel, scharr_kernels
 
 
 @register(
@@ -66,50 +67,13 @@ class _ConvBaseTransform(ImageOnlyTransform):
         # _apply_to_image dispatches on kernel_type to tell the two apart.
         kernel: Union[torch.Tensor, list[torch.Tensor]]
         spatial_dims = len(data_dict["image"].shape) - 1
-        if spatial_dims == 2:
-            if self.kernel_type == "Laplace":
-                kernel = torch.tensor([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]], dtype=torch.float32)
-            elif self.kernel_type == "Scharr":
-                # Middle row is [-10, 0, 10]. It read [-10, 0, -10], which sums to -20
-                # instead of 0, so this was not a gradient operator at all. The 3-D
-                # kernel below and both GPU kernels were always right.
-                kernel_x = torch.tensor([[-3, 0, 3], [-10, 0, 10], [-3, 0, 3]], dtype=torch.float32)
-                kernel_y = torch.tensor([[-3, -10, -3], [0, 0, 0], [3, 10, 3]], dtype=torch.float32)
-                kernel = [kernel_x, kernel_y]
-        elif spatial_dims == 3:
-            if self.kernel_type == "Laplace":
-                kernel = -1.0 * torch.ones(3, 3, 3, dtype=torch.float32)
-                kernel[1, 1, 1] = 26.0
-            elif self.kernel_type == "Scharr":
-                kernel_x = torch.tensor(
-                    [
-                        [[9, 0, -9], [30, 0, -30], [9, 0, -9]],
-                        [[30, 0, -30], [100, 0, -100], [30, 0, -30]],
-                        [[9, 0, -9], [30, 0, -30], [9, 0, -9]],
-                    ],
-                    dtype=torch.float32,
-                )
-
-                kernel_y = torch.tensor(
-                    [
-                        [[9, 30, 9], [0, 0, 0], [-9, -30, -9]],
-                        [[30, 100, 30], [0, 0, 0], [-30, -100, -30]],
-                        [[9, 30, 9], [0, 0, 0], [-9, -30, -9]],
-                    ],
-                    dtype=torch.float32,
-                )
-
-                kernel_z = torch.tensor(
-                    [
-                        [[9, 30, 9], [30, 100, 30], [9, 30, 9]],
-                        [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
-                        [[-9, -30, -9], [-30, -100, -30], [-9, -30, -9]],
-                    ],
-                    dtype=torch.float32,
-                )
-                kernel = [kernel_x, kernel_y, kernel_z]
-        else:
+        if spatial_dims not in (2, 3):
             raise ValueError(f"{self.__class__} can only handle 2D or 3D images.")
+        # Shared with the GPU backend. These tables used to be written out here and
+        # again in gpu/contrast.py, which is how the 2-D Scharr x-kernel came to have
+        # [-10, 0, -10] as its middle row on this side only -- summing to -20, so not
+        # a gradient operator at all. See smauglab/transforms/kernels.py.
+        kernel = laplace_kernel(spatial_dims) if self.kernel_type == "Laplace" else scharr_kernels(spatial_dims)
 
         return {"kernel_type": self.kernel_type, "kernel": kernel, "absolute": self.absolute, "retain_stats": self.retain_stats}
 

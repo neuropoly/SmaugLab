@@ -28,13 +28,9 @@ from monai.transforms import (
 from torch import optim
 from tqdm import tqdm
 
-from smauglab import configs
-
-# Import SmaugLab GPU transforms 🐞
-from smauglab.transforms.gpu.transforms import AugTransformsGPU
-
-# Import SmaugLab custom transforms
-from smauglab.utils.utils import (
+# Script-local helpers. These used to be smauglab.utils.utils, which shipped in the
+# wheel despite nothing in the library importing it.
+from _common import (
     adjust_learning_rate,
     compute_dsc,
     fetch_image_config,
@@ -44,6 +40,10 @@ from smauglab.utils.utils import (
     tuple_type_float,
     tuple_type_int,
 )
+from smauglab import configs
+
+# Import SmaugLab GPU transforms 🐞
+from smauglab.transforms.gpu.transforms import AugTransformsGPU
 
 
 def get_parser():

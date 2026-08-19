@@ -26,13 +26,9 @@ import numpy as np
 import torch
 from batchgeneratorsv2.helpers.scalar_type import RandomScalar
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
-from batchgeneratorsv2.transforms.nnunet.random_binary_operator import ApplyRandomBinaryOperatorTransform
-from batchgeneratorsv2.transforms.nnunet.remove_connected_components import RemoveRandomConnectedComponentFromOneHotEncodingTransform
 from batchgeneratorsv2.transforms.nnunet.seg_to_onehot import MoveSegAsOneHotToDataTransform
 from batchgeneratorsv2.transforms.utils.compose import ComposeTransforms
 from batchgeneratorsv2.transforms.utils.deep_supervision_downsampling import DownsampleSegForDSTransform
-from batchgeneratorsv2.transforms.utils.nnunet_masking import MaskImageTransform
-from batchgeneratorsv2.transforms.utils.random import RandomTransform
 from batchgeneratorsv2.transforms.utils.remove_label import RemoveLabelTansform
 from batchgeneratorsv2.transforms.utils.seg_to_regions import ConvertSegmentationToRegionsTransform
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
@@ -42,7 +38,7 @@ from torch import autocast
 from smauglab import configs
 from smauglab.config import load_config
 from smauglab.registry import Backend
-from smauglab.trainers.utils import DownsampleSegForDSTransformCustom
+from smauglab.trainers.utils import DownsampleSegForDSTransformCustom, nnunet_tail_transforms
 from smauglab.transforms.build import build_cpu_pipeline, build_gpu_pipeline
 from smauglab.transforms.gpu.base import AugmentationSequentialCustom
 
@@ -146,59 +142,20 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             )
         )
 
-        if use_mask_for_norm is not None and any(use_mask_for_norm):
-            transforms.append(
-                MaskImageTransform(
-                    apply_to_channels=[i for i in range(len(use_mask_for_norm)) if use_mask_for_norm[i]],
-                    channel_idx_in_seg=0,
-                    set_outside_to=0,
-                )
-            )
-
-        transforms.append(RemoveLabelTansform(-1, 0))
-
-        # The following augmentations are related to special nnunet executions
-        if is_cascaded:
-            assert foreground_labels is not None, "We need foreground_labels for cascade augmentations"
-            transforms.append(
-                MoveSegAsOneHotToDataTransform(source_channel_idx=1, all_labels=foreground_labels, remove_channel_from_source=True)
-            )
-            transforms.append(
-                RandomTransform(
-                    ApplyRandomBinaryOperatorTransform(
-                        channel_idx=list(range(-len(foreground_labels), 0)), strel_size=(1, 8), p_per_label=1
-                    ),
-                    apply_probability=0.4,
-                )
-            )
-            transforms.append(
-                RandomTransform(
-                    RemoveRandomConnectedComponentFromOneHotEncodingTransform(
-                        channel_idx=list(range(-len(foreground_labels), 0)),
-                        fill_with_other_class_p=0,
-                        dont_do_if_covers_more_than_x_percent=0.15,
-                        p_per_label=1,
-                    ),
-                    apply_probability=0.2,
-                )
-            )
-
-        if regions is not None:
-            # the ignore label must also be converted
-            transforms.append(
-                ConvertSegmentationToRegionsTransform(
-                    regions=[*list(regions), ignore_label] if ignore_label is not None else regions, channel_in_seg=0
-                )
-            )
-
-        # transforms.append(ZscoreNormalization())
-
         # Deep supervision has to come after whatever last deformed the mask. With GPU
         # augmentations that is train_step, so the downsampling happens there; without
         # them nothing touches the mask after this point and it belongs here, which is
-        # where nnU-Net puts it.
-        if deep_supervision_scales is not None and not _has_gpu_augmentations(config):
-            transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
+        # where nnU-Net puts it. Passing None is how the tail is told to skip it.
+        transforms.extend(
+            nnunet_tail_transforms(
+                use_mask_for_norm=use_mask_for_norm,
+                deep_supervision_scales=None if _has_gpu_augmentations(config) else deep_supervision_scales,
+                is_cascaded=is_cascaded,
+                foreground_labels=foreground_labels,
+                regions=regions,
+                ignore_label=ignore_label,
+            )
+        )
 
         return ComposeTransforms(transforms)
 

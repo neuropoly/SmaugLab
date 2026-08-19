@@ -1,4 +1,3 @@
-import gc
 import random
 
 import torch
@@ -6,6 +5,18 @@ import torchio as tio
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform, ImageOnlyTransform
 
 from smauglab.registry import AugId, AugType, Backend, register
+from smauglab.transforms.cpu.torchio_ops import TransformFactory, apply_enabled, select
+
+#: Transform name -> the torchio transform it runs, in application order.
+SPATIAL_TRANSFORMS: dict[str, TransformFactory] = {
+    # torchio accepts anatomical axis names ("LR", "AP", "IS") as well as indices, but
+    # types `axes` as int | tuple[int, ...]. Flipping left/right is the point here, and
+    # that is only expressible by name.
+    "flip": lambda: tio.RandomFlip(axes=("LR",)),  # type: ignore[arg-type]
+    "affine": lambda: tio.RandomAffine(degrees=10, translation=(0.1, 0.1, 0.1), scales=(0.9, 1.1)),
+    "elastic": lambda: tio.RandomElasticDeformation(max_displacement=40),
+    "anisotropy": lambda: tio.RandomAnisotropy(downsampling=7),
+}
 
 
 @register(
@@ -30,15 +41,7 @@ class SpatialCustomTransform(BasicTransform):
         self.random_pick = random_pick
 
     def get_parameters(self, **data_dict) -> dict:
-        transfo = {"flip": self.flip, "affine": self.affine, "elastic": self.elastic, "anisotropy": self.anisotropy}
-
-        enabled_transfo = {k: v for k, v in transfo.items() if v}
-
-        if self.random_pick and enabled_transfo:
-            selected_transfo = random.choice(list(enabled_transfo.keys()))
-            transfo = {k: (k == selected_transfo) for k, v in transfo.items()}
-
-        return transfo
+        return select({name: getattr(self, name) for name in SPATIAL_TRANSFORMS}, self.random_pick)
 
     def apply(self, data_dict: dict, **params) -> dict:
         if data_dict.get("image") is not None and data_dict.get("segmentation") is not None:
@@ -46,97 +49,7 @@ class SpatialCustomTransform(BasicTransform):
         return data_dict
 
     def _apply_to_image(self, img: torch.Tensor, seg: torch.Tensor, **params) -> tuple[torch.Tensor, torch.Tensor]:
-        if params["flip"]:
-            img, seg = aug_flip(img, seg)
-        if params["affine"]:
-            img, seg = aug_affine(img, seg)
-        if params["elastic"]:
-            img, seg = aug_elastic(img, seg)
-        if params["anisotropy"]:
-            img, seg = aug_anisotropy(img, seg)
-        return img, seg
-
-
-def aug_flip(img, seg):
-    if img.shape[0] == 2:  # Step2: channel 1 --> image / channel 2 --> odd discs segmentation
-        subject = tio.RandomFlip(axes=("LR",))(
-            tio.Subject(
-                image=tio.ScalarImage(tensor=torch.unsqueeze(img[0], dim=0)),
-                discs=tio.LabelMap(tensor=torch.unsqueeze(img[1], dim=0)),
-                seg=tio.LabelMap(tensor=seg),
-            )
-        )
-        img_out = torch.cat((subject.image.data, subject.discs.data), axis=0)
-        seg_out = subject.seg.data
-    else:
-        subject = tio.RandomFlip(axes=("LR",))(tio.Subject(image=tio.ScalarImage(tensor=img), seg=tio.LabelMap(tensor=seg)))
-        img_out, seg_out = subject.image.data, subject.seg.data
-    del subject
-    gc.collect()  # Force garbage collection
-    return img_out, seg_out
-
-
-def aug_affine(img, seg):
-    if img.shape[0] == 2:  # Step2: channel 1 --> image / channel 2 --> odd discs segmentation
-        subject = tio.RandomAffine(degrees=10, translation=(0.1, 0.1, 0.1), scales=(0.9, 1.1))(
-            tio.Subject(
-                image=tio.ScalarImage(tensor=torch.unsqueeze(img[0], dim=0)),
-                discs=tio.LabelMap(tensor=torch.unsqueeze(img[1], dim=0)),
-                seg=tio.LabelMap(tensor=seg),
-            )
-        )
-        img_out = torch.cat((subject.image.data, subject.discs.data), axis=0)
-        seg_out = subject.seg.data
-    else:
-        subject = tio.RandomAffine(degrees=10, translation=(0.1, 0.1, 0.1), scales=(0.9, 1.1))(
-            tio.Subject(image=tio.ScalarImage(tensor=img), seg=tio.LabelMap(tensor=seg))
-        )
-        img_out, seg_out = subject.image.data, subject.seg.data
-    del subject
-    gc.collect()  # Force garbage collection
-    return img_out, seg_out
-
-
-def aug_elastic(img, seg):
-    if img.shape[0] == 2:  # Step2: channel 1 --> image / channel 2 --> odd discs segmentation
-        subject = tio.RandomElasticDeformation(max_displacement=40)(
-            tio.Subject(
-                image=tio.ScalarImage(tensor=torch.unsqueeze(img[0], dim=0)),
-                discs=tio.LabelMap(tensor=torch.unsqueeze(img[1], dim=0)),
-                seg=tio.LabelMap(tensor=seg),
-            )
-        )
-        img_out = torch.cat((subject.image.data, subject.discs.data), axis=0)
-        seg_out = subject.seg.data
-    else:
-        subject = tio.RandomElasticDeformation(max_displacement=40)(
-            tio.Subject(image=tio.ScalarImage(tensor=img), seg=tio.LabelMap(tensor=seg))
-        )
-        img_out, seg_out = subject.image.data, subject.seg.data
-    del subject
-    gc.collect()  # Force garbage collection
-    return img_out, seg_out
-
-
-def aug_anisotropy(img, seg, downsampling=7):
-    if img.shape[0] == 2:  # Step2: channel 1 --> image / channel 2 --> odd discs segmentation
-        subject = tio.RandomAnisotropy(downsampling=downsampling)(
-            tio.Subject(
-                image=tio.ScalarImage(tensor=torch.unsqueeze(img[0], dim=0)),
-                discs=tio.LabelMap(tensor=torch.unsqueeze(img[1], dim=0)),
-                seg=tio.LabelMap(tensor=seg),
-            )
-        )
-        img_out = torch.cat((subject.image.data, subject.discs.data), axis=0)
-        seg_out = subject.seg.data
-    else:
-        subject = tio.RandomAnisotropy(downsampling=downsampling)(
-            tio.Subject(image=tio.ScalarImage(tensor=img), seg=tio.LabelMap(tensor=seg, axis=0))
-        )
-        img_out, seg_out = subject.image.data, subject.seg.data
-    del subject
-    gc.collect()  # Force garbage collection
-    return img_out, seg_out
+        return apply_enabled(SPATIAL_TRANSFORMS, img, seg, params)
 
 
 ### Shape transform
