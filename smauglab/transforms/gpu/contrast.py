@@ -326,9 +326,15 @@ def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torc
 
 
 def get_gaussian_kernel1d(kernel_size: int, sigma: Union[float, Tensor], dtype: torch.dtype, device: torch.device) -> Tensor:
-    """Create a 1D Gaussian kernel."""
+    """Create a 1D Gaussian kernel, centred on the middle tap.
 
-    x = torch.arange(kernel_size, dtype=dtype, device=device)
+    The sample points were `arange(kernel_size)` -- 0, 1, 2 -- which puts the peak at
+    index 0 instead of the centre. The resulting 3D kernel had its maximum at corner
+    [0,0,0], so RandomGaussianBlurGPU and RandomUnsharpMaskGPU blurred *and* translated
+    the image by about a voxel, relative to a segmentation mask that is not convolved.
+    """
+    half = (kernel_size - 1) / 2.0
+    x = torch.linspace(-half, half, kernel_size, dtype=dtype, device=device)
     pdf = torch.exp(-0.5 * (x / sigma).pow(2))
     kernel1d = pdf / pdf.sum()
 
