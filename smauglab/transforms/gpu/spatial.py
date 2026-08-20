@@ -22,7 +22,7 @@ from smauglab.transforms.gpu.base import ImageOnlyTransform
 
 
 # Affine transform
-class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
+class RandomAffineGPU(RigidAffineAugmentationBase3D):
     r"""Apply affine transformation 3D volumes (5D tensor).
 
     Based on :class:`kornia.augmentation.RandomAffine3D`.
@@ -107,9 +107,9 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
             tuple[float, float],
             tuple[float, float, float],
             tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
-        ],
-        translate: Union[Tensor, tuple[float, float, float]] | None = None,
-        scale: Union[Tensor, tuple[float, float], tuple[tuple[float, float], tuple[float, float], tuple[float, float]]] | None = None,
+        ] = 10,
+        translate: Union[Tensor, tuple[float, float, float]] | None = (0.1, 0.1, 0.1),
+        scale: Union[Tensor, tuple[float, float], tuple[tuple[float, float], tuple[float, float], tuple[float, float]]] | None = (0.9, 1.1),
         shears: Union[
             Tensor,
             float,
@@ -124,14 +124,15 @@ class RandomAffine3DCustom(RigidAffineAugmentationBase3D):
                 tuple[float, float],
             ],
             None,
-        ] = None,
+        ] = (-10, 10, -10, 10, -10, 10),
         resample: Union[str, int, Resample] = Resample.BILINEAR.name,
         same_on_batch: bool = False,
         align_corners: bool = True,
         p: float = 0.5,
+        p_batch: float = 1.0,
         keepdim: bool = True,
     ) -> None:
-        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.degrees = degrees
         self.shears = shears
         self.translate = translate
@@ -209,10 +210,10 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
         scale: tuple[float, float] = (0.3, 1.0),
         same_on_batch: bool = False,
         p: float = 1.0,
+        p_batch: float = 1.0,
         keepdim: bool = True,
-        **kwargs,
     ) -> None:
-        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self._param_generator = ScaleGenerator3D(scale=scale)
 
     def compute_transformation(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any]) -> Tensor:
@@ -355,19 +356,19 @@ class RandomAcqTransformGPU(ImageOnlyTransform):
     def __init__(
         self,
         scale: tuple[float, float] = (0.3, 1.0),
-        one_dim: bool = False,
         same_on_batch: bool = False,
-        apply_to_channel: list[int] | None = None,  # Apply to first channel by default
+        apply_to_channel: Sequence[int] = (0,),  # Apply to first channel by default
         p: float = 1.0,
+        p_batch: float = 1.0,
         keepdim: bool = True,
-        **kwargs,
     ) -> None:
-        if apply_to_channel is None:
-            apply_to_channel = [0]
-        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.flags = {"resample": "trilinear"}
         self.apply_to_channel = apply_to_channel
-        self._param_generator = ScaleGenerator3D(scale=scale, one_dim=one_dim)
+        # one_dim is fixed rather than exposed: this class *is* the single-axis case,
+        # and RandomLowResTransformGPU is the isotropic one. Leaving it configurable
+        # meant two config keys could each produce either behaviour.
+        self._param_generator = ScaleGenerator3D(scale=scale, one_dim=True)
 
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -442,13 +443,13 @@ class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
         self,
         # Both forms are accepted and normalised below; the annotation said `int`
         # while the default was a list and every caller passes a list.
-        flip_axis: Union[int, Sequence[int]] = [0, 1, 2],
+        flip_axis: Union[int, Sequence[int]] = (0,),
         same_on_batch: bool = False,
         p: float = 1.0,
+        p_batch: float = 1.0,
         keepdim: bool = True,
-        **kwargs,
     ) -> None:
-        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         # normalize flip_axis into a list of ints
         if isinstance(flip_axis, int):
             self.flip_axis = [flip_axis]
@@ -574,13 +575,13 @@ class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
         # A (low, high) range like `crop`, not a per-axis triple: CropGenerator3D
         # feeds it to _tuple_range_reader(..., 3, ...), which broadcasts the range
         # across all three axes. The annotation said triple, the default was a pair.
-        pos: tuple[float, float] = (0.5, 1.0),  # Fraction of the pos
+        pos: tuple[float, float] = (0.0, 1.0),  # Fraction of the pos
         same_on_batch: bool = False,
         p: float = 1.0,
+        p_batch: float = 1.0,
         keepdim: bool = True,
-        **kwargs,
     ) -> None:
-        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self._param_generator = CropGenerator3D(crop=crop, pos=pos)
 
     def compute_transformation(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any]) -> Tensor:

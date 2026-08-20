@@ -16,7 +16,7 @@ import torch
 from kornia.constants import Resample
 
 from smauglab.transforms.gpu.base import AugmentationSequentialCustom
-from smauglab.transforms.gpu.spatial import CropGenerator3D, RandomAffine3DCustom, RandomFlipTransformGPU, ScaleGenerator3D
+from smauglab.transforms.gpu.spatial import CropGenerator3D, RandomAffineGPU, RandomFlipTransformGPU, ScaleGenerator3D
 from unit_tests.helpers import SmaugLabTestCase, first_output
 
 
@@ -152,7 +152,7 @@ class TestSingleAxisIsRedrawnEveryCall(SmaugLabTestCase):
 
 
 class TestMaskResampleRestore(SmaugLabTestCase):
-    """Guard tests for `RandomAffine3DCustom.apply_transform_mask`.
+    """Guard tests for `RandomAffineGPU.apply_transform_mask`.
 
     Unlike the rest of this file these pass before the change too: `resample_method`
     was annotated but assigned only inside the `if`, so the restore below it could
@@ -163,7 +163,7 @@ class TestMaskResampleRestore(SmaugLabTestCase):
     """
 
     def _transform(self):
-        return RandomAffine3DCustom(p=1.0, degrees=5, align_corners=True)
+        return RandomAffineGPU(p=1.0, degrees=5, align_corners=True)
 
     def _flags(self, resample: str = "bilinear"):
         transform = self._transform()

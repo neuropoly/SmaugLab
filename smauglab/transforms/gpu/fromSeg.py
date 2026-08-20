@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any
 
 import torch
@@ -27,16 +28,14 @@ def _kmeans_1d(values: torch.Tensor, C: int, n_iter: int = 10) -> torch.Tensor:
 
 
 def _gaussian_blur_3d(x: torch.Tensor, sigma: float) -> torch.Tensor:
-    """Separable 3D Gaussian blur of a (B, 1, D, H, W) volume, clamped to [0, 1].
+    """Separable 3D Gaussian blur of a [0, 1] volume. x: (B, 1, D, H, W).
 
-    Delegates to the shared implementation, which pads with `reflect`. This copy used
-    conv3d's implicit zero padding, which pulled the volume border towards 0 -- the
-    clamp below hid the top end of that but not the darkening. It also took its radius
-    from `round(3*sigma)` rather than `ceil`, so kernels can be one tap wider now.
+    The blur itself is the shared one; this wrapper only keeps the clamp, which is a
+    no-op guard for the already-normalised `synth_01` inputs. The previous local copy
+    zero-padded (via conv3d's `padding=`) rather than reflecting, which darkened the
+    volume border.
     """
-    if sigma <= 0:
-        return x
-    return gaussian_blur3d(x, float(sigma)).clamp(0, 1)
+    return gaussian_blur3d(x, sigma).clamp(0, 1)
 
 
 def _voronoi_region_ids(
@@ -45,7 +44,7 @@ def _voronoi_region_ids(
     fg: torch.Tensor,
     C: int,
     device: torch.device,
-    s_choices: list[int],
+    s_choices: Sequence[int],
     skip_sub_parc_prob: float,
 ) -> tuple[torch.Tensor, int]:
     """Spatially subdivide each K-means cluster into Voronoi sub-regions.
@@ -100,22 +99,16 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
     def __init__(
         self,
         in_seg: float = 0.2,
-        apply_to_channel: list[int] | None = None,
+        apply_to_channel: Sequence[int] = (0,),
         retain_stats: bool = False,
         same_on_batch: bool = False,
         p: float = 1.0,
+        p_batch: float = 1.0,
         keepdim: bool = True,
-        std_noise_range: list[float] | None = None,
-        dilation_iterations_range: list[int] | None = None,
-        **kwargs,
+        std_noise_range: Sequence[float] = (0.1, 0.3),
+        dilation_iterations_range: Sequence[int] = (1, 3),
     ) -> None:
-        if dilation_iterations_range is None:
-            dilation_iterations_range = [1, 3]
-        if std_noise_range is None:
-            std_noise_range = [0.1, 0.3]
-        if apply_to_channel is None:
-            apply_to_channel = [0]
-        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.in_seg = in_seg
         self.apply_to_channel = apply_to_channel
         self.retain_stats = retain_stats
@@ -265,7 +258,7 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
         return input
 
 
-class RandomPALETTEGPU(ImageOnlyTransform):
+class RandomPaletteGPU(ImageOnlyTransform):
     """
     SmaugLab GPU augmentation implementing PALETTE synthesis.
 
@@ -301,29 +294,27 @@ class RandomPALETTEGPU(ImageOnlyTransform):
 
     def __init__(
         self,
-        c_choices: list[int] | None = None,
-        s_choices: list[int] | None = None,
-        blur_sigmas: list[float] | None = None,
+        c_choices: Sequence[int] = (2, 3, 4, 5, 6),
+        s_choices: Sequence[int] = (2, 3, 4, 5, 6, 7, 8, 9, 10),
+        blur_sigmas: Sequence[float] = (0.0, 0.0, 0.0, 0.3, 0.5, 0.8),
         dark_threshold: float = 0.01,
         n_kmeans_subsample: int = 10_000,
         skip_parcellation_prob: float = 0.10,
         skip_sub_parc_prob: float = 0.40,
-        alpha_magnitude_range: list[float] | None = None,
+        alpha_magnitude_range: Sequence[float] = (0.5, 2.0),
         label_remap_prob: float = 0.5,
         min_label_voxels: int = 4,
         label_classes: list[int] | None = None,
         p: float = 1.0,
-        **kwargs: Any,
+        p_batch: float = 1.0,
+        same_on_batch: bool = False,
+        # Note the default is False, not the True its siblings use. This class
+        # previously forwarded **kwargs straight to super(), so keepdim fell through
+        # to kornia's own default -- and nothing ever passed it. Spelling that out
+        # rather than "fixing" it keeps the transform behaving exactly as before.
+        keepdim: bool = False,
     ) -> None:
-        if alpha_magnitude_range is None:
-            alpha_magnitude_range = [0.5, 2.0]
-        if blur_sigmas is None:
-            blur_sigmas = [0.0, 0.0, 0.0, 0.3, 0.5, 0.8]
-        if s_choices is None:
-            s_choices = [2, 3, 4, 5, 6, 7, 8, 9, 10]
-        if c_choices is None:
-            c_choices = [2, 3, 4, 5, 6]
-        super().__init__(p=p, **kwargs)
+        super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.c_choices = c_choices
         self.s_choices = s_choices
         self.blur_sigmas = blur_sigmas
