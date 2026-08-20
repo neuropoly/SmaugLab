@@ -232,12 +232,17 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
 
         scales = params["scale"]  # shape [B, 3]
 
-        if flags["data_keys"][0] is DataKey.IMAGE:
+        # Only MaskSequentialOpsCustom injects "data_keys" (see gpu/base.py), so a bare
+        # `flags["data_keys"]` raised KeyError for every other caller -- calling this
+        # transform standalone, or from inside RandomChooseXTransformsGPU, which passes
+        # the transform's own `flags`. Defaulting to IMAGE is what those callers mean.
+        data_keys = flags.get("data_keys") or [DataKey.INPUT]
+        if data_keys[0] in (DataKey.INPUT, DataKey.IMAGE):
             resample = "trilinear"
-        elif flags["data_keys"][0] is DataKey.MASK:
+        elif data_keys[0] is DataKey.MASK:
             resample = "nearest"
         else:
-            raise ValueError(f"Unsupported data key {flags['data_keys'][0]} for RandomLowResTransformGPU. Expected IMAGE or MASK.")
+            raise ValueError(f"Unsupported data key {data_keys[0]} for RandomLowResTransformGPU. Expected IMAGE or MASK.")
 
         # Define interpolation modes
         interp_down = resample
