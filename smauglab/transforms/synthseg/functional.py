@@ -33,6 +33,8 @@ from typing import Union
 import torch
 import torch.nn.functional as F
 
+from smauglab.transforms.kernels import gaussian_blur3d, random_bias_field3d
+
 Number = Union[int, float]
 
 __all__ = [
@@ -478,12 +480,7 @@ def bias_field(
     if bias_field_std <= 0:
         return image
     B, C, D, H, W = image.shape
-    device = image.device
-    small = [max(2, math.ceil(s * bias_scale)) for s in (D, H, W)]
-    std = torch.rand(B, 1, 1, 1, 1, device=device) * bias_field_std
-    field = torch.randn(B, C, *small, device=device) * std
-    field = F.interpolate(field, size=(D, H, W), mode="trilinear", align_corners=True)
-    return image * torch.exp(field)
+    return image * random_bias_field3d((D, H, W), bias_field_std, bias_scale, image.device, image.dtype, batch=B, channels=C)
 
 
 # ---------------------------------------------------------------------------
@@ -545,15 +542,6 @@ def blurring_sigma_for_downsampling(
     return sigma
 
 
-def _gaussian_kernel1d(sigma: float, device: torch.device) -> torch.Tensor:
-    if sigma <= 0:
-        return torch.tensor([1.0], device=device)
-    radius = max(1, math.ceil(3.0 * sigma))
-    x = torch.arange(-radius, radius + 1, device=device, dtype=torch.float32)
-    k = torch.exp(-0.5 * (x / sigma) ** 2)
-    return k / k.sum()
-
-
 def gaussian_blur_3d(
     image: torch.Tensor,
     sigma: torch.Tensor,
@@ -566,30 +554,7 @@ def gaussian_blur_3d(
     SynthSeg, ``1.15`` in the 2020 lab2im model) and applied as three 1D
     convolutions (reflect padding). ``sigma`` is a ``(3,)`` tensor.
     """
-    B, C, D, H, W = image.shape
-    device = image.device
-    sigma = sigma.clone().float()
-    if blur_range and blur_range > 1.0:
-        jitter = (1.0 / blur_range) + torch.rand(3, device=device) * (blur_range - 1.0 / blur_range)
-        sigma = sigma * jitter
-
-    out = image
-    for axis, s in enumerate(sigma.tolist()):
-        if s <= 0:
-            continue
-        kernel = _gaussian_kernel1d(s, device)
-        ksize = kernel.numel()
-        pad = ksize // 2
-        # shape the separable kernel for conv3d along the given spatial axis
-        shape = [1, 1, 1, 1, 1]
-        shape[2 + axis] = ksize
-        weight = kernel.view(shape).repeat(C, 1, 1, 1, 1)
-        padding = [0, 0, 0]
-        padding[axis] = pad
-        pad_full = (padding[2], padding[2], padding[1], padding[1], padding[0], padding[0])
-        out = F.pad(out, pad_full, mode="reflect")
-        out = F.conv3d(out, weight, groups=C)
-    return out
+    return gaussian_blur3d(image, sigma, blur_range=blur_range)
 
 
 def sample_resolution(

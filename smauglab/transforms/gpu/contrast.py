@@ -8,6 +8,7 @@ from torch import Tensor
 from torch.nn import functional as F
 
 from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.kernels import gaussian_kernel3d, laplace_kernel, scharr_kernels
 from smauglab.transforms.rng import shared_choice
 
 
@@ -172,48 +173,18 @@ class RandomConvTransformGPU(ImageOnlyTransform):
         # kernel type returns a single tensor.
         kernel: Union[Tensor, list[Tensor]]
         if self.kernel_type == "Laplace":
-            kernel = -1.0 * torch.ones(3, 3, 3, dtype=torch.float32, device=device)
-            kernel[1, 1, 1] = 26.0
+            kernel = laplace_kernel(3, device=device)
         elif self.kernel_type == "Scharr":
-            kernel_x = torch.tensor(
-                [
-                    [[9, 0, -9], [30, 0, -30], [9, 0, -9]],
-                    [[30, 0, -30], [100, 0, -100], [30, 0, -30]],
-                    [[9, 0, -9], [30, 0, -30], [9, 0, -9]],
-                ],
-                dtype=torch.float32,
-                device=device,
-            )
-
-            kernel_y = torch.tensor(
-                [
-                    [[9, 30, 9], [0, 0, 0], [-9, -30, -9]],
-                    [[30, 100, 30], [0, 0, 0], [-30, -100, -30]],
-                    [[9, 30, 9], [0, 0, 0], [-9, -30, -9]],
-                ],
-                dtype=torch.float32,
-                device=device,
-            )
-
-            kernel_z = torch.tensor(
-                [
-                    [[9, 30, 9], [30, 100, 30], [9, 30, 9]],
-                    [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
-                    [[-9, -30, -9], [-30, -100, -30], [-9, -30, -9]],
-                ],
-                dtype=torch.float32,
-                device=device,
-            )
-            kernel = [kernel_x, kernel_y, kernel_z]
+            kernel = scharr_kernels(3, device=device)
         elif self.kernel_type == "GaussianBlur":
             sigma = torch.rand(3, device=device) * self.sigma
             kernel_size = 3
-            kernel = get_gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
+            kernel = gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
         elif self.kernel_type == "UnsharpMask":
             # For unsharp masking we use a Gaussian blur kernel; amount is applied in apply_transform.
             sigma = torch.rand(3, device=device) * self.sigma
             kernel_size = 3
-            kernel = get_gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
+            kernel = gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
         elif self.kernel_type == "RandConv":
             # choose random odd kernel size e.g. [1,3,5,7]
             k = int(shared_choice(self.kernel_sizes))  # define kernel_sizes in __init__
@@ -343,49 +314,6 @@ def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torc
 
     img = F_t._cast_squeeze_out(img, need_cast, need_squeeze, out_dtype)
     return img
-
-
-def get_gaussian_kernel1d(kernel_size: int, sigma: Union[float, Tensor], dtype: torch.dtype, device: torch.device) -> Tensor:
-    """Create a 1D Gaussian kernel, centred on the middle tap.
-
-    The sample points were `arange(kernel_size)` -- 0, 1, 2 -- which puts the peak at
-    index 0 instead of the centre. The resulting 3D kernel had its maximum at corner
-    [0,0,0], so RandomGaussianBlurGPU and RandomUnsharpMaskGPU blurred *and* translated
-    the image by about a voxel, relative to a segmentation mask that is not convolved.
-    """
-    half = (kernel_size - 1) / 2.0
-    x = torch.linspace(-half, half, kernel_size, dtype=dtype, device=device)
-    pdf = torch.exp(-0.5 * (x / sigma).pow(2))
-    kernel1d = pdf / pdf.sum()
-
-    return kernel1d
-
-
-def get_gaussian_kernel3d(kernel_size: int, sigma: Union[float, Tensor], dtype: torch.dtype, device: torch.device) -> Tensor:
-    """
-    Create a 3D Gaussian kernel by multiplying 1D kernels along each axis.
-    Args:
-        kernel_size (int)
-        sigma (float or tuple of three floats): Standard deviation of the Gaussian kernel.
-    """
-    if isinstance(sigma, (int, float)):
-        sigma = torch.tensor([sigma, sigma, sigma], device=device)
-    elif isinstance(sigma, torch.Tensor):
-        assert sigma.shape == (3,), "Sigma must be a float or a tensor of three floats."
-    else:
-        raise TypeError("Sigma must be a float or a tensor of three floats.")
-
-    gz = get_gaussian_kernel1d(kernel_size, sigma[0], dtype, device)
-    gy = get_gaussian_kernel1d(kernel_size, sigma[1], dtype, device)
-    gx = get_gaussian_kernel1d(kernel_size, sigma[2], dtype, device)
-
-    # Outer product using broadcasting
-    kernel = gz[:, None, None] * gy[None, :, None] * gx[None, None, :]
-
-    # Normalize
-    kernel /= kernel.sum()
-
-    return kernel
 
 
 ## Noise transform

@@ -44,50 +44,34 @@ from torch.distributions import Dirichlet
 from torch.nn import functional as F
 
 from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.kernels import gaussian_blur3d, random_bias_field3d
 
 # Default transfer LUT bank (built by embeddaug/analysis/playground/build_transfer_bank.py).
 DEFAULT_BANK_PATH = "/DATA/NAS/ongoing_projects/hendrik/nathan-transferaug/embeddaug/analysis/playground/results/domain_transfer_bank.npz"
 
 
-def _gaussian_kernel1d(sigma: float, device, dtype) -> torch.Tensor:
-    radius = max(1, round(3.0 * sigma))
-    x = torch.arange(-radius, radius + 1, device=device, dtype=dtype)
-    k = torch.exp(-0.5 * (x / sigma) ** 2)
-    return k / k.sum()
-
-
 def _gaussian_blur3d(x: torch.Tensor, sigma: float) -> torch.Tensor:
-    """Separable Gaussian blur over the 3 spatial dims of [N, C, D, H, W]."""
+    """Separable Gaussian blur over the 3 spatial dims of [N, C, D, H, W].
+
+    Delegates to the shared implementation. That one pads with `reflect` rather than
+    the `replicate` used here, and takes its radius from `ceil(3*sigma)` rather than
+    `round`, so the kernel can be one tap wider -- see smauglab/transforms/kernels.py.
+    """
     if sigma <= 0:
         return x
-    n, c = x.shape[:2]
-    k = _gaussian_kernel1d(sigma, x.device, x.dtype)
-    r = (k.numel() - 1) // 2
-    for dim in (2, 3, 4):
-        shape = [1, 1, 1, 1, 1]
-        shape[dim] = k.numel()
-        ker = k.view(shape).repeat(c, 1, 1, 1, 1)  # [C,1,kD,kH,kW] for separable conv
-        pad = [0, 0, 0, 0, 0, 0]
-        pad[(4 - dim) * 2] = r
-        pad[(4 - dim) * 2 + 1] = r
-        x = F.conv3d(F.pad(x, pad, mode="replicate"), ker, groups=c)
-    return x
+    return gaussian_blur3d(x, float(sigma))
 
 
 def _random_bias_field3d(shape, std: float, scale: float, device, dtype) -> torch.Tensor:
     """Smooth positive multiplicative bias field over a ``[D, H, W]`` volume.
 
-    Samples a coarse Gaussian grid ``~ N(0, U(0, std))`` of size ``ceil(shape*scale)``,
-    trilinear-upsamples it to ``shape`` and exponentiates (Gaussian in log-space → positive,
-    multiplicative). Same pattern as ``synthseg/functional.py::bias_field`` and
-    ``contrast.py::RandomBiasFieldGPU``; kept local so this module stays self-contained.
+    Thin adapter over :func:`smauglab.transforms.kernels.random_bias_field3d`, which
+    returns ``[batch, channels, D, H, W]``; this module wants the bare volume. The
+    implementation used to be written out here as well -- line for line the same as
+    ``synthseg/functional.py::bias_field`` -- under a comment saying it was "kept local
+    so this module stays self-contained".
     """
-    d, h, w = shape
-    small = [max(2, math.ceil(s * scale)) for s in (d, h, w)]
-    s = torch.rand((), device=device) * std
-    field = torch.randn(1, 1, *small, device=device, dtype=dtype) * s
-    field = F.interpolate(field, size=(d, h, w), mode="trilinear", align_corners=True)
-    return torch.exp(field)[0, 0]
+    return random_bias_field3d(tuple(shape), std, scale, device, dtype)[0, 0]
 
 
 def _random_smooth_field01(shape, scale: float, gain: float, device, dtype) -> torch.Tensor:

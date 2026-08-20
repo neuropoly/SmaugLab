@@ -4,6 +4,8 @@ import torch
 import torch.nn.functional as F
 from batchgeneratorsv2.transforms.base.basic_transform import ImageOnlyTransform
 
+from smauglab.transforms.kernels import laplace_kernel, scharr_kernels
+
 
 class ConvTransform(ImageOnlyTransform):
     """
@@ -26,48 +28,11 @@ class ConvTransform(ImageOnlyTransform):
         # _apply_to_image dispatches on kernel_type to tell the two apart.
         kernel: Union[torch.Tensor, list[torch.Tensor]]
         spatial_dims = len(data_dict["image"].shape) - 1
-        if spatial_dims == 2:
+        if spatial_dims in (2, 3):
             if self.kernel_type == "Laplace":
-                kernel = torch.tensor([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]], dtype=torch.float32)
+                kernel = laplace_kernel(spatial_dims)
             elif self.kernel_type == "Scharr":
-                # Middle row was [-10, 0, -10], summing the whole kernel to -20 rather
-                # than 0: not a gradient operator at all. The sibling kernel_y below
-                # has always been right, which is what makes this a typo.
-                kernel_x = torch.tensor([[-3, 0, 3], [-10, 0, 10], [-3, 0, 3]], dtype=torch.float32)
-                kernel_y = torch.tensor([[-3, -10, -3], [0, 0, 0], [3, 10, 3]], dtype=torch.float32)
-                kernel = [kernel_x, kernel_y]
-        elif spatial_dims == 3:
-            if self.kernel_type == "Laplace":
-                kernel = -1.0 * torch.ones(3, 3, 3, dtype=torch.float32)
-                kernel[1, 1, 1] = 26.0
-            elif self.kernel_type == "Scharr":
-                kernel_x = torch.tensor(
-                    [
-                        [[9, 0, -9], [30, 0, -30], [9, 0, -9]],
-                        [[30, 0, -30], [100, 0, -100], [30, 0, -30]],
-                        [[9, 0, -9], [30, 0, -30], [9, 0, -9]],
-                    ],
-                    dtype=torch.float32,
-                )
-
-                kernel_y = torch.tensor(
-                    [
-                        [[9, 30, 9], [0, 0, 0], [-9, -30, -9]],
-                        [[30, 100, 30], [0, 0, 0], [-30, -100, -30]],
-                        [[9, 30, 9], [0, 0, 0], [-9, -30, -9]],
-                    ],
-                    dtype=torch.float32,
-                )
-
-                kernel_z = torch.tensor(
-                    [
-                        [[9, 30, 9], [30, 100, 30], [9, 30, 9]],
-                        [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
-                        [[-9, -30, -9], [-30, -100, -30], [-9, -30, -9]],
-                    ],
-                    dtype=torch.float32,
-                )
-                kernel = [kernel_x, kernel_y, kernel_z]
+                kernel = scharr_kernels(spatial_dims)
         else:
             raise ValueError(f"{self.__class__} can only handle 2D or 3D images.")
 

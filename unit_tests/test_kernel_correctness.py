@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 
 from smauglab.transforms.cpu.contrast import ConvTransform
-from smauglab.transforms.gpu.contrast import get_gaussian_kernel1d, get_gaussian_kernel3d
+from smauglab.transforms.kernels import gaussian_kernel1d, gaussian_kernel3d
 from unit_tests.helpers import SmaugLabTestCase
 
 CPU = torch.device("cpu")
@@ -20,41 +20,45 @@ CPU = torch.device("cpu")
 
 class TestGaussianKernelIsCentred(SmaugLabTestCase):
     def test_the_1d_kernel_peaks_in_the_middle(self):
-        for kernel_size in (3, 5, 7):
-            with self.subTest(kernel_size=kernel_size):
-                kernel = get_gaussian_kernel1d(kernel_size, 1.0, torch.float32, CPU)
-                self.assertEqual(int(kernel.argmax()), kernel_size // 2, "the 1D Gaussian's peak is not the centre tap")
+        for sigma in (0.5, 1.0, 2.5):
+            with self.subTest(sigma=sigma):
+                kernel = gaussian_kernel1d(sigma, CPU)
+                self.assertEqual(kernel.numel() % 2, 1, "an even-length kernel has no centre tap")
+                self.assertEqual(int(kernel.argmax()), kernel.numel() // 2, "the 1D Gaussian's peak is not the centre tap")
 
     def test_the_1d_kernel_is_symmetric_and_normalised(self):
-        for kernel_size in (3, 5, 7):
-            with self.subTest(kernel_size=kernel_size):
-                kernel = get_gaussian_kernel1d(kernel_size, 1.3, torch.float32, CPU)
+        for sigma in (0.5, 1.3, 2.5):
+            with self.subTest(sigma=sigma):
+                kernel = gaussian_kernel1d(sigma, CPU)
                 self.assertTrue(torch.allclose(kernel, kernel.flip(0), atol=1e-6))
                 self.assertAlmostEqual(float(kernel.sum()), 1.0, places=5)
+
+    def test_a_non_positive_sigma_gives_the_identity_kernel(self):
+        self.assertTrue(torch.equal(gaussian_kernel1d(0.0, CPU), torch.tensor([1.0])))
 
     def test_the_3d_kernel_peaks_at_the_centre_voxel(self):
         for kernel_size in (3, 5):
             with self.subTest(kernel_size=kernel_size):
-                kernel = get_gaussian_kernel3d(kernel_size, 1.0, torch.float32, CPU)
+                kernel = gaussian_kernel3d(kernel_size, 1.0, torch.float32, CPU)
                 centre = kernel_size // 2
                 expected = (centre * kernel_size + centre) * kernel_size + centre
                 self.assertEqual(int(kernel.argmax()), expected, "the 3D Gaussian's maximum is not the centre voxel")
 
     def test_the_3d_kernel_is_symmetric_on_every_axis(self):
-        kernel = get_gaussian_kernel3d(5, 1.3, torch.float32, CPU)
+        kernel = gaussian_kernel3d(5, 1.3, torch.float32, CPU)
         for axis in (0, 1, 2):
             with self.subTest(axis=axis):
                 self.assertTrue(torch.allclose(kernel, kernel.flip(axis), atol=1e-6))
 
     def test_the_3d_kernel_sums_to_one(self):
-        kernel = get_gaussian_kernel3d(3, torch.tensor([0.5, 1.0, 2.0]), torch.float32, CPU)
+        kernel = gaussian_kernel3d(3, torch.tensor([0.5, 1.0, 2.0]), torch.float32, CPU)
         self.assertAlmostEqual(float(kernel.sum()), 1.0, places=5)
 
     def test_blurring_an_impulse_leaves_its_centre_of_mass_in_place(self):
         """The translation is the part that actually hurt: the mask does not move with it."""
         volume = torch.zeros(1, 1, 15, 15, 15)
         volume[0, 0, 7, 7, 7] = 1.0
-        kernel = get_gaussian_kernel3d(7, 1.5, torch.float32, CPU)
+        kernel = gaussian_kernel3d(7, 1.5, torch.float32, CPU)
 
         blurred = F.conv3d(volume, kernel.view(1, 1, 7, 7, 7), padding=3)
 
@@ -73,7 +77,7 @@ class TestGaussianKernelIsCentred(SmaugLabTestCase):
         old = pdf / pdf.sum()
 
         self.assertEqual(int(old.argmax()), 0, "control: the old kernel peaked at index 0")
-        self.assertEqual(int(get_gaussian_kernel1d(kernel_size, sigma, torch.float32, CPU).argmax()), 1)
+        self.assertEqual(int(gaussian_kernel3d(kernel_size, sigma, torch.float32, CPU)[:, 1, 1].argmax()), 1)
 
 
 class TestScharrIsAGradientOperator(SmaugLabTestCase):
