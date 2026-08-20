@@ -73,7 +73,10 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
 
         # Convert to NumPy for dilation operations (not supported in PyTorch)
         l_mask_np = l_mask.cpu().numpy()
-        struct = ndi.iterate_structure(ndi.generate_binary_structure(3, 1), 3)
+        # Rank from the data, not hardcoded 3: scipy requires the structuring element
+        # to match the input's rank, so a 2-D image raised
+        # "structure rank must match input rank" here.
+        struct = ndi.iterate_structure(ndi.generate_binary_structure(l_mask_np.ndim, 1), 3)
         l_mask_dilate_np = ndi.binary_dilation(l_mask_np, structure=struct)
 
         # Convert back to PyTorch
