@@ -11,7 +11,7 @@
 import torch
 import torch.nn.functional as F
 
-from smauglab.transforms.cpu.contrast import ConvTransform
+from smauglab.transforms.cpu.contrast import LaplaceConvTransform, ScharrConvTransform
 from smauglab.transforms.kernels import gaussian_kernel1d, gaussian_kernel3d
 from unit_tests.helpers import SmaugLabTestCase
 
@@ -83,7 +83,7 @@ class TestGaussianKernelIsCentred(SmaugLabTestCase):
 class TestScharrIsAGradientOperator(SmaugLabTestCase):
     def _kernels(self, spatial_dims: int):
         image = torch.rand(1, *([8] * spatial_dims))
-        return ConvTransform(kernel_type="Scharr").get_parameters(image=image)["kernel"]
+        return ScharrConvTransform().get_parameters(image=image)["kernel"]
 
     def test_every_2d_scharr_kernel_sums_to_zero(self):
         for axis, kernel in enumerate(self._kernels(2)):
@@ -123,5 +123,5 @@ class TestScharrIsAGradientOperator(SmaugLabTestCase):
         for spatial_dims in (2, 3):
             with self.subTest(spatial_dims=spatial_dims):
                 image = torch.rand(1, *([8] * spatial_dims))
-                kernel = ConvTransform(kernel_type="Laplace").get_parameters(image=image)["kernel"]
+                kernel = LaplaceConvTransform().get_parameters(image=image)["kernel"]
                 self.assertAlmostEqual(float(kernel.sum()), 0.0, places=5)

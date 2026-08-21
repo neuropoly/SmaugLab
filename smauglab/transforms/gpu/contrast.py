@@ -1657,15 +1657,3 @@ class ZscoreNormalizationGPU(ImageOnlyTransform):
             input[:, c] = checked
 
         return input
-
-
-# --- temporary bridges for the hand-written pipelines ------------------------------
-#
-# The three `if` ladders in gpu/transforms.py, gpu/transforms_list.py and
-# cpu/transforms.py still read `kernel_type` and `func` out of the config and pass them
-# in, which is exactly the dispatch the leaf classes above exist to remove. They are
-# replaced by the registry-driven builder later in this series; until then these
-# aliases keep them working without a second rewrite. Do not use them in new code.
-RandomConvTransformGPU = _RandomConvBaseGPU
-RandomFunctionGPU = _RandomFunctionBaseGPU
-_RandomGammaWithInvertGPU = _RandomGammaBaseGPU
