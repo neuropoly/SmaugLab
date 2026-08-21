@@ -18,10 +18,16 @@ except ImportError:  # kornia >= 0.8.3 moved it and dropped kornia.utils.helpers
     # the kornia-compat matrix in tests.yml exercises, so it stays.
     from kornia.core.utils import _extract_device_dtype  # type: ignore[no-redef]
 
+from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform
 
 
 # Affine transform
+@register(
+    aug_id=AugId.AFFINE,
+    backend=Backend.GPU,
+    group=AugType.GEO,
+)
 class RandomAffineGPU(RigidAffineAugmentationBase3D):
     r"""Apply affine transformation 3D volumes (5D tensor).
 
@@ -200,6 +206,12 @@ class RandomAffineGPU(RigidAffineAugmentationBase3D):
 
 
 # Low resolution transform
+@register(
+    aug_id=AugId.LOW_RES,
+    backend=Backend.GPU,
+    group=AugType.GE,
+    force_sequential=True,
+)
 class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
     """
     Apply low resolution simulation to 3D volumes (5D tensor).
@@ -348,6 +360,11 @@ class ScaleGenerator3D(RandomGeneratorBase):
 
 
 # Acquisition transforms
+@register(
+    aug_id=AugId.ACQ,
+    backend=Backend.GPU,
+    group=AugType.GE,
+)
 class RandomAcqTransformGPU(ImageOnlyTransform):
     """
     Randomly lower acquisition along one axes only.
@@ -434,6 +451,11 @@ class RandomAcqTransformGPU(ImageOnlyTransform):
 
 
 # Flip transforms
+@register(
+    aug_id=AugId.FLIP,
+    backend=Backend.GPU,
+    group=AugType.GEO,
+)
 class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
     """
     Apply low resolution simulation to 3D volumes (5D tensor).
@@ -564,6 +586,11 @@ class FlipGenerator3D(RandomGeneratorBase):
 
 
 # Crop transform
+@register(
+    aug_id=AugId.CROP,
+    backend=Backend.GPU,
+    group=AugType.GEO,
+)
 class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
     """
     Apply low resolution simulation to 3D volumes (5D tensor).

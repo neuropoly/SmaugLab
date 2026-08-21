@@ -28,6 +28,7 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
+from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform
 from smauglab.transforms.synthseg.generator import SynthSegGenerator
 
@@ -82,6 +83,15 @@ def _filter_generator_kwargs(params: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in params.items() if k in _GENERATOR_KEYS}
 
 
+@register(
+    aug_id=AugId.SYNTHSEG,
+    backend=Backend.GPU,
+    group=AugType.TA,
+    forwards_to=SynthSegGenerator,
+    # Forced below to keep the synthesis intensity-only; a config setting any of
+    # these would be silently overridden, so they are rejected instead.
+    context_params=("apply_affine", "apply_nonlinear", "flipping", "output_shape"),
+)
 class RandomSynthSegGPU(ImageOnlyTransform):
     """Replace the image with a SynthSeg GMM synthesis of ``params['seg']``.
 
@@ -104,10 +114,11 @@ class RandomSynthSegGPU(ImageOnlyTransform):
         apply_to_channel: list[int] | None = None,
         same_on_batch: bool = False,
         p: float = 0.5,
+        p_batch: float = 1.0,
         keepdim: bool = True,
         **kwargs: Any,
     ) -> None:
-        super().__init__(p=p, same_on_batch=same_on_batch, keepdim=keepdim)
+        super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.apply_to_channel = apply_to_channel if apply_to_channel is not None else [0]
         gen_kwargs = _filter_generator_kwargs(kwargs)
         # Intensity-only: never deform/flip internally (geometry comes from the

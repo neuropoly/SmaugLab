@@ -2,6 +2,7 @@ import torch
 import torchio as tio
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
 
+from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.cpu.torchio_ops import TransformFactory, apply_enabled, select
 
 #: Artifact name -> the torchio transform that produces it, in application order.
@@ -17,6 +18,11 @@ ARTIFACTS: dict[str, TransformFactory] = {
 }
 
 
+@register(
+    aug_id=AugId.ARTIFACT,
+    backend=Backend.CPU,
+    group=AugType.TA,
+)
 class ArtifactTransform(BasicTransform):
     def __init__(self, motion=False, ghosting=False, spike=False, bias_field=False, blur=False, noise=False, swap=False, random_pick=False):
         """
