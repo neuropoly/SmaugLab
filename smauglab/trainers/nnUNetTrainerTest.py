@@ -76,6 +76,7 @@ class nnUNetTrainerTest(nnUNetTrainer):
                 ignore_label=ignore_label,
             )
         )
+
         return ComposeTransforms(transforms)
 
 
@@ -129,6 +130,9 @@ class nnUNetTrainerTestGPU(nnUNetTrainer):
         if do_dummy_2d_data_aug:
             transforms.append(Convert2DTo3DTransform())
 
+        # deep_supervision_scales=None: this trainer always runs GPU augmentations, so
+        # the mask is still being deformed after this point and train_step builds the
+        # multi-scale targets from the augmented mask instead.
         transforms.extend(
             nnunet_tail_transforms(
                 use_mask_for_norm=use_mask_for_norm,
@@ -139,6 +143,7 @@ class nnUNetTrainerTestGPU(nnUNetTrainer):
                 ignore_label=ignore_label,
             )
         )
+
         return ComposeTransforms(transforms)
 
     def train_step(self, batch: dict) -> dict:

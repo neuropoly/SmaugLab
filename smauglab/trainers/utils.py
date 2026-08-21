@@ -16,18 +16,14 @@ def nnunet_tail_transforms(
 ) -> list[Any]:
     """The nnU-Net transforms that follow SmaugLab's augmentations, in order.
 
-    Five `get_training_transforms` methods across two modules ended with a
-    character-identical copy of this -- intensity masking, the -1 label removal, the
-    two cascade transforms, region conversion and deep-supervision downsampling.
+    Every `get_training_transforms` in this package ended with a character-identical
+    copy of this -- three of them -- covering intensity masking, the -1 label removal,
+    the two cascade transforms, region conversion and deep-supervision downsampling.
 
-    `deep_supervision_scales=None` skips the downsampling, which is how the GPU
-    trainers had it: they carry the block commented out, because with GPU
-    augmentations the mask is still being deformed after this point and the
-    multi-scale targets have to be built from the augmented mask in `train_step`.
-
-    `get_validation_transforms` deliberately does not use this. Its cascade branch
-    adds only MoveSegAsOneHotToDataTransform, without the two RandomTransform
-    wrappers, so it is a different sequence rather than another copy of this one.
+    `deep_supervision_scales=None` skips the downsampling, which is how
+    `nnUNetTrainerDAExtGPU` defers it to `train_step`: with GPU augmentations the mask
+    is still being deformed after this point, so the multi-scale targets have to be
+    built from the augmented mask instead.
     """
     from batchgeneratorsv2.transforms.nnunet.random_binary_operator import ApplyRandomBinaryOperatorTransform
     from batchgeneratorsv2.transforms.nnunet.remove_connected_components import (

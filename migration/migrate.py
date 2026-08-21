@@ -389,6 +389,26 @@ def migrate(payload: dict, source: str = "<config>") -> tuple[dict, list[str]]:
             target["SpatialTransform"] = _migrate_block("SpatialTransform", spatial, Backend.CPU, source, legacy_key="SpatialTransform")
             notes.append("moved nnUNetSpatialTransform -> CPU.SpatialTransform")
 
+        if backend is Backend.CPU and "SpatialTransform" not in migrated and "SpatialTransform" not in out.get("CPU", {}):
+            # nnU-Net's own SpatialTransform used to be appended by the trainer with
+            # these values hardcoded, so no config named it. The trainer builds its CPU
+            # pipeline from the config now, so it has to be in the file or it silently
+            # stops running. Values are verbatim from get_training_transforms;
+            # patch_size and rotation stay out because nnU-Net supplies them at runtime
+            # (they are context_params on the registry entry).
+            migrated["SpatialTransform"] = {
+                "patch_center_dist_from_border": 0,
+                "random_crop": False,
+                "p_elastic_deform": 0,
+                "p_rotation": 0,
+                "p_scaling": 0,
+                "scaling": [0.7, 1.4],
+                "p_synchronize_scaling_across_axes": 1,
+                "bg_style_seg_sampling": False,
+                "mode_seg": "nearest",
+            }
+            notes.append("added CPU.SpatialTransform, which the trainer used to hardcode")
+
         if backend is Backend.CPU:
             axes = section.get("mirror_axes")
             if axes:
@@ -398,6 +418,11 @@ def migrate(payload: dict, source: str = "<config>") -> tuple[dict, list[str]]:
         choose = section.get("RandomChooseXTransforms")
         if isinstance(choose, dict):
             out.setdefault("pipeline", {})["random_choose"] = choose
+            # Which pipeline ran used to be the *trainer class*: a config carrying this
+            # block was only ever used with the list trainer. That choice is
+            # pipeline.mode now, so it has to be written down.
+            out["pipeline"].setdefault("mode", "random_order")
+            notes.append("moved RandomChooseXTransforms -> pipeline.random_choose, mode=random_order")
             notes.append("moved RandomChooseXTransforms -> pipeline.random_choose")
 
         if migrated:
