@@ -5,6 +5,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform
 from smauglab.transforms.kernels import gaussian_blur3d
 from smauglab.transforms.rng import shared_choice
@@ -89,6 +90,11 @@ def _normal_pdf(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch
 
 
 ## Redistribute segmentation values transform (GPU)
+@register(
+    aug_id=AugId.REDISTRIBUTE_SEG,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomRedistributeSegGPU(ImageOnlyTransform):
     """Redistribute image values using segmentation regions (GPU version).
 
@@ -258,6 +264,11 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
         return input
 
 
+@register(
+    aug_id=AugId.PALETTE,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomPaletteGPU(ImageOnlyTransform):
     """
     SmaugLab GPU augmentation implementing PALETTE synthesis.

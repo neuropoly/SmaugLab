@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import os
 import unittest
 from pathlib import Path
 
@@ -76,13 +77,24 @@ def build_kwargs(cls, signature) -> dict:
 
 
 def skip_reason(cls) -> str | None:
-    """Some transforms depend on assets that do not exist on a fresh checkout."""
-    if cls.__name__ == "RandomDomainTransferGPU":
-        from smauglab.transforms.gpu.domain_transfer import DEFAULT_BANK_PATH
+    """Some transforms depend on assets that do not exist on a fresh checkout.
 
-        if not Path(DEFAULT_BANK_PATH).is_file():
-            return f"domain transfer bank not available at {DEFAULT_BANK_PATH}"
-    return None
+    Which ones is registry data now (`external_asset` names the environment variable
+    that points at the artefact), rather than a hardcoded class name here -- so a
+    second such transform is covered the moment it is registered.
+    """
+    from smauglab import registry
+
+    try:
+        entry = registry.get(cls.__name__)
+    except registry.UnknownAugmentationError:
+        return None
+    if not entry.external_asset:
+        return None
+    location = os.environ.get(entry.external_asset)
+    if location and Path(location).is_file():
+        return None
+    return f"{cls.__name__} needs ${entry.external_asset} to point at its data"
 
 
 class TestTransformDiscovery(unittest.TestCase):

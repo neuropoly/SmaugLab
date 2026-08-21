@@ -4,6 +4,7 @@ import torch
 import torchio as tio
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform, ImageOnlyTransform
 
+from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.cpu.torchio_ops import TransformFactory, apply_enabled, select
 
 #: Transform name -> the torchio transform it runs, in application order.
@@ -18,6 +19,11 @@ SPATIAL_TRANSFORMS: dict[str, TransformFactory] = {
 }
 
 
+@register(
+    aug_id=AugId.SPATIAL_CUSTOM,
+    backend=Backend.CPU,
+    group=AugType.GEO,
+)
 class SpatialCustomTransform(BasicTransform):
     def __init__(self, flip=False, affine=False, elastic=False, anisotropy=False, random_pick=False):
         """
@@ -48,6 +54,11 @@ class SpatialCustomTransform(BasicTransform):
 ### Shape transform
 
 
+@register(
+    aug_id=AugId.SHAPE,
+    backend=Backend.CPU,
+    group=AugType.GE,
+)
 class ShapeTransform(ImageOnlyTransform):
     def __init__(self, shape_min=1, ignore_axes=()):
         """
