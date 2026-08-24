@@ -1,5 +1,4 @@
 import math
-import random
 from collections.abc import Callable
 from typing import Any, Union
 
@@ -9,6 +8,7 @@ from torch import Tensor
 from torch.nn import functional as F
 
 from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.rng import shared_choice
 
 
 def _choose_region_mode(p_in: float, p_out: float, seg_mask: torch.Tensor | None) -> str:  # noqa: ARG001 -- seg_mask kept for signature symmetry with _apply_region_mode
@@ -216,7 +216,7 @@ class RandomConvTransformGPU(ImageOnlyTransform):
             kernel = get_gaussian_kernel3d(kernel_size, sigma, torch.float32, device)
         elif self.kernel_type == "RandConv":
             # choose random odd kernel size e.g. [1,3,5,7]
-            k = int(random.choice(self.kernel_sizes))  # define kernel_sizes in __init__
+            k = int(shared_choice(self.kernel_sizes))  # define kernel_sizes in __init__
 
             std = 1.0 / math.sqrt(k * k)
             kernel = torch.randn((k, k, k), device=device) * std  # for 3D
