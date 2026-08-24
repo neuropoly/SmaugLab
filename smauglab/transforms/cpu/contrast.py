@@ -30,7 +30,10 @@ class ConvTransform(ImageOnlyTransform):
             if self.kernel_type == "Laplace":
                 kernel = torch.tensor([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]], dtype=torch.float32)
             elif self.kernel_type == "Scharr":
-                kernel_x = torch.tensor([[-3, 0, 3], [-10, 0, -10], [-3, 0, 3]], dtype=torch.float32)
+                # Middle row was [-10, 0, -10], summing the whole kernel to -20 rather
+                # than 0: not a gradient operator at all. The sibling kernel_y below
+                # has always been right, which is what makes this a typo.
+                kernel_x = torch.tensor([[-3, 0, 3], [-10, 0, 10], [-3, 0, 3]], dtype=torch.float32)
                 kernel_y = torch.tensor([[-3, -10, -3], [0, 0, 0], [3, 10, 3]], dtype=torch.float32)
                 kernel = [kernel_x, kernel_y]
         elif spatial_dims == 3:
