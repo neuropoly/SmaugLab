@@ -5,6 +5,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.kernels import gaussian_blur3d
 from smauglab.transforms.rng import shared_choice
 
 # ── PALETTE AUG helpers ──────────────────────────────────────────────────
@@ -26,16 +27,16 @@ def _kmeans_1d(values: torch.Tensor, C: int, n_iter: int = 10) -> torch.Tensor:
 
 
 def _gaussian_blur_3d(x: torch.Tensor, sigma: float) -> torch.Tensor:
-    """Separable 3D Gaussian blur. x: (B, 1, D, H, W)."""
-    k_r = max(1, int(3.0 * sigma + 0.5))
-    k1d = torch.arange(-k_r, k_r + 1, dtype=x.dtype, device=x.device)
-    k1d = torch.exp(-0.5 * (k1d / sigma) ** 2)
-    k1d = k1d / k1d.sum()
-    pad = len(k1d) // 2
-    y = F.conv3d(x, k1d.view(1, 1, -1, 1, 1), padding=(pad, 0, 0))
-    y = F.conv3d(y, k1d.view(1, 1, 1, -1, 1), padding=(0, pad, 0))
-    y = F.conv3d(y, k1d.view(1, 1, 1, 1, -1), padding=(0, 0, pad))
-    return y.clamp(0, 1)
+    """Separable 3D Gaussian blur of a (B, 1, D, H, W) volume, clamped to [0, 1].
+
+    Delegates to the shared implementation, which pads with `reflect`. This copy used
+    conv3d's implicit zero padding, which pulled the volume border towards 0 -- the
+    clamp below hid the top end of that but not the darkening. It also took its radius
+    from `round(3*sigma)` rather than `ceil`, so kernels can be one tap wider now.
+    """
+    if sigma <= 0:
+        return x
+    return gaussian_blur3d(x, float(sigma)).clamp(0, 1)
 
 
 def _voronoi_region_ids(
