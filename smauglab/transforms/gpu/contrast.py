@@ -1,6 +1,6 @@
 import math
 from collections.abc import Callable
-from typing import Any, Union
+from typing import Any, Protocol, Union
 
 import torch
 import torchvision.transforms._functional_tensor as F_t
@@ -53,8 +53,26 @@ def _restore_stats(x: torch.Tensor, stats: tuple[torch.Tensor, torch.Tensor]) ->
     return (x - new_mean) / (new_std + eps) * orig_stds.view(shape) + orig_means.view(shape)
 
 
+class _RegionSelecting(Protocol):
+    """What `_select_and_check` needs off the transform it is handed.
+
+    A Protocol rather than `ImageOnlyTransform`, because these are plain attributes on
+    an nn.Module: reading them through the base class resolves via `Module.__getattr__`,
+    which is typed as returning `Tensor | Module`. Naming them here is both what makes
+    that type-check and a statement of the helper's actual requirement.
+
+    All three are attributes rather than constructor parameters as far as this
+    Protocol is concerned; the registry derives a transform's config surface from its
+    __init__ signature, so declaring one here does not make it settable in a config.
+    """
+
+    in_seg: float
+    out_seg: float
+    mix_in_out: bool
+
+
 def _select_and_check(
-    transform: ImageOnlyTransform,
+    transform: _RegionSelecting,
     orig: torch.Tensor,
     x: torch.Tensor,
     seg_mask: torch.Tensor | None,
@@ -1184,6 +1202,11 @@ class ZscoreNormalizationGPU(ImageOnlyTransform):
         self.apply_to_channel = apply_to_channel
         self.in_seg = in_seg
         self.out_seg = out_seg
+        # Not a constructor parameter: this transform has no mix_in_out knob, and the
+        # registry derives a config's accepted keys from __init__, so adding one there
+        # would invent a setting. Set here so the region-selection helper's contract
+        # holds for every transform that uses it.
+        self.mix_in_out = False
 
     @torch.no_grad()
     def apply_transform(
