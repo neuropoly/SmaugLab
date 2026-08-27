@@ -244,3 +244,70 @@ class TestDilationRankFollowsTheData(SmaugLabTestCase):
         out, _ = aug_redistribute_seg(image.clone(), seg, in_seg=1.0)
 
         self.assertEqual(tuple(out.shape), tuple(image.shape))
+
+
+class _Stub:
+    """Stands in for a transform: _select_and_check only reads these three attributes."""
+
+    def __init__(self, in_seg: float = 0.0, out_seg: float = 0.0, mix_in_out: bool = False):
+        self.in_seg = in_seg
+        self.out_seg = out_seg
+        self.mix_in_out = mix_in_out
+
+
+class TestExtractedTailHelpers(SmaugLabTestCase):
+    """The three helpers that replaced the tail repeated in nine apply_transform methods."""
+
+    def test_channel_stats_are_per_sample(self):
+        from smauglab.transforms.gpu.contrast import _channel_stats
+
+        x = torch.stack([torch.full((4, 4, 4), 2.0), torch.full((4, 4, 4), 9.0)])
+
+        means, stds = _channel_stats(x)
+
+        self.assertEqual(tuple(means.shape), (2,))
+        self.assertAlmostEqual(float(means[0]), 2.0, places=5)
+        self.assertAlmostEqual(float(means[1]), 9.0, places=5)
+        self.assertTrue(bool((stds == 0).all()))
+
+    def test_restore_stats_puts_mean_and_std_back(self):
+        from smauglab.transforms.gpu.contrast import _channel_stats, _restore_stats
+
+        x = torch.rand(3, 5, 5, 5) * 4.0 + 1.0
+        stats = _channel_stats(x)
+
+        restored = _restore_stats(x * 100.0 - 7.0, stats)
+
+        means, stds = _channel_stats(restored)
+        for b in range(3):
+            with self.subTest(sample=b):
+                self.assertAlmostEqual(float(means[b]), float(stats[0][b]), places=4)
+                self.assertAlmostEqual(float(stds[b]), float(stats[1][b]), places=4)
+
+    def test_select_and_check_rejects_a_non_finite_result(self):
+        from smauglab.transforms.gpu.contrast import _select_and_check
+
+        orig = torch.zeros(1, 4, 4, 4)
+        broken = torch.full((1, 4, 4, 4), float("nan"))
+
+        self.assertIsNone(_select_and_check(_Stub(), orig, broken, None))
+
+    def test_select_and_check_passes_a_finite_result_through(self):
+        from smauglab.transforms.gpu.contrast import _select_and_check
+
+        orig = torch.zeros(1, 4, 4, 4)
+        fine = torch.ones(1, 4, 4, 4)
+
+        self.assertTrue(torch.equal(_select_and_check(_Stub(), orig, fine, None), fine))
+
+    def test_select_and_check_applies_the_region_mode(self):
+        from smauglab.transforms.gpu.contrast import _select_and_check
+
+        orig = torch.zeros(1, 4, 4, 4)
+        transformed = torch.ones(1, 4, 4, 4)
+        mask = torch.zeros(1, 1, 4, 4, 4)
+        mask[0, 0, :2, :2, :2] = 1.0
+
+        out = _select_and_check(_Stub(in_seg=1.0), orig, transformed, mask)
+
+        self.assertEqual(int(out.sum()), 8)
