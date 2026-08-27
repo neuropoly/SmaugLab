@@ -10,9 +10,9 @@ import numpy as np
 import torch
 from tqdm.contrib.concurrent import process_map
 
+from _common import fetch_image_config
 from smauglab.transforms.cpu.transforms import AugTransforms
 from smauglab.utils.image import Image, resample_nib, zeros_like
-from smauglab.utils.utils import fetch_image_config
 
 warnings.filterwarnings("ignore")
 
