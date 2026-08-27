@@ -17,8 +17,10 @@ from pathlib import Path
 from smauglab import cli
 
 REPO = Path(__file__).resolve().parent.parent
-DEFAULT_GPU = REPO / "smauglab" / "configs" / "transform_params_gpu_default01-23.json"
-LEGACY = REPO / "unit_tests" / "fixtures" / "legacy_configs" / "configs" / "transform_params_gpu_default01-23.json"
+# A *tracked* config. Most of smauglab/configs is gitignored (per-experiment
+# sweeps), so naming one of those makes the test pass locally and fail in CI.
+DEFAULT_GPU = REPO / "smauglab" / "configs" / "transform_params_gpu.json"
+LEGACY = REPO / "unit_tests" / "fixtures" / "legacy_configs" / "configs" / "transform_params_gpu.json"
 
 
 def run(*argv: str) -> tuple[int, str]:
