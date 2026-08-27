@@ -18,7 +18,7 @@ from batchgeneratorsv2.transforms.utils.pseudo2d import Convert2DTo3DTransform, 
 from batchgeneratorsv2.transforms.utils.random import RandomTransform
 
 from smauglab.transforms.cpu.artifact import ArtifactTransform
-from smauglab.transforms.cpu.contrast import ConvTransform, FunctionTransform, HistogramEqualTransform
+from smauglab.transforms.cpu.contrast import FunctionTransform, HistogramEqualTransform, _ConvBaseTransform
 from smauglab.transforms.cpu.fromSeg import RedistributeTransform
 from smauglab.transforms.cpu.spatial import ShapeTransform, SpatialCustomTransform
 
@@ -63,11 +63,11 @@ class AugTransforms(ComposeTransforms):
         transforms = []
 
         # Scharr filter
-        conv_params = transform_params.get("ConvTransform")
+        conv_params = transform_params.get("_ConvBaseTransform")
         if conv_params is not None:
             transforms.append(
                 RandomTransform(
-                    ConvTransform(
+                    _ConvBaseTransform(
                         kernel_type=conv_params.get("kernel_type", "Scharr"),
                         absolute=conv_params.get("absolute", True),
                         retain_stats=transform_params.get("retain_stats", False),
@@ -317,7 +317,7 @@ class AugTransformsTest(ComposeTransforms):
         # Scharr filter
         transforms.append(
             RandomTransform(
-                ConvTransform(
+                _ConvBaseTransform(
                     kernel_type="Scharr",
                     absolute=True,
                 ),

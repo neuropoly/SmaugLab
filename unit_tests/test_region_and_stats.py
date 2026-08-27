@@ -18,9 +18,9 @@ import torch
 
 from smauglab.transforms.gpu.base import AugmentationSequentialCustom
 from smauglab.transforms.gpu.contrast import (
-    RandomConvTransformGPU,
-    RandomFunctionGPU,
     RandomHistogramEqualizationGPU,
+    RandomScharrGPU,
+    RandomSqrtGPU,
     _apply_region_mode,
     _foreground,
 )
@@ -123,7 +123,7 @@ class TestRegionModeReachesTheRealTransforms(SmaugLabTestCase):
         # Driven through the container, as AugTransformsGPU does: that is what routes
         # the mask into params["seg"], which is where _apply_region_mode reads it.
         pipeline = AugmentationSequentialCustom(
-            RandomConvTransformGPU(kernel_type="Scharr", p=1.0, in_seg=1.0, out_seg=0.0, mix_prob=0.0),
+            RandomScharrGPU(p=1.0, in_seg=1.0, out_seg=0.0, mix_prob=0.0),
             data_keys=["input", "mask"],
             same_on_batch=True,
         )
@@ -145,7 +145,7 @@ class TestFunctionTransformIsPerSample(SmaugLabTestCase):
 
     def _run(self, volume: torch.Tensor) -> torch.Tensor:
         torch.manual_seed(0)
-        transform = RandomFunctionGPU(func=torch.sqrt, p=1.0)
+        transform = RandomSqrtGPU(p=1.0)
         return transform.apply_transform(volume.clone(), {}, {}, transform=None)
 
     def test_a_volume_is_augmented_the_same_alone_and_in_a_batch(self):

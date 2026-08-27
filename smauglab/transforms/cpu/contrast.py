@@ -2,14 +2,44 @@ from typing import Union
 
 import torch
 import torch.nn.functional as F
+from batchgeneratorsv2.helpers.scalar_type import RandomScalar
 from batchgeneratorsv2.transforms.base.basic_transform import ImageOnlyTransform
+from batchgeneratorsv2.transforms.intensity.gamma import GammaTransform
 
 from smauglab.transforms.kernels import laplace_kernel, scharr_kernels
 
 
-class ConvTransform(ImageOnlyTransform):
+class InvertedGammaTransform(GammaTransform):
+    """Gamma adjustment applied to the inverted image.
+
+    batchgeneratorsv2 expresses this as `GammaTransform(p_invert_image=1)`, which the
+    old config spelled as a `GammaTransform_invert` key -- a key with no class behind
+    it. A real class keeps the config key 1:1 with a class on this backend too, and
+    means the inversion cannot be requested two different ways.
+    """
+
+    def __init__(
+        self,
+        gamma: RandomScalar = (0.7, 1.5),
+        synchronize_channels: bool = False,
+        p_per_channel: float = 1,
+        p_retain_stats: float = 1,
+    ):
+        super().__init__(
+            gamma=gamma,
+            p_invert_image=1,
+            synchronize_channels=synchronize_channels,
+            p_per_channel=p_per_channel,
+            p_retain_stats=p_retain_stats,
+        )
+
+
+class _ConvBaseTransform(ImageOnlyTransform):
     """
     Applies a Laplace/Scharr filter to the image to highlight edges.
+
+    Shared implementation. Configs address the per-kernel leaves below, which mirror
+    the GPU split so both backends of one augmentation share an `aug_id`.
 
     Based on https://github.com/spinalcordtoolbox/disc-labeling-playground/blob/main/src/ply/models/transform.py
     """
@@ -28,13 +58,13 @@ class ConvTransform(ImageOnlyTransform):
         # _apply_to_image dispatches on kernel_type to tell the two apart.
         kernel: Union[torch.Tensor, list[torch.Tensor]]
         spatial_dims = len(data_dict["image"].shape) - 1
-        if spatial_dims in (2, 3):
-            if self.kernel_type == "Laplace":
-                kernel = laplace_kernel(spatial_dims)
-            elif self.kernel_type == "Scharr":
-                kernel = scharr_kernels(spatial_dims)
-        else:
+        if spatial_dims not in (2, 3):
             raise ValueError(f"{self.__class__} can only handle 2D or 3D images.")
+        # Shared with the GPU backend. These tables used to be written out here and
+        # again in gpu/contrast.py, which is how the 2-D Scharr x-kernel came to have
+        # [-10, 0, -10] as its middle row on this side only -- summing to -20, so not
+        # a gradient operator at all. See smauglab/transforms/kernels.py.
+        kernel = laplace_kernel(spatial_dims) if self.kernel_type == "Laplace" else scharr_kernels(spatial_dims)
 
         return {"kernel_type": self.kernel_type, "kernel": kernel, "absolute": self.absolute, "retain_stats": self.retain_stats}
 
@@ -63,6 +93,24 @@ class ConvTransform(ImageOnlyTransform):
                 img[c] = (img[c] - mean) / torch.clamp(std, min=1e-7)
                 img[c] = img[c] * orig_std + orig_mean  # return to original distribution
         return img
+
+
+# One class per kernel, mirroring the GPU split so a config key names a class on
+# either backend and `kernel_type` disappears from the config surface.
+
+
+class LaplaceConvTransform(_ConvBaseTransform):
+    """Laplacian edge enhancement."""
+
+    def __init__(self, absolute: bool = False, retain_stats: bool = False):
+        super().__init__(kernel_type="Laplace", absolute=absolute, retain_stats=retain_stats)
+
+
+class ScharrConvTransform(_ConvBaseTransform):
+    """Scharr gradient-magnitude edge filter."""
+
+    def __init__(self, absolute: bool = True, retain_stats: bool = False):
+        super().__init__(kernel_type="Scharr", absolute=absolute, retain_stats=retain_stats)
 
 
 class HistogramEqualTransform(ImageOnlyTransform):
@@ -112,7 +160,7 @@ class HistogramEqualTransform(ImageOnlyTransform):
         return img
 
 
-class FunctionTransform(ImageOnlyTransform):
+class _FunctionBaseTransform(ImageOnlyTransform):
     """
     Apply different functions to image pixels
 
@@ -146,6 +194,60 @@ class FunctionTransform(ImageOnlyTransform):
                 img[c] = (img[c] - mean) / torch.clamp(std, min=1e-7)
                 img[c] = img[c] * orig_std + orig_mean
         return img
+
+
+# One class per elementwise function; `function` is not expressible in JSON, so the
+# old config had a single key that the builder fanned out over a hardcoded lambda
+# list. Spelled out longhand rather than as torch.log1p / torch.sigmoid, which
+# differ in the last ulp and would move the seeded determinism hashes.
+
+
+def _log1p(x: torch.Tensor) -> torch.Tensor:
+    return torch.log(1 + x)
+
+
+def _sigmoid(x: torch.Tensor) -> torch.Tensor:
+    return 1 / (1 + torch.exp(-x))
+
+
+class _NamedFunctionTransform(_FunctionBaseTransform):
+    """Shared constructor for the fixed-function leaves. Not registered itself."""
+
+    #: Set by each leaf.
+    function_impl: staticmethod
+
+    def __init__(self, retain_stats: bool = False):
+        super().__init__(function=type(self).function_impl, retain_stats=retain_stats)
+
+
+class Log1pTransform(_NamedFunctionTransform):
+    """Apply log(1 + x)."""
+
+    function_impl = staticmethod(_log1p)
+
+
+class SqrtTransform(_NamedFunctionTransform):
+    """Apply sqrt(x)."""
+
+    function_impl = staticmethod(torch.sqrt)
+
+
+class SinTransform(_NamedFunctionTransform):
+    """Apply sin(x)."""
+
+    function_impl = staticmethod(torch.sin)
+
+
+class ExpTransform(_NamedFunctionTransform):
+    """Apply exp(x)."""
+
+    function_impl = staticmethod(torch.exp)
+
+
+class SigmoidTransform(_NamedFunctionTransform):
+    """Apply the logistic sigmoid 1 / (1 + exp(-x))."""
+
+    function_impl = staticmethod(_sigmoid)
 
 
 def apply_filter(x: torch.Tensor, kernel: torch.Tensor, **kwargs) -> torch.Tensor:
@@ -213,3 +315,9 @@ class ZscoreNormalization(ImageOnlyTransform):
             std = torch.std(img[c])
             img[c] = (img[c] - mean) / torch.clamp(std, min=1e-8)
         return img
+
+
+# Temporary bridge for the CPU `if` ladder, which passes kernel_type from the config.
+# Removed with that ladder; see the note in gpu/contrast.py.
+ConvTransform = _ConvBaseTransform
+FunctionTransform = _FunctionBaseTransform

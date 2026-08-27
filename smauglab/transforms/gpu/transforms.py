@@ -14,17 +14,17 @@ from smauglab.transforms.gpu.contrast import (
     RandomContrastGPU,
     RandomConvTransformGPU,
     RandomFunctionGPU,
-    RandomGammaGPU,
     RandomGaussianNoiseGPU,
     RandomHistogramEqualizationGPU,
     RandomInverseGPU,
     ZscoreNormalizationGPU,
+    _RandomGammaWithInvertGPU,
 )
 from smauglab.transforms.gpu.domain_transfer import RandomDomainTransferGPU
-from smauglab.transforms.gpu.fromSeg import RandomPALETTEGPU, RandomRedistributeSegGPU
+from smauglab.transforms.gpu.fromSeg import RandomPaletteGPU, RandomRedistributeSegGPU
 from smauglab.transforms.gpu.spatial import (
     RandomAcqTransformGPU,
-    RandomAffine3DCustom,
+    RandomAffineGPU,
     RandomCropTransformGPU,
     RandomFlipTransformGPU,
     RandomLowResTransformGPU,
@@ -75,7 +75,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         affine_params = self.transform_params.get("AffineTransform")
         if affine_params is not None:
             transforms.append(
-                RandomAffine3DCustom(
+                RandomAffineGPU(
                     degrees=affine_params.get("degrees", 10),
                     translate=affine_params.get("translate", [0.1, 0.1, 0.1]),
                     scale=affine_params.get("scale", [0.9, 1.1]),
@@ -105,7 +105,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         palette_params = self.transform_params.get("RandomPALETTETransform")
         if palette_params is not None:
             transforms.append(
-                RandomPALETTEGPU(
+                RandomPaletteGPU(
                     p=palette_params.get("probability", 1.0),
                     c_choices=palette_params.get("c_choices", [2, 3, 4, 5, 6]),
                     s_choices=palette_params.get("s_choices", [2, 3, 4, 5, 6, 7, 8, 9, 10]),
@@ -298,7 +298,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         gamma_params = self.transform_params.get("GammaTransform")
         if gamma_params is not None:
             transforms.append(
-                RandomGammaGPU(
+                _RandomGammaWithInvertGPU(
                     gamma_range=gamma_params.get("gamma_range", [0.7, 1.5]),
                     p=gamma_params.get("probability", 0),
                     invert_image=False,
@@ -312,7 +312,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
         inv_gamma_params = self.transform_params.get("InvGammaTransform")
         if inv_gamma_params is not None:
             transforms.append(
-                RandomGammaGPU(
+                _RandomGammaWithInvertGPU(
                     gamma_range=inv_gamma_params.get("gamma_range", [0.7, 1.5]),
                     p=inv_gamma_params.get("probability", 0),
                     in_seg=inv_gamma_params.get("in_seg", 0.0),
@@ -376,7 +376,6 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                 RandomAcqTransformGPU(
                     p=acq_params.get("probability", 0),
                     scale=acq_params.get("scale", [0.3, 1.0]),
-                    one_dim=True,
                     same_on_batch=acq_params.get("same_on_batch", False),
                 )
             )

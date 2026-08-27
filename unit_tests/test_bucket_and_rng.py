@@ -12,7 +12,7 @@
 
 import torch
 
-from smauglab.transforms.gpu.contrast import RandomConvTransformGPU
+from smauglab.transforms.gpu.contrast import RandomLaplaceGPU, RandomRandConvGPU
 from smauglab.transforms.gpu.spatial import RandomLowResTransformGPU
 from smauglab.transforms.gpu.transforms_list import RandomChooseXTransformsGPU
 from smauglab.transforms.rng import shared_choice, shared_rand
@@ -76,7 +76,7 @@ class TestBucketDoesNotMutateItsInput(SmaugLabTestCase):
         """Cloning must not turn the bucket into a no-op."""
         torch.manual_seed(0)
         bucket = RandomChooseXTransformsGPU(
-            transforms_list=[RandomConvTransformGPU(kernel_type="Laplace", p=1.0)],
+            transforms_list=[RandomLaplaceGPU(p=1.0)],
             num_transforms=1,
             p=1.0,
             same_on_batch=False,
@@ -119,10 +119,10 @@ class TestTorchSeedReachesEveryDraw(SmaugLabTestCase):
         outputs = []
         for _ in range(2):
             torch.manual_seed(1234)
-            transform = RandomConvTransformGPU(kernel_type="RandConv", p=1.0, kernel_sizes=[1, 3, 5, 7])
+            transform = RandomRandConvGPU(p=1.0, kernel_sizes=[1, 3, 5, 7])
             outputs.append(transform.apply_transform(self.tiny_volume(), {}, {}, transform=None).clone())
 
-        self.assertTrue(torch.equal(outputs[0], outputs[1]), "RandomConvTransformGPU drew its kernel size from an unseeded generator")
+        self.assertTrue(torch.equal(outputs[0], outputs[1]), "RandomRandConvGPU drew its kernel size from an unseeded generator")
 
     def test_shared_choice_covers_the_whole_sequence(self):
         torch.manual_seed(0)

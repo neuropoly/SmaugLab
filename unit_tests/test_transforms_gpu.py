@@ -39,6 +39,10 @@ def discover_transforms():
         for name, obj in vars(module).items():
             if not inspect.isclass(obj) or obj.__module__ != module_name:
                 continue
+            if name.startswith("_"):
+                # Shared base classes (_RandomConvBaseGPU, _RandomNamedFunctionGPU, ...).
+                # They are not augmentations; their concrete leaves are discovered instead.
+                continue
             if not issubclass(obj, torch.nn.Module) or name in NOT_A_TRANSFORM:
                 continue
             signature = inspect.signature(obj.__init__)

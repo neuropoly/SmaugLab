@@ -14,14 +14,14 @@ from smauglab.transforms.gpu.contrast import (
     RandomContrastGPU,
     RandomConvTransformGPU,
     RandomFunctionGPU,
-    RandomGammaGPU,
     RandomGaussianNoiseGPU,
     RandomHistogramEqualizationGPU,
     RandomInverseGPU,
     ZscoreNormalizationGPU,
+    _RandomGammaWithInvertGPU,
 )
 from smauglab.transforms.gpu.fromSeg import RandomRedistributeSegGPU
-from smauglab.transforms.gpu.spatial import RandomAcqTransformGPU, RandomAffine3DCustom, RandomFlipTransformGPU, RandomLowResTransformGPU
+from smauglab.transforms.gpu.spatial import RandomAcqTransformGPU, RandomAffineGPU, RandomFlipTransformGPU, RandomLowResTransformGPU
 
 
 class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
@@ -67,7 +67,7 @@ class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
         affine_params = self.transform_params.get("AffineTransform")
         if affine_params is not None:
             transforms.append(
-                RandomAffine3DCustom(
+                RandomAffineGPU(
                     degrees=affine_params.get("degrees", 10),
                     translate=affine_params.get("translate", [0.1, 0.1, 0.1]),
                     scale=affine_params.get("scale", [0.9, 1.1]),
@@ -263,7 +263,7 @@ class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
         gamma_params = self.transform_params.get("GammaTransform")
         if gamma_params is not None:
             ge_transforms.append(
-                RandomGammaGPU(
+                _RandomGammaWithInvertGPU(
                     gamma_range=gamma_params.get("gamma_range", [0.7, 1.5]),
                     p=gamma_params.get("probability", 0),
                     invert_image=False,
@@ -277,7 +277,7 @@ class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
         inv_gamma_params = self.transform_params.get("InvGammaTransform")
         if inv_gamma_params is not None:
             ge_transforms.append(
-                RandomGammaGPU(
+                _RandomGammaWithInvertGPU(
                     gamma_range=inv_gamma_params.get("gamma_range", [0.7, 1.5]),
                     p=inv_gamma_params.get("probability", 0),
                     in_seg=inv_gamma_params.get("in_seg", 0.0),
@@ -309,7 +309,6 @@ class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
                 RandomLowResTransformGPU(
                     p=lowres_params.get("probability", 0),
                     scale=lowres_params.get("scale", [0.3, 1.0]),
-                    crop=lowres_params.get("crop", [1.0, 1.0]),
                     same_on_batch=lowres_params.get("same_on_batch", False),
                 )
             )
@@ -320,8 +319,6 @@ class AugTransformsGPURandomOrder(AugmentationSequentialCustom):
                 RandomAcqTransformGPU(
                     p=acq_params.get("probability", 0),
                     scale=acq_params.get("scale", [0.3, 1.0]),
-                    crop=acq_params.get("crop", [1.0, 1.0]),
-                    one_dim=True,
                     same_on_batch=acq_params.get("same_on_batch", False),
                 )
             )
@@ -395,7 +392,7 @@ class AugTransformsGPURandomOrderTA(AugmentationSequentialCustom):
         affine_params = self.transform_params.get("AffineTransform")
         if affine_params is not None:
             transforms.append(
-                RandomAffine3DCustom(
+                RandomAffineGPU(
                     degrees=affine_params.get("degrees", 10),
                     translate=affine_params.get("translate", [0.1, 0.1, 0.1]),
                     scale=affine_params.get("scale", [0.9, 1.1]),
@@ -600,7 +597,7 @@ class AugTransformsGPURandomOrderTA(AugmentationSequentialCustom):
         gamma_params = self.transform_params.get("GammaTransform")
         if gamma_params is not None:
             transforms.append(
-                RandomGammaGPU(
+                _RandomGammaWithInvertGPU(
                     gamma_range=gamma_params.get("gamma_range", [0.7, 1.5]),
                     p=gamma_params.get("probability", 0),
                     invert_image=False,
@@ -614,7 +611,7 @@ class AugTransformsGPURandomOrderTA(AugmentationSequentialCustom):
         inv_gamma_params = self.transform_params.get("InvGammaTransform")
         if inv_gamma_params is not None:
             transforms.append(
-                RandomGammaGPU(
+                _RandomGammaWithInvertGPU(
                     gamma_range=inv_gamma_params.get("gamma_range", [0.7, 1.5]),
                     p=inv_gamma_params.get("probability", 0),
                     in_seg=inv_gamma_params.get("in_seg", 0.0),
@@ -646,7 +643,6 @@ class AugTransformsGPURandomOrderTA(AugmentationSequentialCustom):
                 RandomLowResTransformGPU(
                     p=lowres_params.get("probability", 0),
                     scale=lowres_params.get("scale", [0.3, 1.0]),
-                    crop=lowres_params.get("crop", [1.0, 1.0]),
                     same_on_batch=lowres_params.get("same_on_batch", False),
                 )
             )
@@ -657,8 +653,6 @@ class AugTransformsGPURandomOrderTA(AugmentationSequentialCustom):
                 RandomAcqTransformGPU(
                     p=acq_params.get("probability", 0),
                     scale=acq_params.get("scale", [0.3, 1.0]),
-                    crop=acq_params.get("crop", [1.0, 1.0]),
-                    one_dim=True,
                     same_on_batch=acq_params.get("same_on_batch", False),
                 )
             )
