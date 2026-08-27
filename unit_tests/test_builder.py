@@ -34,6 +34,19 @@ from smauglab.transforms.build import build_gpu_pipeline, build_transforms
 from unit_tests.helpers import SmaugLabTestCase
 
 FIXTURE = Path(__file__).parent / "fixtures" / "legacy_effective_kwargs.json"
+LEGACY_CONFIGS = Path(__file__).parent / "fixtures" / "legacy_configs" / "configs"
+
+
+def _migrator():
+    """Load migration/migrate.py, which is a repo script rather than a package module."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parent.parent / "migration" / "migrate.py"
+    spec = importlib.util.spec_from_file_location("smauglab_migrate", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 #: kernel_type value -> the leaf class that replaced it.
 KERNEL_LEAF = {
@@ -161,19 +174,30 @@ class TestBuilderMatchesTheOldLadders(SmaugLabTestCase):
     def setUp(self):
         super().setUp()
         self.legacy = json.loads(FIXTURE.read_text())
+        self.migrate = _migrator().migrate
 
     def test_the_fixture_covers_the_shipped_configs(self):
         configs = {key.split("|")[0] for key in self.legacy}
         self.assertGreaterEqual(len(configs), 20, "the fixture should cover most shipped configs")
 
+    def test_every_fixture_config_has_a_legacy_source(self):
+        """Nothing may be skipped for a missing file: that is what hid 22 of these."""
+        for key in self.legacy:
+            config_name = key.split("|")[0]
+            with self.subTest(config=config_name):
+                self.assertTrue((LEGACY_CONFIGS / config_name).is_file(), f"{config_name} is not in the legacy fixtures")
+
     def test_every_recorded_pipeline_builds_the_same_transforms(self):
         for key, recorded in self.legacy.items():
             config_name, mode = key.split("|")
             with self.subTest(config=config_name, mode=mode):
-                path = Path("smauglab/configs") / config_name
-                if not path.is_file():
-                    self.skipTest(f"{config_name} is not shipped")
-                config = SmaugConfig.from_path(path)
+                # Migrated from the tracked legacy fixture rather than read out of
+                # smauglab/configs: only five of those are tracked (the repo-wide
+                # *.json in .gitignore keeps per-experiment configs out), so reading
+                # them there silently skipped 22 of the 27 pipelines in CI.
+                legacy = json.loads((LEGACY_CONFIGS / config_name).read_text())
+                migrated, _ = self.migrate(legacy, source=config_name)
+                config = SmaugConfig(migrated, source=config_name)
                 with record_constructions() as built:
                     build_gpu_pipeline(
                         config.section(Backend.GPU),
