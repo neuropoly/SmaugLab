@@ -17,6 +17,7 @@ from __future__ import annotations
 import gc
 import random
 from collections.abc import Callable, Mapping
+from typing import cast
 
 import torch
 import torchio as tio
@@ -24,6 +25,17 @@ import torchio as tio
 #: A no-argument factory, so each call builds a freshly seeded torchio transform
 #: rather than reusing one instance's sampling state across the run.
 TransformFactory = Callable[[], tio.Transform]
+
+
+def _image_data(subject: tio.Subject, key: str) -> torch.Tensor:
+    """The tensor behind one of a Subject's images.
+
+    `tio.Subject` is a dict subclass whose `__getitem__` is typed as returning `object`,
+    so `subject[key].data` does not type-check. Attribute access (`subject.image`) is
+    what the eleven functions this replaced used, and torchio does synthesise it -- but
+    at runtime only, so no checker can see it either. One cast, explained once.
+    """
+    return cast(tio.Image, subject[key]).data
 
 
 def apply_tio(transform: tio.Transform, img: torch.Tensor, seg: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -39,10 +51,8 @@ def apply_tio(transform: tio.Transform, img: torch.Tensor, seg: torch.Tensor) ->
     The explicit `del` and `gc.collect()` are inherited: torchio subjects hold the
     whole volume several times over and these run inside dataloader workers.
     """
-    # Subject is a dict subclass, so images come back by key. The old copies used
-    # attribute access (`subject.image`), which torchio synthesises at runtime but no
-    # type checker can see -- it only passed mypy because those functions were
-    # unannotated and mypy skips unannotated bodies.
+    # Images come back through `_image_data`; see its docstring for why neither key
+    # nor attribute access type-checks on its own.
     if img.shape[0] == 2:
         subject = transform(
             tio.Subject(
@@ -51,11 +61,11 @@ def apply_tio(transform: tio.Transform, img: torch.Tensor, seg: torch.Tensor) ->
                 seg=tio.LabelMap(tensor=seg),
             )
         )
-        img_out = torch.cat((subject["image"].data, subject["discs"].data), dim=0)
-        seg_out = subject["seg"].data
+        img_out = torch.cat((_image_data(subject, "image"), _image_data(subject, "discs")), dim=0)
+        seg_out = _image_data(subject, "seg")
     else:
         subject = transform(tio.Subject(image=tio.ScalarImage(tensor=img), seg=tio.LabelMap(tensor=seg)))
-        img_out, seg_out = subject["image"].data, subject["seg"].data
+        img_out, seg_out = _image_data(subject, "image"), _image_data(subject, "seg")
     del subject
     gc.collect()  # Force garbage collection
     return img_out, seg_out
