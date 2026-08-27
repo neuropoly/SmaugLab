@@ -3,8 +3,10 @@ name: tests
 on:
   push:
     branches: [main]
+  # Every pull request, not only those targeting main. A stacked PR is based on its
+  # parent branch, and with `branches: [main]` here GitHub ran no checks on it at all
+  # -- the whole middle of a stack reported "no checks reported" and looked green.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
