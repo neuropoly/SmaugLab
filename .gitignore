@@ -41,6 +41,11 @@ share/python-wheels/
 *.egg
 MANIFEST
 *.json
+# ...but these are source, not per-experiment output. The blanket *.json above was
+# added to keep local sweep configs out (7ff2088); it would otherwise swallow the
+# migration table, the test fixtures and the migrator itself.
+!unit_tests/fixtures/**/*.json
+!migration/*.json
 *.yaml
 *.nii
 *.nii.gz

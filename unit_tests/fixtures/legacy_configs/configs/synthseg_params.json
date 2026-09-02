@@ -1,0 +1,50 @@
+{
+    "SynthSeg": {
+        "probability": 1.0,
+        "n_channels": 1,
+        "generation_labels": null,
+        "output_labels": null,
+        "n_neutral_labels": null,
+        "generation_classes": null,
+
+        "prior_distributions": "uniform",
+        "prior_means": null,
+        "prior_stds": null,
+
+        "flipping": true,
+        "flip_axis": 2,
+        "scaling_bounds": 0.2,
+        "rotation_bounds": 15.0,
+        "shearing_bounds": 0.012,
+        "translation_bounds": false,
+
+        "nonlin_std": 4.0,
+        "nonlin_scale": 0.04,
+        "svf_integration_steps": 7,
+
+        "bias_field_std": 0.7,
+        "bias_scale": 0.025,
+
+        "gamma_std": 0.5,
+        "clip": 300.0,
+        "normalise": true,
+
+        "randomise_res": true,
+        "max_res_iso": 4.0,
+        "max_res_aniso": 8.0,
+        "data_res": null,
+        "thickness": null,
+        "blur_range": 1.03,
+        "atlas_res": 1.0,
+
+        "output_shape": null,
+
+        "em_label_completion": false,
+        "em_n_foreground_clusters": 2,
+        "em_background_clusters_range": [3, 10],
+        "em_background_label": 0,
+        "em_n_iters": 20,
+        "em_max_fit_voxels": 100000,
+        "em_same_on_batch": false
+    }
+}
