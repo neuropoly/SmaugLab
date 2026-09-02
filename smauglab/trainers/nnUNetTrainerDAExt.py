@@ -2,7 +2,7 @@ import importlib
 import json
 import os
 import shutil
-from typing import Union
+from typing import Any, Union
 
 import numpy as np
 import torch
@@ -390,19 +390,21 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         if self.is_ddp:
             world_size = dist.get_world_size()
 
-            tps = [None for _ in range(world_size)]
+            # all_gather_object fills the placeholder list in-place with per-rank
+            # payloads; the None seeds are just sized slots, not the final types.
+            tps: list[Any] = [None for _ in range(world_size)]
             dist.all_gather_object(tps, tp)
             tp = np.vstack([i[None] for i in tps]).sum(0)
 
-            fps = [None for _ in range(world_size)]
+            fps: list[Any] = [None for _ in range(world_size)]
             dist.all_gather_object(fps, fp)
             fp = np.vstack([i[None] for i in fps]).sum(0)
 
-            fns = [None for _ in range(world_size)]
+            fns: list[Any] = [None for _ in range(world_size)]
             dist.all_gather_object(fns, fn)
             fn = np.vstack([i[None] for i in fns]).sum(0)
 
-            losses_val = [None for _ in range(world_size)]
+            losses_val: list[Any] = [None for _ in range(world_size)]
             dist.all_gather_object(losses_val, outputs_collated["loss"])
             loss_here = np.vstack(losses_val).mean()
         else:
