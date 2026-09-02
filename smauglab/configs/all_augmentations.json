@@ -1,0 +1,667 @@
+{
+    "GPU": {
+        "RandomFlipTransformGPU": {
+            "flip_axis": [
+                0
+            ],
+            "keepdim": true,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "same_on_batch": false
+        },
+        "RandomAffineGPU": {
+            "align_corners": true,
+            "degrees": 10,
+            "keepdim": true,
+            "p": 0.5,
+            "p_batch": 1.0,
+            "resample": "BILINEAR",
+            "same_on_batch": false,
+            "scale": [
+                0.9,
+                1.1
+            ],
+            "shears": [
+                -10,
+                10,
+                -10,
+                10,
+                -10,
+                10
+            ],
+            "translate": [
+                0.1,
+                0.1,
+                0.1
+            ]
+        },
+        "RandomSynthSegGPU": {
+            "apply_bias_field": true,
+            "apply_intensity_augmentation": true,
+            "apply_resolution": true,
+            "apply_to_channel": null,
+            "atlas_res": 1.0,
+            "bias_field_std": 0.7,
+            "bias_scale": 0.025,
+            "blur_range": 1.03,
+            "clip": 300.0,
+            "data_res": null,
+            "em_background_clusters_range": [
+                3,
+                10
+            ],
+            "em_background_label": 0,
+            "em_label_completion": false,
+            "em_max_fit_voxels": 100000,
+            "em_n_foreground_clusters": 2,
+            "em_n_iters": 20,
+            "em_same_on_batch": false,
+            "flip_axis": 2,
+            "gamma_std": 0.5,
+            "generation_classes": null,
+            "generation_labels": null,
+            "keepdim": true,
+            "max_res_aniso": 8.0,
+            "max_res_iso": 4.0,
+            "n_channels": 1,
+            "n_neutral_labels": null,
+            "nonlin_scale": 0.04,
+            "nonlin_std": 4.0,
+            "normalise": true,
+            "output_labels": null,
+            "p": 0.5,
+            "p_batch": 1.0,
+            "prior_distributions": "uniform",
+            "prior_means": null,
+            "prior_stds": null,
+            "randomise_res": true,
+            "rotation_bounds": 15.0,
+            "same_on_batch": false,
+            "scaling_bounds": 0.2,
+            "shearing_bounds": 0.012,
+            "svf_integration_steps": 7,
+            "thickness": null,
+            "translation_bounds": false
+        },
+        "RandomPaletteGPU": {
+            "alpha_magnitude_range": [
+                0.5,
+                2.0
+            ],
+            "blur_sigmas": [
+                0.0,
+                0.0,
+                0.0,
+                0.3,
+                0.5,
+                0.8
+            ],
+            "c_choices": [
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "dark_threshold": 0.01,
+            "keepdim": false,
+            "label_classes": null,
+            "label_remap_prob": 0.5,
+            "min_label_voxels": 4,
+            "n_kmeans_subsample": 10000,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "s_choices": [
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10
+            ],
+            "same_on_batch": false,
+            "skip_parcellation_prob": 0.1,
+            "skip_sub_parc_prob": 0.4
+        },
+        "RandomDomainTransferGPU": {
+            "any_source": false,
+            "apply_to_channel": null,
+            "bank_path": null,
+            "bias_field_std": 0.0,
+            "bias_scale": 0.03,
+            "blend_concentration": 1.0,
+            "blend_targets": 1,
+            "include_self": true,
+            "keepdim": true,
+            "p": 0.2,
+            "p_batch": 1.0,
+            "p_class_mix": 0.0,
+            "p_spatial_mix": 0.0,
+            "pct": 1.0,
+            "same_on_batch": false,
+            "sigma": 2.0,
+            "source_label": null,
+            "spatial_mix_gain": 3.0,
+            "spatial_mix_scale": 0.03,
+            "targets": null,
+            "zscore_io": "auto"
+        },
+        "RandomInverseGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "mix_prob": 0.0,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomHistogramEqualizationGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "mix_prob": 0.0,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomRedistributeSegGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "dilation_iterations_range": [
+                1,
+                3
+            ],
+            "in_seg": 0.2,
+            "keepdim": true,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false,
+            "std_noise_range": [
+                0.1,
+                0.3
+            ]
+        },
+        "RandomScharrGPU": {
+            "absolute": true,
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "mix_prob": 0.0,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": true,
+            "same_on_batch": false
+        },
+        "RandomLaplaceGPU": {
+            "absolute": false,
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "mix_prob": 0.0,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomUnsharpMaskGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "mix_prob": 0.0,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false,
+            "sigma": 1.0,
+            "unsharp_amount": 1.5
+        },
+        "RandomRandConvGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "kernel_sizes": [
+                1,
+                3,
+                5,
+                7
+            ],
+            "mix_in_out": false,
+            "mix_prob": 0.0,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomClampGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "max_clamp_amount": 0.0,
+            "mix_in_out": false,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomGaussianNoiseGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mean": 0.0,
+            "mix_in_out": false,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "same_on_batch": false,
+            "std": 1.0
+        },
+        "RandomGaussianBlurGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "mix_prob": 0.0,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false,
+            "sigma": 1.0
+        },
+        "RandomBrightnessGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "brightness_range": [
+                0.5,
+                1.5
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "same_on_batch": false
+        },
+        "RandomGammaGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "gamma_range": [
+                0.7,
+                1.5
+            ],
+            "in_seg": 0.0,
+            "keepdim": false,
+            "mix_in_out": false,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomInvGammaGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "gamma_range": [
+                0.7,
+                1.5
+            ],
+            "in_seg": 0.0,
+            "keepdim": false,
+            "mix_in_out": false,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomContrastGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "contrast_range": [
+                0.75,
+                1.25
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomLog1pGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomSqrtGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomSinGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomExpGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomSigmoidGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_in_out": false,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "RandomLowResTransformGPU": {
+            "keepdim": true,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "same_on_batch": false,
+            "scale": [
+                0.3,
+                1.0
+            ]
+        },
+        "RandomAcqTransformGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "keepdim": true,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "same_on_batch": false,
+            "scale": [
+                0.3,
+                1.0
+            ]
+        },
+        "RandomCropTransformGPU": {
+            "crop": [
+                1.0,
+                1.0
+            ],
+            "keepdim": true,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "pos": [
+                0.0,
+                1.0
+            ],
+            "same_on_batch": false
+        },
+        "RandomBiasFieldGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "coefficients": 0.5,
+            "in_seg": 0.0,
+            "invert": false,
+            "keepdim": true,
+            "mix_in_out": false,
+            "order": 3,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false
+        },
+        "ZscoreNormalizationGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0
+        }
+    },
+    "CPU": {
+        "LaplaceConvTransform": {
+            "absolute": false,
+            "p": 1.0,
+            "retain_stats": false
+        },
+        "ScharrConvTransform": {
+            "absolute": true,
+            "p": 1.0,
+            "retain_stats": false
+        },
+        "Log1pTransform": {
+            "p": 1.0,
+            "retain_stats": false
+        },
+        "SqrtTransform": {
+            "p": 1.0,
+            "retain_stats": false
+        },
+        "SinTransform": {
+            "p": 1.0,
+            "retain_stats": false
+        },
+        "ExpTransform": {
+            "p": 1.0,
+            "retain_stats": false
+        },
+        "SigmoidTransform": {
+            "p": 1.0,
+            "retain_stats": false
+        },
+        "HistogramEqualTransform": {
+            "p": 1.0,
+            "retain_stats": false
+        },
+        "RedistributeTransform": {
+            "classes": null,
+            "in_seg": 0.2,
+            "p": 1.0,
+            "retain_stats": false
+        },
+        "ShapeTransform": {
+            "ignore_axes": [],
+            "p": 1.0,
+            "shape_min": 1
+        },
+        "ArtifactTransform": {
+            "bias_field": false,
+            "blur": false,
+            "ghosting": false,
+            "motion": false,
+            "noise": false,
+            "p": 1.0,
+            "random_pick": false,
+            "spike": false,
+            "swap": false
+        },
+        "SpatialCustomTransform": {
+            "affine": false,
+            "anisotropy": false,
+            "elastic": false,
+            "flip": false,
+            "p": 1.0,
+            "random_pick": false
+        },
+        "SpatialTransform": {
+            "align_corners": false,
+            "bg_style_seg_sampling": true,
+            "border_mode_seg": "zeros",
+            "center_deformation": true,
+            "elastic_deform_magnitude": [
+                0,
+                0.2
+            ],
+            "elastic_deform_scale": [
+                0,
+                0.2
+            ],
+            "mode_image": "bilinear",
+            "mode_seg": "bilinear",
+            "p_elastic_deform": 0,
+            "p_rot_per_axis": 1,
+            "p_rotation": 0,
+            "p_scaling": 0,
+            "p_synchronize_def_scale_across_axes": 0,
+            "p_synchronize_scaling_across_axes": 0,
+            "padding_mode_image": "zeros",
+            "padding_value_image": 0,
+            "padding_value_seg": 0,
+            "patch_center_dist_from_border": null,
+            "random_crop": null,
+            "scaling": [
+                0.7,
+                1.3
+            ]
+        },
+        "GaussianNoiseTransform": {
+            "noise_variance": [
+                0,
+                0.1
+            ],
+            "p": 1.0,
+            "p_per_channel": 1.0,
+            "synchronize_channels": false
+        },
+        "GaussianBlurTransform": {
+            "benchmark": false,
+            "blur_sigma": [
+                1,
+                5
+            ],
+            "p": 1.0,
+            "p_per_channel": 1,
+            "synchronize_axes": false,
+            "synchronize_channels": false
+        },
+        "MultiplicativeBrightnessTransform": {
+            "multiplier_range": null,
+            "p": 1.0,
+            "p_per_channel": 1,
+            "synchronize_channels": null
+        },
+        "ContrastTransform": {
+            "contrast_range": null,
+            "p": 1.0,
+            "p_per_channel": 1.0,
+            "preserve_range": null,
+            "synchronize_channels": null
+        },
+        "SimulateLowResolutionTransform": {
+            "allowed_channels": null,
+            "ignore_axes": null,
+            "p": 1.0,
+            "p_per_channel": 1,
+            "scale": null,
+            "synchronize_axes": null,
+            "synchronize_channels": null
+        },
+        "InvertedGammaTransform": {
+            "gamma": [
+                0.7,
+                1.5
+            ],
+            "p": 1.0,
+            "p_per_channel": 1,
+            "p_retain_stats": 1,
+            "synchronize_channels": false
+        },
+        "GammaTransform": {
+            "gamma": null,
+            "p": 1.0,
+            "p_invert_image": null,
+            "p_per_channel": null,
+            "p_retain_stats": null,
+            "synchronize_channels": null
+        },
+        "MirrorTransform": {
+            "allowed_axes": null
+        },
+        "ZscoreNormalization": {
+            "p": 1.0
+        }
+    }
+}

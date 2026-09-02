@@ -94,6 +94,7 @@ all = ["monai", "tqdm", "wandb"]
 dev = ["build", "coverage", "mypy", "pre-commit", "pytest", "pytest-cov", "ruff", "twine"]
 
 [tool.poetry.scripts]
+smauglab = "smauglab.cli:main"
 smauglab_add_nnunettrainer = "smauglab.add_trainer:main"
 
 [build-system]

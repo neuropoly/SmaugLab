@@ -133,6 +133,20 @@
             "p_retain_stats": 1,
             "p": 0.3
         },
+        "SpatialTransform": {
+            "patch_center_dist_from_border": 0,
+            "random_crop": false,
+            "p_elastic_deform": 0,
+            "p_rotation": 0,
+            "p_scaling": 0,
+            "scaling": [
+                0.7,
+                1.4
+            ],
+            "p_synchronize_scaling_across_axes": 1,
+            "bg_style_seg_sampling": false,
+            "mode_seg": "nearest"
+        },
         "MirrorTransform": {
             "allowed_axes": [
                 0,
