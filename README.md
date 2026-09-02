@@ -6,7 +6,10 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-# SmaugLab
+<h1 align="center">
+<img src="smauglab_logo.png" width="500">
+</h1>
+
 This repository investigates the influence of different data augmentation strategies on MRI training performance.
 
 ## Citation

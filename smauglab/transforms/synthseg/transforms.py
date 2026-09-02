@@ -5,7 +5,7 @@ Two entry points are provided:
 * :class:`RandomSynthSegGPU` -- an :class:`ImageOnlyTransform` that *replaces*
   the image with a GMM-synthesised one derived from ``params['seg']``. It is
   intensity-only (no internal spatial deformation), so it composes with SmaugLab's
-  existing geometric transforms (``RandomAffine3DCustom``, ``RandomFlipTransformGPU``,
+  existing geometric transforms (``RandomAffineGPU``, ``RandomFlipTransformGPU``,
   ...) inside an :class:`AugmentationSequentialCustom`: place those *before* it so
   the mask is deformed first and SynthSeg generates from the deformed labels,
   keeping image and label aligned. Drop it into a ``transform_params_gpu.json``

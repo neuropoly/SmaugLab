@@ -18,7 +18,7 @@ from batchgeneratorsv2.transforms.utils.pseudo2d import Convert2DTo3DTransform, 
 from batchgeneratorsv2.transforms.utils.random import RandomTransform
 
 from smauglab.transforms.cpu.artifact import ArtifactTransform
-from smauglab.transforms.cpu.contrast import ConvTransform, FunctionTransform, HistogramEqualTransform
+from smauglab.transforms.cpu.contrast import FunctionTransform, HistogramEqualTransform, _ConvBaseTransform
 from smauglab.transforms.cpu.fromSeg import RedistributeTransform
 from smauglab.transforms.cpu.spatial import ShapeTransform, SpatialCustomTransform
 
@@ -63,11 +63,11 @@ class AugTransforms(ComposeTransforms):
         transforms = []
 
         # Scharr filter
-        conv_params = transform_params.get("ConvTransform")
+        conv_params = transform_params.get("_ConvBaseTransform")
         if conv_params is not None:
             transforms.append(
                 RandomTransform(
-                    ConvTransform(
+                    _ConvBaseTransform(
                         kernel_type=conv_params.get("kernel_type", "Scharr"),
                         absolute=conv_params.get("absolute", True),
                         retain_stats=transform_params.get("retain_stats", False),
@@ -317,7 +317,7 @@ class AugTransformsTest(ComposeTransforms):
         # Scharr filter
         transforms.append(
             RandomTransform(
-                ConvTransform(
+                _ConvBaseTransform(
                     kernel_type="Scharr",
                     absolute=True,
                 ),
@@ -336,77 +336,3 @@ class AugTransformsTest(ComposeTransforms):
         )
 
         return transforms
-
-
-if __name__ == "__main__":
-    # Example usage
-    import importlib
-
-    import cv2
-
-    from smauglab import configs
-    from smauglab.transforms.gpu.transforms import AugTransformsGPU
-    from smauglab.utils.image import Image, resample_nib
-    from smauglab.utils.utils import normalize
-
-    configs_path = importlib.resources.files(configs)
-    json_path = str(configs_path / "transform_params_hybrid_TAGE.json")
-
-    # Load images and masks tensors
-    img_path = "/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/data-multi-subject/sub-amu02/anat/sub-amu02_T1w.nii.gz"
-    img = Image(img_path).change_orientation("RSP")
-    img = resample_nib(img, new_size=[1, 1, 1], new_size_type="mm", interpolation="linear")
-    img_tensor = torch.from_numpy(img.data.copy()).to(torch.float32).unsqueeze(0)
-
-    seg_path = "/home/GRAMES.POLYMTL.CA/p118739/data_nvme_p118739/data/datasets/data-multi-subject/derivatives/labels/sub-amu02/anat/sub-amu02_T1w_label-spine_dseg.nii.gz"
-    seg = Image(seg_path).change_orientation("RSP")
-    seg = resample_nib(seg, new_size=[1, 1, 1], new_size_type="mm", interpolation="nn")
-    seg_tensor_all = torch.from_numpy(seg.data.copy())
-
-    # Add segmentation values to different channels
-    seg_tensor = torch.zeros((5, *seg_tensor_all.shape))
-    for i, value in enumerate([12, 13, 14, 15, 16]):
-        seg_tensor[i] = seg_tensor_all == value
-
-    # Example usage
-    aug_transforms = AugTransforms(
-        json_path=json_path, do_dummy_2d_data_aug=False, patch_size=(128, 128, 128), rotation_for_DA=(-10, 10), mirror_axes=None
-    )
-
-    augmentor_gpu = AugTransformsGPU(json_path)
-
-    # Apply transforms
-    tensor_dict = {}
-    gpu = False
-    for i in range(24):
-        tensor_dict[f"transfo_{i + 1!s}"] = aug_transforms(image=img_tensor.detach().clone(), segmentation=seg_tensor.detach().clone())
-
-        if gpu:
-            augmented_img, augmented_seg = augmentor_gpu(
-                tensor_dict[f"transfo_{i + 1!s}"]["image"].cuda().unsqueeze(0).clone(),
-                tensor_dict[f"transfo_{i + 1!s}"]["segmentation"].cuda().unsqueeze(0).clone(),
-            )
-            tensor_dict[f"transfo_{i + 1!s}"]["image"] = augmented_img.cpu().squeeze(0)
-            tensor_dict[f"transfo_{i + 1!s}"]["segmentation"] = augmented_seg.cpu().squeeze(0)
-
-    nb_img = len(tensor_dict.keys())
-    nb_col = 6
-    for key in ["image", "segmentation"]:
-        output = []
-        line: list[np.ndarray] = []
-        aug: list[list[str]] = [[]]
-        for _idx, (augment, _dic) in enumerate(tensor_dict.items()):
-            if len(line) < nb_col:
-                img = 255 * normalize(np.sum(tensor_dict[augment][key].detach().numpy(), axis=0, keepdims=True)[0, 64])
-                line.append(img)
-                aug[-1].append(augment)
-            else:
-                output.append(np.concatenate(line, axis=1))
-                img = 255 * normalize(np.sum(tensor_dict[augment][key].detach().numpy(), axis=0, keepdims=True)[0, 64])
-                line = [img]
-                aug.append([augment])
-        output.append(np.concatenate(line, axis=1))
-
-        out_img = np.concatenate(output, axis=0)
-        cv2.imwrite(f"img/transforms_default+plus_{key}.png", out_img)
-    print(aug_transforms)

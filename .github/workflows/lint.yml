@@ -3,8 +3,10 @@ name: lint
 on:
   push:
     branches: [main]
+  # Every pull request, not only those targeting main. A stacked PR is based on its
+  # parent branch, and with `branches: [main]` here GitHub ran no checks on it at all
+  # -- the whole middle of a stack reported "no checks reported" and looked green.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -51,7 +53,15 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # The floor of the supported range, matching `python_version = "3.10"` in
+          # [tool.mypy] -- not the newest interpreter. mypy applies its target version
+          # when parsing *every* file, third-party stubs included, so a runner that
+          # resolves a dependency too new for that target breaks the job with an error
+          # in someone else's .pyi. That is what numpy did: 2.3+ requires Python >=3.11
+          # and its stubs use PEP 695 `type` statements, so a 3.12 runner installed
+          # numpy 2.5 and mypy rejected numpy/__init__.pyi as 3.12-only syntax.
+          # Installing on 3.10 resolves numpy 2.2.x, whose stubs parse under the target.
+          python-version: "3.10"
           cache: pip
           cache-dependency-path: pyproject.toml
 
