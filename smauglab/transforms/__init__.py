@@ -19,5 +19,6 @@ from smauglab.transforms.cpu import artifact, contrast, external, fromSeg, spati
 from smauglab.transforms.gpu import contrast as gpu_contrast  # noqa: F401
 from smauglab.transforms.gpu import domain_transfer  # noqa: F401
 from smauglab.transforms.gpu import fromSeg as gpu_fromSeg
+from smauglab.transforms.gpu import palette as gpu_palette  # noqa: F401
 from smauglab.transforms.gpu import spatial as gpu_spatial  # noqa: F401
 from smauglab.transforms.synthseg import transforms as synthseg_transforms  # noqa: F401

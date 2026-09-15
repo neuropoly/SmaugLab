@@ -113,6 +113,10 @@ class AugId(str, Enum):
     HISTOGRAM_EQUAL = "histogram_equal"
     REDISTRIBUTE_SEG = "redistribute_seg"
     PALETTE = "palette"
+    # Not a second implementation of PALETTE but a second *concept*: the composable
+    # form is configured by which partitioning blocks it is given, so it has its own
+    # row in the matrix rather than overwriting RandomPaletteGPU's cell.
+    PALETTE_COMPOSED = "palette_composed"
     DOMAIN_TRANSFER = "domain_transfer"
     SYNTHSEG = "synthseg"
     ARTIFACT = "artifact"
@@ -200,6 +204,7 @@ PIPELINE_ORDER: Mapping[Backend, tuple[str, ...]] = MappingProxyType(
             "RandomAffineGPU",  # AffineTransform
             "RandomSynthSegGPU",  # SynthSeg
             "RandomPaletteGPU",  # RandomPALETTETransform
+            "PaletteSynthesisGPU",  # same slot: it is the same augmentation, composed
             "RandomDomainTransferGPU",  # DomainTransferTransform
             "RandomInverseGPU",  # InverseTransform
             "RandomHistogramEqualizationGPU",  # HistogramEqualizationTransform

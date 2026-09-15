@@ -207,11 +207,15 @@ LADDER_CONSTANTS: dict[tuple[str, str], dict[str, Any]] = {
     ("CPU", "SpatialTransform"): {"mode_seg": "nearest"},
 }
 
-#: Keys whose transform no longer exists at all. The classes were deleted or only
-#: ever lived on a branch, so these blocks have been silently doing nothing.
+#: Keys whose transform did not exist when the config was written, so the block has
+#: been silently doing nothing. Dropped rather than renamed: the migrator's job is to
+#: preserve what a config used to do, and these did nothing.
 DEAD_KEYS = {
     "ImageContrastGPUTransform": "the class was removed in 0d6270d; its num_bins parameter maps to nothing that still exists",
-    "PaletteSynthesisTransform": "only ever existed on the palette-refactor branch",
+    # `PaletteSynthesisGPU` now exists and takes these blocks almost verbatim, but
+    # turning the key on during migration would start running an augmentation the
+    # config never ran. The note points at the new key; enabling it is a decision.
+    "PaletteSynthesisTransform": "never ran -- the class only existed on the palette-refactor branch. To enable it, rename the key to 'PaletteSynthesisGPU' by hand (its blocks are unchanged; 'probability' becomes 'p')",
 }
 
 #: Every legacy spelling, for the test that proves none of them still resolve.
