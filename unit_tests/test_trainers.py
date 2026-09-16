@@ -187,12 +187,16 @@ class TestConfigResolution(unittest.TestCase):
 class TestConstructorMatchesNnUNet(unittest.TestCase):
     """The trainers are instantiated by nnU-Net, so their signature is a contract.
 
-    `nnUNetv2_train` calls the trainer with keyword arguments taken from its own
-    `nnUNetTrainer.__init__`, so a parameter that exists upstream and not here is a
-    `TypeError` before the first batch. Nothing caught that: every other test here
-    drives `get_training_transforms`, which is a staticmethod, so the constructor is
-    never called. This compares the two signatures directly instead of constructing a
-    trainer, which would need plans, a dataset and a GPU.
+    `nnUNetv2_train` constructs the trainer itself, so a parameter that exists upstream
+    and not here is a `TypeError` before the first batch, and one that exists here and
+    not upstream breaks the `super().__init__` call instead. nnU-Net has moved this
+    signature between releases -- 2.4 had `unpack_dataset` between `dataset_json` and
+    `device`, 2.6 does not -- so which nnU-Net is installed decides what is correct,
+    and pinning it against the installed one is the only check that stays true.
+
+    Nothing caught this before: every other test here drives `get_training_transforms`,
+    which is a staticmethod, so the constructor is never called. Comparing signatures
+    needs neither plans, nor a dataset, nor a GPU.
     """
 
     TRAINERS = ("nnUNetTrainerDAExtGPU", "nnUNetTrainerTest", "nnUNetTrainerTestGPU")
