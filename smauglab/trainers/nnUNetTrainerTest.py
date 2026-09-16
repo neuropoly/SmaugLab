@@ -19,8 +19,20 @@ from smauglab.transforms.gpu.transforms import AugTransformsGPU
 
 
 class nnUNetTrainerTest(nnUNetTrainer):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, device: torch.device = torch.device("cuda")):
-        super().__init__(plans, configuration, fold, dataset_json, device)
+    def __init__(
+        self,
+        plans: dict,
+        configuration: str,
+        fold: int,
+        dataset_json: dict,
+        unpack_dataset: bool = True,
+        device: torch.device = torch.device("cuda"),
+    ):
+        # `unpack_dataset` sits between `dataset_json` and `device` in nnU-Net's own
+        # signature, and `run_training` passes it by keyword. Omitting it made every
+        # run fail outright; passing `device` positionally, as this did, put the
+        # device into the `unpack_dataset` slot and silently ignored `-device`.
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset=unpack_dataset, device=device)
 
     @staticmethod
     def get_training_transforms(
@@ -81,8 +93,20 @@ class nnUNetTrainerTest(nnUNetTrainer):
 
 
 class nnUNetTrainerTestGPU(nnUNetTrainer):
-    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, device: torch.device = torch.device("cuda")):
-        super().__init__(plans, configuration, fold, dataset_json, device)
+    def __init__(
+        self,
+        plans: dict,
+        configuration: str,
+        fold: int,
+        dataset_json: dict,
+        unpack_dataset: bool = True,
+        device: torch.device = torch.device("cuda"),
+    ):
+        # `unpack_dataset` sits between `dataset_json` and `device` in nnU-Net's own
+        # signature, and `run_training` passes it by keyword. Omitting it made every
+        # run fail outright; passing `device` positionally, as this did, put the
+        # device into the `unpack_dataset` slot and silently ignored `-device`.
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset=unpack_dataset, device=device)
 
         # Load transform parameters from json file
         configs_path = importlib.resources.files(configs)

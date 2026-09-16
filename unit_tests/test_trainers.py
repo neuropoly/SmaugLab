@@ -10,7 +10,9 @@ directly: no plans.json, no dataset, no GPU.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
+import inspect
 import os
 import unittest
 import warnings
@@ -180,6 +182,44 @@ class TestConfigResolution(unittest.TestCase):
             warnings.simplefilter("always")
             self.assertEqual(resolve_config_path(), "/old.json")
         self.assertTrue(any(issubclass(w.category, DeprecationWarning) for w in caught))
+
+
+class TestConstructorMatchesNnUNet(unittest.TestCase):
+    """The trainers are instantiated by nnU-Net, so their signature is a contract.
+
+    `nnUNetv2_train` calls the trainer with keyword arguments taken from its own
+    `nnUNetTrainer.__init__`, so a parameter that exists upstream and not here is a
+    `TypeError` before the first batch. Nothing caught that: every other test here
+    drives `get_training_transforms`, which is a staticmethod, so the constructor is
+    never called. This compares the two signatures directly instead of constructing a
+    trainer, which would need plans, a dataset and a GPU.
+    """
+
+    TRAINERS = ("nnUNetTrainerDAExtGPU", "nnUNetTrainerTest", "nnUNetTrainerTestGPU")
+
+    @staticmethod
+    def _trainer(name):
+        module = "nnUNetTrainerDAExt" if name == "nnUNetTrainerDAExtGPU" else "nnUNetTrainerTest"
+        return getattr(importlib.import_module(f"smauglab.trainers.{module}"), name)
+
+    def test_every_upstream_parameter_is_accepted(self):
+        from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+
+        upstream = set(inspect.signature(nnUNetTrainer.__init__).parameters)
+        for name in self.TRAINERS:
+            with self.subTest(trainer=name):
+                ours = set(inspect.signature(self._trainer(name).__init__).parameters)
+                self.assertEqual(upstream - ours, set(), f"{name} would reject arguments nnU-Net passes")
+
+    def test_the_parameter_order_matches(self):
+        """They are forwarded to `super().__init__`, and a caller may pass positionally."""
+        from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+
+        upstream = list(inspect.signature(nnUNetTrainer.__init__).parameters)
+        for name in self.TRAINERS:
+            with self.subTest(trainer=name):
+                ours = list(inspect.signature(self._trainer(name).__init__).parameters)
+                self.assertEqual(ours[: len(upstream)], upstream)
 
 
 class TestPipelineMode(unittest.TestCase):
