@@ -52,6 +52,11 @@ LEGACY_CONFIG_ENV = "SMAUGLAB_PARAMS_GPU_JSON"
 
 DEFAULT_CONFIG = "transform_params_gpu.json"
 
+#: Detailed non-finite-loss reports per epoch before the guard falls back to counting.
+#: One bad augmentation hits every batch of an epoch, and 250 identical lines is how a
+#: warning worth reading becomes noise nobody reads.
+NAN_REPORTS_PER_EPOCH = 3
+
 
 def resolve_config_path() -> str:
     """Locate the config: new env var, then the deprecated one, then the default."""
@@ -109,6 +114,13 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         )
 
         shutil.copy(json_path, os.path.join(self.output_folder, "transform_params_used_for_training.json"))
+
+        # A non-finite loss is otherwise invisible: `GradScaler` skips the step without a
+        # word, so the run simply stops learning and the only symptom is `train_loss nan`
+        # in the epoch line -- `np.mean` carrying one bad batch through the whole mean --
+        # which names neither the batch nor the cause. See `_report_nonfinite_loss`.
+        self._nan_steps_this_epoch = 0
+        self._nan_steps_total = 0
 
     @staticmethod
     def get_training_transforms(
@@ -203,12 +215,19 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         target = batch["target"]
 
         data = data.to(self.device, non_blocking=True)
-        # Now target should be a single tensor, not a list
-        target = target.to(self.device, non_blocking=True)
-        # if isinstance(target, list):
-        #     target = [i.to(self.device, non_blocking=True) for i in target]
-        # else:
-        #     target = target.to(self.device, non_blocking=True)
+        # A tensor with GPU augmentations, a list without them. `get_training_transforms`
+        # hands the dataloader `deep_supervision_scales=None` when the config has a GPU
+        # section, because the mask is still going to be augmented below and the
+        # downsampling has to happen after that -- so the dataloader returns one
+        # full-resolution mask. A CPU-only config has nothing touching the mask after the
+        # dataloader, so the downsampling stays there and `target` arrives as the list of
+        # deep-supervision levels. Assuming the tensor raised AttributeError on the very
+        # first batch of every CPU-only run; upstream `validation_step` has always
+        # branched here, which is why only training was affected.
+        if isinstance(target, list):
+            target = [i.to(self.device, non_blocking=True) for i in target]
+        else:
+            target = target.to(self.device, non_blocking=True)
 
         self.optimizer.zero_grad(set_to_none=True)
         # Autocast can be annoying
@@ -236,10 +255,81 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             self.grad_scaler.scale(l).backward()
             self.grad_scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
+            # A non-finite loss needs no handling here: `unscale_` records `found_inf`,
+            # `step` skips the update, and the next `zero_grad(set_to_none=True)` clears
+            # the poisoned gradients. The weights are never touched.
             self.grad_scaler.step(self.optimizer)
             self.grad_scaler.update()
         else:
             l.backward()
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
-            self.optimizer.step()
-        return {"loss": l.detach().cpu().numpy()}
+            # No scaler means CPU or MPS, where nothing skips the step for us -- and a
+            # single NaN gradient applied here poisons every weight it touches, for the
+            # rest of the run. `l` is already on the host, so the check is free.
+            if bool(torch.isfinite(l)):
+                self.optimizer.step()
+
+        # One host transfer, shared by the guard and the return value: nnU-Net pays for
+        # it here anyway, so a healthy step costs one `isfinite` on a scalar and nothing
+        # else. Checking straight after `self.loss(...)` instead would force a device
+        # sync between forward and backward on all 250 steps of every epoch.
+        loss_cpu = l.detach().cpu()
+        if not bool(torch.isfinite(loss_cpu)):
+            self._report_nonfinite_loss(loss_cpu, data, target, output, batch.get("keys"))
+        return {"loss": loss_cpu.numpy()}
+
+    def _report_nonfinite_loss(self, loss, data, target, output, keys) -> None:
+        """Say *why* the loss went non-finite, in the training log.
+
+        The verdict is the point. A batch that was already non-finite when it reached the
+        network can only have come from the augmentation pipeline; a finite batch with a
+        non-finite output is the network diverging; a finite output with a non-finite
+        loss is the criterion. Three different bugs, three different fixes, and until now
+        no line in the log distinguishing them -- or indeed mentioning any of them.
+
+        Everything here scans whole volumes, which is why it runs only after the scalar
+        check has already tripped.
+        """
+        self._nan_steps_this_epoch += 1
+        self._nan_steps_total += 1
+        if self._nan_steps_this_epoch > NAN_REPORTS_PER_EPOCH:
+            if self._nan_steps_this_epoch == NAN_REPORTS_PER_EPOCH + 1:
+                self.print_to_log_file("non-finite loss: further reports suppressed this epoch; see the epoch summary")
+            return
+
+        # `target` is a list once deep supervision has downsampled it, and a tensor
+        # before that; `output` is a list of heads, highest resolution first.
+        seg = target[0] if isinstance(target, (list, tuple)) else target
+        head = output[0] if isinstance(output, (list, tuple)) else output
+
+        bad = ~torch.isfinite(data)
+        samples = torch.nonzero(bad.flatten(1).any(1)).flatten().tolist()
+        if samples:
+            verdict = "augmentation"
+            detail = f"nonfinite_samples={samples} nonfinite_voxels={int(bad.sum())}"
+        elif not bool(torch.isfinite(head).all()):
+            dead = any(not bool(torch.isfinite(p).all()) for p in self.network.parameters())
+            verdict, detail = "network", f"output_nonfinite=True weights_nonfinite={dead}"
+        else:
+            verdict, detail = "loss", "data and output are finite"
+
+        self.print_to_log_file(
+            f"non-finite loss: value={float(loss)} verdict={verdict} epoch={self.current_epoch} "
+            f"{detail} target_fg_voxels={int((seg > 0).sum())} keys={list(keys) if keys is not None else 'n/a'}"
+        )
+
+    def on_train_epoch_start(self):
+        super().on_train_epoch_start()
+        self._nan_steps_this_epoch = 0
+
+    def on_train_epoch_end(self, train_outputs: list[dict]):
+        super().on_train_epoch_end(train_outputs)
+        if self._nan_steps_this_epoch:
+            # Printed here rather than in `on_epoch_end` so it sits beside the epoch's
+            # training section, and still prints if validation later throws. It is also
+            # the explanation for the `train_loss nan` two lines below it.
+            self.print_to_log_file(
+                f"non-finite loss in {self._nan_steps_this_epoch}/{self.num_iterations_per_epoch} batches "
+                f"this epoch ({self._nan_steps_total} since the run started); "
+                f"those steps did not update the weights"
+            )

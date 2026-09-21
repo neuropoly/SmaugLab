@@ -17,6 +17,7 @@ import os
 import unittest
 import warnings
 from pathlib import Path
+from unittest import mock
 
 from batchgeneratorsv2.transforms.utils.compose import ComposeTransforms
 
@@ -236,6 +237,180 @@ class TestPipelineMode(unittest.TestCase):
         for config in sorted(CONFIGS.glob("*-List*.json")):
             with self.subTest(config=config.name):
                 self.assertIs(load_config(str(config)).pipeline_mode(), PipelineMode.RANDOM_ORDER)
+
+
+class TestNonFiniteLossGuard(unittest.TestCase):
+    """A NaN loss used to leave no trace at all.
+
+    `GradScaler` skips the step when the gradients are not finite, silently, so a run
+    poisoned by one bad augmentation keeps printing epochs and simply never learns. The
+    only symptom was `train_loss nan` in the epoch line -- `np.mean` carrying a single
+    bad batch through the whole mean -- which names neither the batch nor the cause.
+
+    Driving this needs a trainer instance, which the rest of this file never builds:
+    `__init__` wants plans, a dataset_json and an output folder to copy the config into.
+    `__new__` sidesteps all of it, and `train_step` only ever touches seven attributes.
+    """
+
+    def _trainer(self, loss, transforms=None):
+        import torch
+
+        from smauglab.trainers.nnUNetTrainerDAExt import nnUNetTrainerDAExtGPU
+
+        trainer = nnUNetTrainerDAExtGPU.__new__(nnUNetTrainerDAExtGPU)
+        trainer.device = torch.device("cpu")  # so autocast is skipped via dummy_context
+        trainer.transforms = transforms
+        trainer.grad_scaler = None
+        trainer.network = torch.nn.Conv3d(1, 2, 1)
+        trainer.optimizer = torch.optim.SGD(trainer.network.parameters(), lr=0.1)
+        trainer.loss = loss
+        trainer.current_epoch = 0
+        trainer.num_iterations_per_epoch = 250
+        trainer._nan_steps_this_epoch = 0
+        trainer._nan_steps_total = 0
+        trainer._get_deep_supervision_scales = lambda: None
+        # An instance attribute shadowing the bound method: capturing the log this way
+        # needs no output folder and no open file handle.
+        trainer.logged = []
+        trainer.print_to_log_file = lambda *args, **_kwargs: trainer.logged.append(" ".join(str(a) for a in args))
+        return trainer
+
+    def _batch(self, key="case_a"):
+        import torch
+
+        # Non-zero data deliberately: with an all-zero input a Conv3d's weight gradient
+        # is zero too, so "did the step move the weights" would be unanswerable. The
+        # target is empty, which is the shape this whole guard exists for.
+        return {
+            "data": torch.full((1, 1, 4, 4, 4), 0.5),
+            "target": torch.zeros(1, 1, 4, 4, 4),
+            "keys": [key],
+        }
+
+    def test_a_non_finite_loss_from_the_criterion_is_reported(self):
+        # `out.sum() * nan` keeps a real autograd graph, so backward() still works.
+        trainer = self._trainer(loss=lambda out, _tgt: out.sum() * float("nan"))
+
+        trainer.train_step(self._batch())
+
+        self.assertEqual(len(trainer.logged), 1, trainer.logged)
+        self.assertIn("verdict=loss", trainer.logged[0])
+        self.assertIn("case_a", trainer.logged[0])
+
+    def test_a_non_finite_batch_is_blamed_on_the_augmentation(self):
+        trainer = self._trainer(
+            loss=lambda out, _tgt: out.mean(),
+            transforms=lambda data, target: (data * float("nan"), target),
+        )
+
+        trainer.train_step(self._batch())
+
+        self.assertIn("verdict=augmentation", trainer.logged[0])
+        self.assertIn("nonfinite_samples=[0]", trainer.logged[0])
+
+    def test_a_healthy_step_logs_nothing_and_still_updates_the_weights(self):
+        """The guard reports; it must not become a filter on good steps."""
+        import torch
+
+        trainer = self._trainer(loss=lambda out, _tgt: (out - 1.0).pow(2).mean())
+        before = trainer.network.weight.detach().clone()
+
+        trainer.train_step(self._batch())
+
+        self.assertEqual(trainer.logged, [])
+        self.assertEqual(trainer._nan_steps_total, 0)
+        self.assertFalse(bool(torch.equal(before, trainer.network.weight.detach())), "a healthy step was skipped")
+
+    def test_a_non_finite_step_leaves_the_weights_alone_without_a_scaler(self):
+        """CPU and MPS have no GradScaler to skip for them, so the guard has to."""
+        import torch
+
+        trainer = self._trainer(loss=lambda out, _tgt: out.sum() * float("nan"))
+        before = trainer.network.weight.detach().clone()
+
+        trainer.train_step(self._batch())
+
+        self.assertTrue(bool(torch.equal(before, trainer.network.weight.detach())))
+
+    def test_reports_are_rate_limited_and_summarised(self):
+        from smauglab.trainers.nnUNetTrainerDAExt import NAN_REPORTS_PER_EPOCH
+
+        trainer = self._trainer(loss=lambda out, _tgt: out.sum() * float("nan"))
+        for i in range(10):
+            trainer.train_step(self._batch(f"case_{i}"))
+
+        details = [line for line in trainer.logged if "verdict=" in line]
+        suppressed = [line for line in trainer.logged if "suppressed" in line]
+        self.assertEqual(len(details), NAN_REPORTS_PER_EPOCH)
+        self.assertEqual(len(suppressed), 1, "the suppression notice must be printed exactly once")
+        self.assertEqual(trainer._nan_steps_this_epoch, 10)
+
+        trainer.logged.clear()
+        # Only the subclass's own contribution is under test; the parent hook wants a
+        # logger and an lr_scheduler this bare instance does not have.
+        parent = type(trainer).__mro__[1]
+        with mock.patch.object(parent, "on_train_epoch_end", lambda _self, _outputs: None):
+            type(trainer).on_train_epoch_end(trainer, [])
+
+        self.assertEqual(len(trainer.logged), 1)
+        self.assertIn("10/250", trainer.logged[0])
+
+
+class TestTargetReachesTheDeviceEitherShape(unittest.TestCase):
+    """`train_step` gets a tensor or a list, depending on the config.
+
+    `get_training_transforms` passes the dataloader `deep_supervision_scales=None` when
+    the config has a GPU section: the mask is still going to be augmented in `train_step`,
+    so the downsampling has to happen after that and the dataloader yields one
+    full-resolution mask. A CPU-only config has nothing touching the mask after the
+    dataloader, so the downsampling stays there and the target arrives as the list of
+    deep-supervision levels.
+
+    `train_step` assumed the tensor, so `target.to(...)` raised `AttributeError` on the
+    first batch of every CPU-only run. Upstream `validation_step` has always branched on
+    it, which is why only training broke.
+    """
+
+    def _trainer(self):
+        import torch
+
+        from smauglab.trainers.nnUNetTrainerDAExt import nnUNetTrainerDAExtGPU
+
+        trainer = nnUNetTrainerDAExtGPU.__new__(nnUNetTrainerDAExtGPU)
+        trainer.device = torch.device("cpu")
+        trainer.transforms = None  # a CPU-only config builds no GPU pipeline
+        trainer.grad_scaler = None
+        trainer.network = torch.nn.Conv3d(1, 2, 1)
+        trainer.optimizer = torch.optim.SGD(trainer.network.parameters(), lr=0.1)
+        trainer.current_epoch = 0
+        trainer._nan_steps_this_epoch = 0
+        trainer._nan_steps_total = 0
+        trainer.seen = []
+        # Record what the loss was handed, which is the thing under test.
+        trainer.loss = lambda out, tgt: (trainer.seen.append(tgt), out.mean())[1]
+        return trainer
+
+    def test_a_list_target_survives_the_device_move(self):
+        import torch
+
+        trainer = self._trainer()
+        target = [torch.zeros(1, 1, 4, 4, 4), torch.zeros(1, 1, 2, 2, 2)]
+
+        trainer.train_step({"data": torch.full((1, 1, 4, 4, 4), 0.5), "target": target, "keys": ["case_a"]})
+
+        seen = trainer.seen[0]
+        self.assertIsInstance(seen, list, "the deep-supervision levels were collapsed")
+        self.assertEqual([tuple(t.shape) for t in seen], [(1, 1, 4, 4, 4), (1, 1, 2, 2, 2)])
+        self.assertTrue(all(t.device == trainer.device for t in seen))
+
+    def test_a_tensor_target_still_works(self):
+        import torch
+
+        trainer = self._trainer()
+
+        trainer.train_step({"data": torch.full((1, 1, 4, 4, 4), 0.5), "target": torch.zeros(1, 1, 4, 4, 4), "keys": ["case_a"]})
+
+        self.assertIsInstance(trainer.seen[0], torch.Tensor)
 
 
 if __name__ == "__main__":

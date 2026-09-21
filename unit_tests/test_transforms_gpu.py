@@ -155,5 +155,59 @@ class TestTransformsRunStandalone(SmaugLabTestCase):
                 )
 
 
+class TestTransformsOnADegeneratePatch(SmaugLabTestCase):
+    """Every transform, on the inputs nnU-Net's dataloader actually produces.
+
+    `tiny_volume()`/`tiny_seg()` are always well behaved -- random noise and a blob in
+    the middle -- so this sweep never asked what happens when the patch has no variance
+    or the mask has no foreground. Both are ordinary events in training, not edge cases:
+    roughly 18% of the unconstrained samples on Dataset014 are all background, and a
+    patch of air outside the body is *exactly* constant because preprocessing clips it to
+    the 0.5th percentile. Four real defects lived behind that gap -- a silent [0, 1]
+    rescale, an all-NaN volume, a CUDA-side crash and a fp-noise amplification -- and all
+    four are caught by simply running the existing sweep on a degenerate pair.
+
+    The bar here is deliberately low: finite, right shape, no exception. What a transform
+    *should* do with such a patch is its own business and is pinned per transform
+    elsewhere; what none of them may do is blow up or emit NaN.
+    """
+
+    def _cases(self):
+        """The two degenerate shapes, and why each one is its own case.
+
+        A constant image with a valid mask breaks range normalisation; a well-behaved
+        image with an empty mask breaks anything that partitions by label. They fail in
+        different places, so testing only their combination would miss half of it.
+        """
+        return [
+            ("constant image, empty mask", self.constant_volume(), self.empty_seg()),
+            ("constant image, normal mask", self.constant_volume(), self.tiny_seg()),
+            ("normal image, empty mask", self.tiny_volume(), self.empty_seg()),
+        ]
+
+    def _pipeline(self, cls, signature):
+        return AugmentationSequentialCustom(
+            cls(**build_kwargs(cls, signature)),
+            data_keys=["input", "mask"],
+            same_on_batch=True,
+        )
+
+    def test_no_transform_breaks_on_a_degenerate_patch(self):
+        for label, cls, signature in DISCOVERED:
+            for case, volume, seg in self._cases():
+                with self.subTest(transform=label, case=case):
+                    reason = skip_reason(cls)
+                    if reason:
+                        self.skipTest(reason)
+
+                    image = first_output(self._pipeline(cls, signature)(volume.clone(), seg.clone()))
+
+                    self.assertEqual(image.shape, volume.shape, f"{cls.__name__} changed the shape on {case}")
+                    self.assertTrue(
+                        bool(torch.isfinite(image).all()),
+                        f"{cls.__name__} produced NaN or Inf on {case}",
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

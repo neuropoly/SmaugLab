@@ -498,6 +498,7 @@
             "keepdim": true,
             "p": 1.0,
             "p_batch": 1.0,
+            "pad_value": "min",
             "pos": [
                 0.0,
                 1.0

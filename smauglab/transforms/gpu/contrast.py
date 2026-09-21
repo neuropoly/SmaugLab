@@ -1648,7 +1648,19 @@ class ZscoreNormalizationGPU(ImageOnlyTransform):
             mean = channel.mean(dim=reduce_dims, keepdim=True)
             # use unbiased=False for stability, and clamp std to avoid division by ~0
             std = channel.std(dim=reduce_dims, keepdim=True, unbiased=False).clamp_min(1e-8)
-            channel = (channel - mean) / std
+            # The clamp stops the NaN but not the nonsense: the mean is still *computed*,
+            # so a constant volume leaves floating-point residue behind, and dividing that
+            # by 1e-8 scales it by a hundred million. A constant -2.709 patch -- clipped
+            # CT air -- came back as a constant -1.0, an O(1) value decided purely by
+            # rounding. There is no z-score of a volume with no variance; leave it alone.
+            #
+            # Degeneracy is tested on the range rather than the standard deviation
+            # because `amax - amin` is exactly zero for a constant tensor while a summed
+            # std is not: the mean of N identical floats does not round back to the value
+            # itself, so `std == 0` misses precisely the patches this is here for.
+            flat = channel.reshape(channel.shape[0], -1)
+            spread = (flat.amax(dim=1) - flat.amin(dim=1)).view(-1, *([1] * (channel.dim() - 1)))
+            channel = torch.where(spread == 0, channel, (channel - mean) / std)
             # No mix_in_out here: z-scoring is applied whole, never to a random subset
             # of the mask channels.
             checked = _select_and_check(self, orig, channel, seg_mask)

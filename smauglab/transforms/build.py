@@ -122,6 +122,7 @@ def build_gpu_pipeline(
             num_transforms=len(transfer),
             p=options.get("ta_probability", 1.0),
             random_order=options.get("ta_random_order", True) if mode is PipelineMode.RANDOM_ORDER else False,
+            label="ta",
         )
     )
     if mode is PipelineMode.RANDOM_ORDER:
@@ -131,6 +132,7 @@ def build_gpu_pipeline(
                 num_transforms=len(enhancement),
                 p=options.get("ge_probability", 1.0),
                 random_order=options.get("ge_random_order", True),
+                label="ge",
             )
         )
     else:

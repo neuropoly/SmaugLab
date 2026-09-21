@@ -49,6 +49,27 @@ class SmaugLabTestCase(unittest.TestCase):
         seg[:, :, 6:18, 6:18, 6:18] = 1.0
         return seg
 
+    def empty_seg(self) -> torch.Tensor:
+        """A mask with no foreground at all -- every voxel background.
+
+        nnU-Net's dataloader produces this routinely: with `oversample_foreground_percent`
+        only *some* samples of a batch are forced to contain foreground and the rest are
+        placed at random, which on a whole-body CT lands outside every label often enough
+        to matter (~18% of the unconstrained ones on Dataset014). A handful of cases are
+        also effectively unlabelled, so every patch drawn from them is this.
+        """
+        return torch.zeros(*VOLUME_SHAPE, dtype=torch.float32)
+
+    def constant_volume(self, value: float = -2.709) -> torch.Tensor:
+        """A volume with zero variance -- the other half of a degenerate patch.
+
+        The default is clipped air in nnU-Net's z-scored CT units: the preprocessing
+        clips to the 0.5th percentile and everything below it lands on exactly that
+        value, so a patch of air outside the body is not merely dark, it is *constant*.
+        Anything that normalises by a range or a standard deviation has to survive it.
+        """
+        return torch.full(VOLUME_SHAPE, value, dtype=torch.float32)
+
     def assertIsImageLike(self, image: torch.Tensor, reference: torch.Tensor, label: str) -> None:
         """Assert `image` is a finite float tensor shaped like `reference`."""
         self.assertEqual(image.shape, reference.shape, f"{label} changed the volume shape")

@@ -65,7 +65,10 @@ LEAF_PARAMS = {
     "RandomRandConvGPU": {"kernel_sizes"},
 }
 KERNEL_SPECIFIC = {"absolute", "sigma", "unsharp_amount", "kernel_sizes"}
-IGNORED_PARAMS = {"p_batch"}
+#: `pad_value` post-dates the ladders this fixture was recorded from, so the legacy
+#: side has nothing to compare against. What it does is pinned in
+#: test_spatial_sampling.TestCropPadValue instead.
+IGNORED_PARAMS = {"p_batch", "pad_value"}
 
 
 def _function_fingerprints() -> dict[str, str]:

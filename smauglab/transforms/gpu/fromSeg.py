@@ -76,7 +76,13 @@ def _voronoi_region_ids(
         sub = torch.argmin(d, dim=1)
         rid = torch.where(c_mask, offset + sub, rid)
         offset += S
-    return rid, offset
+    # At least one region, always. Every cluster can be skipped above -- a constant image
+    # has no foreground at all, so `n_fg` is zero for all of them -- and `offset` then
+    # stays at 0 while `rid` is a valid all-zero id map. The caller sizes its scatter
+    # target with this count, so returning 0 means scattering index 0 into a zero-length
+    # tensor: a RuntimeError on CPU and a device-side assert on CUDA, which does not just
+    # fail the batch, it poisons the context and ends the run.
+    return rid, max(offset, 1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -140,6 +146,11 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
         N = input.shape[0]
 
+        # One region per label, whichever layout the caller used. Reading regions off
+        # the channel axis alone collapses a single-channel label map -- which is what
+        # nnU-Net's trainer passes -- to one foreground blob.
+        regions = seg_region_masks(seg)
+
         # Apply per selected image channel and per batch sample
         for c in self.apply_to_channel:
             img_batch = input[:, c]  # (N, [...])
@@ -162,11 +173,17 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
             # Iterate per sample (seg can differ in shape or labels per sample)
             for b in range(N):
                 x = x_batch[b]
-                seg_b = seg[b]  # shape (R, ...)
-
-                # Quick skip if no foreground
-                if (seg_b > 0).sum() == 0:
-                    input[b, c] = x
+                # No regions to redistribute between, so leave the sample exactly as it
+                # came in. `x_batch` is the [0,1] min-max normalisation this transform
+                # works in, and writing *that* back -- which is what this did -- turns a
+                # z-scored air patch at about [-2.7, -2.67] into [0, 1] and then skips
+                # the `retain_stats` restore below that would have undone it. It is not a
+                # rare shape: nnU-Net leaves some samples of every batch unconstrained,
+                # and a few cases are effectively unlabelled, so this fires on real
+                # anatomy and produces a perfectly finite, badly out-of-distribution
+                # patch that no NaN guard can see.
+                if (seg[b] > 0).sum() == 0:
+                    input[b, c] = img_batch[b]
                     continue
 
                 # Decide redistribution mode once per sample
@@ -174,7 +191,7 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                 in_seg_bool = torch.rand((), device=input.device) <= self.in_seg
 
                 # Binary masks for regions
-                masks = seg_b.bool()  # (R, ...)
+                masks = regions[b]  # (R, ...)
                 R = masks.shape[0]
 
                 # Vectorized dilation for all regions (3 iterations)
@@ -518,6 +535,42 @@ def _zscore_renorm(x: torch.Tensor, bg_threshold: float = 1e-6) -> torch.Tensor:
     var = ((x - mean).pow(2) * fg_f).sum(dim=(2, 3, 4), keepdim=True) / n
     std = var.sqrt().clamp(min=1e-8)
     return torch.where(fg, (x - mean) / std, torch.zeros_like(x))
+
+
+def seg_region_masks(seg: torch.Tensor, max_regions: int | None = None) -> torch.Tensor:
+    """Per-region binary masks, from either segmentation layout.
+
+    A transform is handed the mask in whichever layout its caller happens to use, and
+    the two are not interchangeable. A one-hot tensor carries one region per
+    *channel*; nnU-Net's trainer passes a single-channel integer label map, where the
+    regions are distinct *values*. Anything that reads `seg.shape[1]` as its region
+    count therefore sees exactly one region in the second case and silently treats the
+    whole foreground as a single blob -- which is what `RandomRedistributeSegGPU` and
+    `RandomDomainTransferGPU` both did, in training, for every run.
+
+    * ``[B, C, *spatial]`` with ``C > 1`` -- already one region per channel, returned
+      as bool unchanged, so one-hot callers keep their exact previous behaviour.
+    * ``[B, 1, *spatial]`` -- one channel per distinct value present, background
+      included, values ascending. Taken over the whole batch rather than per sample so
+      every sample of a batch gets the same channel ordering.
+
+    `max_regions` truncates, matching how a consumer with a fixed class count used to
+    slice the one-hot channel axis.
+
+    Values are rounded first: a mask that has been through a geometric transform comes
+    back as float, and `torch.unique` on unrounded floats would invent regions.
+    """
+    if seg.dim() < 3:
+        raise ValueError(f"expected [B, C, *spatial], got {tuple(seg.shape)}")
+    if seg.shape[1] > 1:
+        masks = seg.bool()
+        return masks if max_regions is None else masks[:, :max_regions]
+
+    labels = seg.round()
+    values = torch.unique(labels)
+    if max_regions is not None:
+        values = values[:max_regions]
+    return labels == values.view((1, values.numel()) + (1,) * (seg.dim() - 2))
 
 
 def collapse_onehot_to_index(seg_raw: torch.Tensor) -> torch.Tensor:
