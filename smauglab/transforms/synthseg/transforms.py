@@ -182,18 +182,33 @@ class SynthSegTransformsGPU(nn.Module):
 
     @torch.no_grad()
     def forward(self, data: Tensor, target: Tensor):
-        if self.probability < 1.0 and float(torch.rand((), device=data.device)) >= self.probability:
+        # Per sample, not per batch. One draw for the whole batch made `probability`
+        # mean "this fraction of batches is entirely synthetic", so at 0.5 the
+        # network saw all-synthetic and all-real batches rather than a mix of both
+        # in each -- a different training signal, and out of step with the
+        # per-sample convention every other transform here follows.
+        keep = torch.rand(data.shape[0], device=data.device) < self.probability
+        if not bool(keep.any()):
             return data, target
 
         # ``data`` (the real image) is only consumed when em_label_completion is on.
-        image, labels = self.generator(target, image=data)
+        image, labels = self.generator(target[keep], image=data[keep])
         image = image.to(device=data.device, dtype=data.dtype)
 
         if self.return_onehot and target.dim() == 5 and target.shape[1] > 1:
             labels = self._to_onehot(labels, target.shape[1]).to(dtype=target.dtype)
         else:
             labels = labels.to(dtype=target.dtype)
-        return image, labels
+
+        if bool(keep.all()):
+            return image, labels
+
+        # Splice the synthesised rows back in, leaving the rest untouched.
+        out_image = data.clone()
+        out_target = target.clone()
+        out_image[keep] = image
+        out_target[keep] = labels
+        return out_image, out_target
 
     @staticmethod
     def _to_onehot(labels: Tensor, n_channels: int) -> Tensor:
