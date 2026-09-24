@@ -204,8 +204,16 @@ class _FunctionBaseTransform(ImageOnlyTransform):
                 orig_mean = torch.mean(img[c])
                 orig_std = torch.std(img[c])
 
-            # Normalize
-            img[c] = (img[c] - img.min()) / (img.max() - img.min() + 0.00001)
+            # Normalize.
+            #
+            # img[c].min()/max(), not img.min()/max(): every other line in this
+            # loop works on the single channel, and reducing over the whole slab
+            # let one channel decide another's range. That matters concretely in
+            # the two-channel layout `torchio_ops.apply_tio` produces, where
+            # channel 1 is a 0/1 label map and pins img.max() at 1. The GPU
+            # sibling documents the same fix.
+            channel_min, channel_max = img[c].min(), img[c].max()
+            img[c] = (img[c] - channel_min) / (channel_max - channel_min + 0.00001)
 
             # Apply function
             img[c] = params["function"](img[c])
