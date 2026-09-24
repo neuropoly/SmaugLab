@@ -16,6 +16,7 @@ not cosmetic: nnU-Net writes the trainer class name into every checkpoint
 renaming it would make several hundred trained models unloadable.
 """
 
+import filecmp
 import importlib
 import os
 import shutil
@@ -75,6 +76,36 @@ def resolve_config_path() -> str:
     return str(importlib.resources.files(configs) / DEFAULT_CONFIG)
 
 
+def _record_config(source: str, destination: str) -> None:
+    """Write down which config this run was trained with.
+
+    Overwriting unconditionally destroys the record whenever a run is resumed
+    with a different SMAUGLAB_PARAMS_JSON: the earlier epochs were trained with
+    the old config and nothing says so any more. The file is the only provenance
+    a finished run carries, so a differing one is kept and the new one written
+    beside it under a numbered name, with a warning naming both.
+    """
+    if not os.path.exists(destination):
+        shutil.copy(source, destination)
+        return
+
+    if filecmp.cmp(source, destination, shallow=False):
+        return
+
+    index = 1
+    root, extension = os.path.splitext(destination)
+    while os.path.exists(f"{root}_{index}{extension}"):
+        index += 1
+    kept = f"{root}_{index}{extension}"
+    shutil.copy(source, kept)
+    warnings.warn(
+        f"This run was previously trained with a different SmaugLab config. "
+        f"{destination} is unchanged and describes the earlier epochs; the config now in use "
+        f"was written to {kept}.",
+        stacklevel=2,
+    )
+
+
 def _has_gpu_augmentations(config) -> bool:
     """Whether this config asks for anything on the GPU side."""
     return bool(config.names(Backend.GPU))
@@ -113,7 +144,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             f"  CPU: {len(config.names(Backend.CPU))} augmentations, GPU: {len(config.names(Backend.GPU))}, mode: {config.pipeline_mode().value}"
         )
 
-        shutil.copy(json_path, os.path.join(self.output_folder, "transform_params_used_for_training.json"))
+        _record_config(json_path, os.path.join(self.output_folder, "transform_params_used_for_training.json"))
 
         # A non-finite loss is otherwise invisible: `GradScaler` skips the step without a
         # word, so the run simply stops learning and the only symptom is `train_loss nan`
