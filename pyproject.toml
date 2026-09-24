@@ -75,7 +75,14 @@ torchvision = "*"
 monai = { version = "*", extras = ["all"], optional = true }
 tqdm = { version = "*", optional = true }
 wandb = { version = "*", optional = true }
-nnunetv2 = { version = "*", optional = true }
+# >=2.5, not "*": 2.5 moved nnU-Net's augmentation pipeline to batchgeneratorsv2,
+# which every trainer here imports, and changed the `get_training_transforms`
+# signature the trainers override. On 2.4.2 nnU-Net calls it with
+# `order_resampling_data=` / `order_resampling_seg=`, which the override does not
+# declare, so training dies with a TypeError before the first batch -- and its
+# `__init__` still has `unpack_dataset` between `dataset_json` and `device`.
+# Verified: 2.4.2 mismatches, 2.6.4 matches.
+nnunetv2 = { version = ">=2.5", optional = true }
 build = { version = "*", optional = true }
 coverage = { version = ">=7", optional = true }
 mypy = { version = ">=1.10", optional = true }
