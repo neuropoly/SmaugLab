@@ -784,8 +784,13 @@ class _RandomGammaBaseGPU(ImageOnlyTransform):
             # Flatten spatial dimensions to compute min/max per batch element
             batch_size = channel_data.shape[0]
             flat_data = channel_data.view(batch_size, -1)  # [N, spatial_flattened]
-            minm = flat_data.min(dim=1, keepdim=self.keepdim)[0]  # [N, 1]
-            maxm = flat_data.max(dim=1, keepdim=self.keepdim)[0]  # [N, 1]
+            # keepdim=False, not self.keepdim: kornia's `keepdim` says whether the
+            # *transform's output* keeps the input's shape, and has nothing to do
+            # with this reduction. It happened to be harmless because both [N] and
+            # [N, 1] survive the `view(reshape_dims)` below, but the shape the
+            # comment claims held for only one of the two values it can take.
+            minm = flat_data.min(dim=1, keepdim=False)[0]  # [N]
+            maxm = flat_data.max(dim=1, keepdim=False)[0]  # [N]
             rnge = maxm - minm
 
             # Reshape min, max, range to broadcast over spatial dims: [N, 1] -> [N, 1, 1, ...]
