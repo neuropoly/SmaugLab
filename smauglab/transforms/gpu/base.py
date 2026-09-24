@@ -239,7 +239,12 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
             params = cls.get_instance_module_param(param)
             params_i = copy.deepcopy(params)
             for i, inp in enumerate(input):
-                params_i["batch_prob"] = params["batch_prob"][i]
+                # [i : i + 1], not [i]: indexing with a scalar gives a 0-dim
+                # tensor, and kornia does `to_apply = batch_prob > 0.5` and then
+                # branches on `to_apply.all()` / `.any()`. Those are the same value
+                # for a 0-dim tensor, so the per-element branch was unreachable and
+                # `in_tensor[to_apply]` would select along the wrong axis.
+                params_i["batch_prob"] = params["batch_prob"][i : i + 1]
                 tfm_inp = module.transform_masks(inp, params=params_i, flags=module.flags, transform=module.transform_matrix, **extra_args)
                 tfm_input.append(tfm_inp)
             input = tfm_input
@@ -249,7 +254,12 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
             params = cls.get_instance_module_param(param)
             params_i = copy.deepcopy(params)
             for i, inp in enumerate(input):
-                params_i["batch_prob"] = params["batch_prob"][i]
+                # [i : i + 1], not [i]: indexing with a scalar gives a 0-dim
+                # tensor, and kornia does `to_apply = batch_prob > 0.5` and then
+                # branches on `to_apply.all()` / `.any()`. Those are the same value
+                # for a 0-dim tensor, so the per-element branch was unreachable and
+                # `in_tensor[to_apply]` would select along the wrong axis.
+                params_i["batch_prob"] = params["batch_prob"][i : i + 1]
                 tfm_inp = module.transform_masks(inp, params=params_i, flags=module.flags, **extra_args)
                 tfm_input.append(tfm_inp)
             input = tfm_input
