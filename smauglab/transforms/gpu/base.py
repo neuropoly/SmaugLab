@@ -318,7 +318,7 @@ class AugmentationSequentialOpsCustom(AugmentationSequentialOps):
             mask = arg[mask_index]
             assert isinstance(param.data, dict)
             assert isinstance(mask, Tensor)
-            param.data["seg"] = mask
+            param.data["seg"] = _seg_for_applied_rows(mask, param.data.get("batch_prob"))
 
         outputs = []
         for inp, dcate in zip(arg, _data_keys):
@@ -331,6 +331,29 @@ class AugmentationSequentialOpsCustom(AugmentationSequentialOps):
         if len(outputs) == 1 and isinstance(outputs, (list, tuple)):
             return outputs[0]
         return outputs
+
+
+def _seg_for_applied_rows(mask: Tensor, batch_prob: Any) -> Tensor:
+    """The mask rows `apply_transform` will actually be handed.
+
+    kornia slices the image down to the samples that drew below `p`
+    (`apply_transform(in_tensor[to_apply], params, ...)`) but passes `params`
+    through untouched. The segmentation rides in `params`, so a consumer reading
+    `params["seg"]` would pair a B-row mask with a B'-row image: a broadcast
+    error for anything vectorised, and -- worse, because it is silent -- the
+    wrong sample's segmentation for anything that loops over `input.shape[0]`.
+
+    Slicing here rather than in each consumer keeps `seg[b]` aligned with
+    `input[b]` everywhere, including the transforms that never noticed.
+    """
+    if not isinstance(batch_prob, Tensor) or batch_prob.numel() != mask.shape[0]:
+        return mask
+    to_apply = batch_prob > 0.5
+    # The all-true case is the common one; indexing would copy the whole volume
+    # for nothing. The all-false case never reaches apply_transform at all.
+    if bool(to_apply.all()):
+        return mask
+    return mask[to_apply]
 
 
 @contextlib.contextmanager
