@@ -107,6 +107,36 @@ def gaussian_kernel3d(
     return kernel / kernel.sum()
 
 
+def _pad_axis(volume: Tensor, axis: int, pad: int, mode: str) -> Tensor:
+    """Pad one spatial axis by `pad` on both sides, however wide `pad` is.
+
+    `F.pad(mode="reflect")` requires the padding to be smaller than the axis it
+    pads, and a Gaussian wide enough to blur a small patch exceeds that
+    routinely: SynthSeg's `blurring_sigma_for_downsampling` reaches sigma ~6, so
+    `ksize // 2` is 18 against a 16-voxel axis. That raised RuntimeError on about
+    2% of generator calls on 16-cube patches -- an intermittent crash mid-run
+    rather than a reproducible failure.
+
+    Reflect is applied in as many legal passes as it takes, each at most
+    `extent - 1`, which keeps the existing behaviour wherever one pass was
+    already enough. Whatever is left over, and an axis of length 1 where reflect
+    is undefined at all, falls back to replicate.
+    """
+    remaining = pad
+    while remaining > 0:
+        step = min(remaining, volume.shape[2 + axis] - 1) if mode == "reflect" else remaining
+        step_mode = mode
+        if step <= 0:
+            step, step_mode = remaining, "replicate"
+        pad_full = [0, 0, 0, 0, 0, 0]
+        # F.pad's tuple runs last spatial axis first: (W_lo, W_hi, H_lo, H_hi, D_lo, D_hi).
+        pad_full[(2 - axis) * 2] = step
+        pad_full[(2 - axis) * 2 + 1] = step
+        volume = F.pad(volume, pad_full, mode=step_mode)
+        remaining -= step
+    return volume
+
+
 def gaussian_blur3d(
     image: Tensor,
     sigma: Union[float, Tensor],
@@ -154,12 +184,7 @@ def gaussian_blur3d(
         shape[2 + axis] = ksize
         weight = kernel.view(shape).repeat(channels, 1, 1, 1, 1)
 
-        # F.pad's tuple runs last spatial axis first: (W_lo, W_hi, H_lo, H_hi, D_lo, D_hi).
-        pad_full = [0, 0, 0, 0, 0, 0]
-        pad_full[(2 - axis) * 2] = pad
-        pad_full[(2 - axis) * 2 + 1] = pad
-
-        out = F.conv3d(F.pad(out, pad_full, mode=padding_mode), weight, groups=channels)
+        out = F.conv3d(_pad_axis(out, axis, pad, padding_mode), weight, groups=channels)
     return out
 
 
