@@ -264,8 +264,15 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
             # choose random odd kernel size e.g. [1,3,5,7]
             k = int(shared_choice(self.kernel_sizes))  # define kernel_sizes in __init__
 
-            std = 1.0 / math.sqrt(k * k)
-            kernel = torch.randn((k, k, k), device=device) * std  # for 3D
+            # 1/sqrt(k**3), not 1/sqrt(k*k): the kernel has k**3 taps, so unit
+            # output variance needs per-tap variance 1/k**3. The 2-D formula left
+            # a gain of sqrt(k) -- measured output std 0.85 / 1.59 / 2.11 / 2.43
+            # for k = 1 / 3 / 5 / 7 on unit-variance input -- which made the
+            # augmentation's strength a function of the randomly drawn kernel
+            # size. Nothing corrected it downstream: RandomRandConvGPU defaults
+            # retain_stats to False.
+            std = 1.0 / math.sqrt(k**3)
+            kernel = torch.randn((k, k, k), device=device) * std
         else:
             raise NotImplementedError("Kernel type not implemented.")
         return kernel
