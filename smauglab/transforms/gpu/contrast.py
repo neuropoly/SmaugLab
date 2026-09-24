@@ -7,6 +7,7 @@ import torchvision.transforms._functional_tensor as F_t
 from torch import Tensor
 from torch.nn import functional as F
 
+from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform
 from smauglab.transforms.kernels import gaussian_kernel3d, laplace_kernel, scharr_kernels
 from smauglab.transforms.rng import shared_choice
@@ -348,6 +349,11 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
 # the ladder is gone.
 
 
+@register(
+    aug_id=AugId.LAPLACE,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomLaplaceGPU(_RandomConvBaseGPU):
     """Laplacian edge enhancement."""
 
@@ -381,6 +387,11 @@ class RandomLaplaceGPU(_RandomConvBaseGPU):
         )
 
 
+@register(
+    aug_id=AugId.SCHARR,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomScharrGPU(_RandomConvBaseGPU):
     """Scharr gradient-magnitude edge filter."""
 
@@ -414,6 +425,11 @@ class RandomScharrGPU(_RandomConvBaseGPU):
         )
 
 
+@register(
+    aug_id=AugId.GAUSSIAN_BLUR,
+    backend=Backend.GPU,
+    group=AugType.GE,
+)
 class RandomGaussianBlurGPU(_RandomConvBaseGPU):
     """Gaussian blur via separable convolution."""
 
@@ -447,6 +463,11 @@ class RandomGaussianBlurGPU(_RandomConvBaseGPU):
         )
 
 
+@register(
+    aug_id=AugId.UNSHARP_MASK,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomUnsharpMaskGPU(_RandomConvBaseGPU):
     """Unsharp masking: sharpen by subtracting a blurred copy."""
 
@@ -482,6 +503,11 @@ class RandomUnsharpMaskGPU(_RandomConvBaseGPU):
         )
 
 
+@register(
+    aug_id=AugId.RAND_CONV,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomRandConvGPU(_RandomConvBaseGPU):
     """RandConv: convolution with a randomly drawn multi-scale kernel."""
 
@@ -552,6 +578,11 @@ def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torc
 
 
 ## Noise transform
+@register(
+    aug_id=AugId.GAUSSIAN_NOISE,
+    backend=Backend.GPU,
+    group=AugType.GE,
+)
 class RandomGaussianNoiseGPU(ImageOnlyTransform):
     """Add random Gaussian noise to image.
     If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
@@ -614,6 +645,11 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
 
 
 ## Multiplicative brightness transform
+@register(
+    aug_id=AugId.BRIGHTNESS,
+    backend=Backend.GPU,
+    group=AugType.GE,
+)
 class RandomBrightnessGPU(ImageOnlyTransform):
     """Apply random brightness adjustment to image.
     If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
@@ -782,6 +818,11 @@ class _RandomGammaBaseGPU(ImageOnlyTransform):
 # cannot express the same augmentation two ways.
 
 
+@register(
+    aug_id=AugId.GAMMA,
+    backend=Backend.GPU,
+    group=AugType.GE,
+)
 class RandomGammaGPU(_RandomGammaBaseGPU):
     """Random gamma adjustment."""
 
@@ -813,6 +854,11 @@ class RandomGammaGPU(_RandomGammaBaseGPU):
         )
 
 
+@register(
+    aug_id=AugId.INV_GAMMA,
+    backend=Backend.GPU,
+    group=AugType.GE,
+)
 class RandomInvGammaGPU(_RandomGammaBaseGPU):
     """Random gamma adjustment applied to the inverted image."""
 
@@ -845,6 +891,11 @@ class RandomInvGammaGPU(_RandomGammaBaseGPU):
 
 
 ## nnunetv2 contrast transform
+@register(
+    aug_id=AugId.CONTRAST,
+    backend=Backend.GPU,
+    group=AugType.GE,
+)
 class RandomContrastGPU(ImageOnlyTransform):
     """Apply random gamma adjustment to image.
     If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
@@ -1048,30 +1099,55 @@ class _RandomNamedFunctionGPU(_RandomFunctionBaseGPU):
         )
 
 
+@register(
+    aug_id=AugId.FUNC_LOG1P,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomLog1pGPU(_RandomNamedFunctionGPU):
     """Apply log(1 + x)."""
 
     function = staticmethod(_log1p)
 
 
+@register(
+    aug_id=AugId.FUNC_SQRT,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomSqrtGPU(_RandomNamedFunctionGPU):
     """Apply sqrt(x)."""
 
     function = staticmethod(torch.sqrt)
 
 
+@register(
+    aug_id=AugId.FUNC_SIN,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomSinGPU(_RandomNamedFunctionGPU):
     """Apply sin(x)."""
 
     function = staticmethod(torch.sin)
 
 
+@register(
+    aug_id=AugId.FUNC_EXP,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomExpGPU(_RandomNamedFunctionGPU):
     """Apply exp(x)."""
 
     function = staticmethod(torch.exp)
 
 
+@register(
+    aug_id=AugId.FUNC_SIGMOID,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomSigmoidGPU(_RandomNamedFunctionGPU):
     """Apply the logistic sigmoid 1 / (1 + exp(-x))."""
 
@@ -1079,6 +1155,11 @@ class RandomSigmoidGPU(_RandomNamedFunctionGPU):
 
 
 ## Inverse transform
+@register(
+    aug_id=AugId.INVERSE,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomInverseGPU(ImageOnlyTransform):
     """Inverse image based on probability.
     If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
@@ -1150,6 +1231,11 @@ class RandomInverseGPU(ImageOnlyTransform):
 
 
 ## Histogram transform
+@register(
+    aug_id=AugId.HISTOGRAM_EQUAL,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomHistogramEqualizationGPU(ImageOnlyTransform):
     """Apply histogram equalization transformation to the image based on probability.
     If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
@@ -1244,6 +1330,11 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         return input
 
 
+@register(
+    aug_id=AugId.BIAS_FIELD,
+    backend=Backend.GPU,
+    group=AugType.TA,
+)
 class RandomBiasFieldGPU(ImageOnlyTransform):
     """Apply a smooth multiplicative bias field to selected channels.
 
@@ -1425,6 +1516,11 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
 
 
 # Random clamping transform
+@register(
+    aug_id=AugId.CLAMP,
+    backend=Backend.GPU,
+    group=AugType.GE,
+)
 class RandomClampGPU(ImageOnlyTransform):
     """Apply random gamma adjustment to image.
     If the image is torch Tensor, it is expected to have [N, C, X, Y] or [N, C, X, Y, Z] shape.
@@ -1500,6 +1596,11 @@ class RandomClampGPU(ImageOnlyTransform):
         return input
 
 
+@register(
+    aug_id=AugId.ZSCORE,
+    backend=Backend.GPU,
+    group=AugType.GE,
+)
 class ZscoreNormalizationGPU(ImageOnlyTransform):
     """Apply z-score normalization to selected channels.
 

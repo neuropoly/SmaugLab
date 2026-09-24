@@ -5,7 +5,14 @@ import torch
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
 from scipy.stats import norm
 
+from smauglab.registry import AugId, AugType, Backend, register
 
+
+@register(
+    aug_id=AugId.REDISTRIBUTE_SEG,
+    backend=Backend.CPU,
+    group=AugType.TA,
+)
 class RedistributeTransform(BasicTransform):
     """
     Redistribute image values using segmentation regions.

@@ -4,11 +4,19 @@ import torch
 import torch.nn.functional as F
 from batchgeneratorsv2.helpers.scalar_type import RandomScalar
 from batchgeneratorsv2.transforms.base.basic_transform import ImageOnlyTransform
+from batchgeneratorsv2.transforms.intensity.contrast import BGContrast
 from batchgeneratorsv2.transforms.intensity.gamma import GammaTransform
 
+from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.kernels import laplace_kernel, scharr_kernels
 
 
+@register(
+    aug_id=AugId.INV_GAMMA,
+    backend=Backend.CPU,
+    group=AugType.GE,
+    param_adapters={"gamma": BGContrast},
+)
 class InvertedGammaTransform(GammaTransform):
     """Gamma adjustment applied to the inverted image.
 
@@ -99,6 +107,11 @@ class _ConvBaseTransform(ImageOnlyTransform):
 # either backend and `kernel_type` disappears from the config surface.
 
 
+@register(
+    aug_id=AugId.LAPLACE,
+    backend=Backend.CPU,
+    group=AugType.TA,
+)
 class LaplaceConvTransform(_ConvBaseTransform):
     """Laplacian edge enhancement."""
 
@@ -106,6 +119,11 @@ class LaplaceConvTransform(_ConvBaseTransform):
         super().__init__(kernel_type="Laplace", absolute=absolute, retain_stats=retain_stats)
 
 
+@register(
+    aug_id=AugId.SCHARR,
+    backend=Backend.CPU,
+    group=AugType.TA,
+)
 class ScharrConvTransform(_ConvBaseTransform):
     """Scharr gradient-magnitude edge filter."""
 
@@ -113,6 +131,11 @@ class ScharrConvTransform(_ConvBaseTransform):
         super().__init__(kernel_type="Scharr", absolute=absolute, retain_stats=retain_stats)
 
 
+@register(
+    aug_id=AugId.HISTOGRAM_EQUAL,
+    backend=Backend.CPU,
+    group=AugType.TA,
+)
 class HistogramEqualTransform(ImageOnlyTransform):
     """
     Update image intensity using histogram manipulations
@@ -220,30 +243,55 @@ class _NamedFunctionTransform(_FunctionBaseTransform):
         super().__init__(function=type(self).function_impl, retain_stats=retain_stats)
 
 
+@register(
+    aug_id=AugId.FUNC_LOG1P,
+    backend=Backend.CPU,
+    group=AugType.TA,
+)
 class Log1pTransform(_NamedFunctionTransform):
     """Apply log(1 + x)."""
 
     function_impl = staticmethod(_log1p)
 
 
+@register(
+    aug_id=AugId.FUNC_SQRT,
+    backend=Backend.CPU,
+    group=AugType.TA,
+)
 class SqrtTransform(_NamedFunctionTransform):
     """Apply sqrt(x)."""
 
     function_impl = staticmethod(torch.sqrt)
 
 
+@register(
+    aug_id=AugId.FUNC_SIN,
+    backend=Backend.CPU,
+    group=AugType.TA,
+)
 class SinTransform(_NamedFunctionTransform):
     """Apply sin(x)."""
 
     function_impl = staticmethod(torch.sin)
 
 
+@register(
+    aug_id=AugId.FUNC_EXP,
+    backend=Backend.CPU,
+    group=AugType.TA,
+)
 class ExpTransform(_NamedFunctionTransform):
     """Apply exp(x)."""
 
     function_impl = staticmethod(torch.exp)
 
 
+@register(
+    aug_id=AugId.FUNC_SIGMOID,
+    backend=Backend.CPU,
+    group=AugType.TA,
+)
 class SigmoidTransform(_NamedFunctionTransform):
     """Apply the logistic sigmoid 1 / (1 + exp(-x))."""
 
@@ -301,6 +349,11 @@ def apply_filter(x: torch.Tensor, kernel: torch.Tensor, **kwargs) -> torch.Tenso
     return output.view(batch, chns, *output.shape[2:])
 
 
+@register(
+    aug_id=AugId.ZSCORE,
+    backend=Backend.CPU,
+    group=AugType.GE,
+)
 class ZscoreNormalization(ImageOnlyTransform):
     """
     Z-score normalization of image
