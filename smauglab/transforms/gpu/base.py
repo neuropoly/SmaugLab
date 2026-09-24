@@ -407,7 +407,7 @@ def record_applications(pipeline):
 
 def _scalar_params(params) -> dict:
     """Keep what is readable; a spatial transform's parameters are batch-sized tensors."""
-    out = {}
+    out: dict[str, Any] = {}
     for key, value in (params or {}).items():
         if key == "seg":
             continue
