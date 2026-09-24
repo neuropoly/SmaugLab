@@ -169,3 +169,57 @@ class TestTheTransformsStillWorkEndToEnd(SmaugLabTestCase):
         params = transform.get_parameters(image=None)
 
         self.assertEqual(sum(bool(v) for v in params.values()), 1)
+
+
+class TestSecondChannelLayoutIsExplicit(SmaugLabTestCase):
+    """Channel count cannot tell an image+labels pair from two modalities.
+
+    `apply_tio` dispatched on `img.shape[0] == 2` alone, so a genuine
+    two-modality input (T1+T2, in-phase/out-of-phase) had its second modality
+    registered as a `tio.LabelMap`: resampled nearest-neighbour, and skipped by
+    every intensity artifact, so the two modalities diverged in both respects.
+
+    The layout is now stated rather than guessed. The default is unchanged, so
+    the totalspineseg "step 2" pipeline behaves exactly as before.
+    """
+
+    def test_the_default_still_treats_the_second_channel_as_labels(self):
+        img, seg = _pair(channels=2)
+        img[1] = (img[1] > 0.5).float()
+
+        img_out, _ = apply_tio(tio.RandomAffine(degrees=15), img, seg)
+
+        self.assertTrue(bool(torch.isin(img_out[1], torch.tensor([0.0, 1.0])).all()))
+
+    def test_a_second_modality_can_be_kept_as_an_image(self):
+        """The case that used to be impossible to express."""
+        img, seg = _pair(channels=2)
+
+        img_out, _ = apply_tio(
+            tio.RandomBlur(std=(1.0, 1.0)),
+            img,
+            seg,
+            second_channel_is_labels=False,
+        )
+
+        self.assertFalse(
+            bool(torch.equal(img_out[1], img[1])),
+            "an intensity artifact skipped the second channel, so it is still a LabelMap",
+        )
+
+    def test_as_labels_the_second_channel_is_left_alone_by_an_intensity_artifact(self):
+        """The control for the test above: the same call with the default."""
+        img, seg = _pair(channels=2)
+
+        img_out, _ = apply_tio(tio.RandomBlur(std=(1.0, 1.0)), img, seg)
+
+        self.assertTrue(bool(torch.equal(img_out[1], img[1])))
+
+    def test_a_single_channel_image_is_unaffected_by_the_flag(self):
+        img, seg = _pair(channels=1)
+
+        for flag in (True, False):
+            with self.subTest(second_channel_is_labels=flag):
+                img_out, _ = apply_tio(tio.RandomAffine(degrees=5), img, seg, second_channel_is_labels=flag)
+
+                self.assertEqual(img_out.shape, img.shape)

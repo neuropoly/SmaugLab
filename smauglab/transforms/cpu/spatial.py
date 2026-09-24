@@ -25,7 +25,7 @@ SPATIAL_TRANSFORMS: dict[str, TransformFactory] = {
     group=AugType.GEO,
 )
 class SpatialCustomTransform(BasicTransform):
-    def __init__(self, flip=False, affine=False, elastic=False, anisotropy=False, random_pick=False):
+    def __init__(self, flip=False, affine=False, elastic=False, anisotropy=False, random_pick=False, second_channel_is_labels=True):
         """
         Apply all selected spatial transformation (flip, affine, elastic and anisotropy) to the image if they are enabled (set to True).
         If `random_pick` is True, randomly select and apply ONE of the enabled transformation.
@@ -38,6 +38,9 @@ class SpatialCustomTransform(BasicTransform):
         self.elastic = elastic
         self.anisotropy = anisotropy
         self.random_pick = random_pick
+        # Channel count alone cannot tell an image+labels pair from a
+        # two-modality image; see apply_tio.
+        self.second_channel_is_labels = second_channel_is_labels
 
     def get_parameters(self, **data_dict) -> dict:
         return select({name: getattr(self, name) for name in SPATIAL_TRANSFORMS}, self.random_pick)
@@ -48,7 +51,7 @@ class SpatialCustomTransform(BasicTransform):
         return data_dict
 
     def _apply_to_image(self, img: torch.Tensor, seg: torch.Tensor, **params) -> tuple[torch.Tensor, torch.Tensor]:
-        return apply_enabled(SPATIAL_TRANSFORMS, img, seg, params)
+        return apply_enabled(SPATIAL_TRANSFORMS, img, seg, params, second_channel_is_labels=self.second_channel_is_labels)
 
 
 ### Shape transform
