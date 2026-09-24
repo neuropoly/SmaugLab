@@ -37,6 +37,7 @@ from _common import (
     fetch_image_config,
     get_validation_image,
     parser2config,
+    report_missing,
     tuple2string,
     tuple_type_float,
     tuple_type_int,
@@ -141,6 +142,11 @@ def main():
         config_data=config_data,
         split="VALIDATION",
     )
+
+    # Both lists were captured and never looked at, so a data config pointing at
+    # paths that do not exist trained on whatever was left, silently.
+    report_missing(err_train, "TRAINING")
+    report_missing(err_val, "VALIDATION")
 
     # Load SmaugLab transform parameters 🐞
     configs_path = importlib.resources.files(configs)
