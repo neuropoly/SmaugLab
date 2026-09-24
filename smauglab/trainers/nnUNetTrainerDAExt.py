@@ -16,7 +16,7 @@ not cosmetic: nnU-Net writes the trainer class name into every checkpoint
 renaming it would make several hundred trained models unloadable.
 """
 
-import importlib
+import importlib.resources
 import os
 import shutil
 import warnings
