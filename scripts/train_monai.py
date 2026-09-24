@@ -288,7 +288,16 @@ def main():
         wandb.log({"DSC_train/epoch": train_dsc})
         wandb.log({"training_lr/epoch": lr})
 
-        # evaluate on validation set
+        # evaluate on validation set.
+        #
+        # Reset first, so every epoch validates on the *same* crops.
+        # val_transforms is a copy of train_transforms, RandCropByPosNegLabeld and
+        # all, so without this each epoch scored three freshly drawn
+        # foreground-biased patches per volume. `val_dsc > val_dsc_best` below then
+        # selects the epoch that drew the easiest crops as much as the best model.
+        # MONAI's Randomizable.set_random_state puts the whole chain back to a known
+        # state; the validation set itself is unchanged.
+        val_transforms.set_random_state(seed=seed)
         val_loss, val_dsc = validate(val_loader, model, loss_func, epoch, device)
 
         # 🐝 Plot loss and dice similarity coefficient
