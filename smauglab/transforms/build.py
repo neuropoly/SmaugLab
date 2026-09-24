@@ -28,8 +28,14 @@ def _instantiate(entry: AugEntry, params: dict, context: dict[str, Any]) -> Any:
     # batchgeneratorsv2 ranges need wrapping in BGContrast, which samples differently
     # from the bare tuple -- see AugEntry.param_adapters.
     for name, adapter in entry.param_adapters.items():
-        if name in kwargs:
-            kwargs[name] = adapter(tuple(kwargs[name]))
+        value = kwargs.get(name)
+        if value is None:
+            # Either absent, or explicitly null -- which validation now rejects for
+            # a required parameter and which is a legitimate "unset" for an optional
+            # one. Either way there is nothing to adapt.
+            continue
+        # A bare scalar is a valid RandomScalar; only a range needs the tuple.
+        kwargs[name] = adapter(tuple(value) if isinstance(value, (list, tuple)) else value)
 
     for name in entry.context_params:
         if name in context:

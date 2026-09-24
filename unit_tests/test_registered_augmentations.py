@@ -108,15 +108,24 @@ class TestEveryEntryIsConstructible(unittest.TestCase):
                     if reason:
                         self.skipTest(reason)
                 required = registry.required_params(entry)
-                if required:
-                    # Legitimate: a few third-party CPU transforms take mandatory
-                    # arguments that only a config or the trainer can supply.
-                    self.assertTrue(
-                        entry.backend is Backend.CPU or entry.context_params,
-                        f"{entry.name} requires {sorted(required)} but nothing supplies them",
-                    )
+                # A few third-party CPU transforms take mandatory arguments. Those
+                # are declared as `template_values` -- the values the generated
+                # template writes -- so the entry is still constructible here
+                # rather than merely asserted to be somebody else's problem. Only
+                # context parameters may be left to the trainer.
+                unsupplied = required - set(entry.template_values) - set(entry.context_params)
+                self.assertFalse(
+                    unsupplied,
+                    f"{entry.name} requires {sorted(unsupplied)} but neither template_values nor the trainer supplies them",
+                )
+                kwargs = {name: entry.template_values[name] for name in required if name in entry.template_values}
+                for name, adapter in entry.param_adapters.items():
+                    if name in kwargs:
+                        kwargs[name] = adapter(tuple(kwargs[name]))
+                if entry.context_params:
+                    # patch_size / rotation come from nnU-Net's plans at runtime.
                     continue
-                entry.cls(**dict(entry.smoke_kwargs))
+                entry.cls(**{**kwargs, **dict(entry.smoke_kwargs)})
 
 
 class TestGeneratedArtifactsAreCurrent(unittest.TestCase):

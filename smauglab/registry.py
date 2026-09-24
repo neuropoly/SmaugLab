@@ -314,6 +314,12 @@ class AugEntry:
     param_adapters: Mapping[str, Callable[[Any], Any]] = field(default_factory=lambda: MappingProxyType({}))
     # Constructor nudges that make the standalone smoke test exercise something.
     smoke_kwargs: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    # What the generated template writes for a parameter that has no default. A
+    # required parameter has nothing to render, and writing `null` produced a
+    # template that validated but could not be built -- so the value a working
+    # config uses is declared here instead. Only needed for the third-party CPU
+    # transforms, whose mandatory arguments nnU-Net supplies from its own plans.
+    template_values: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     summary: str = ""
 
     def __post_init__(self) -> None:
@@ -402,6 +408,7 @@ def register(
     force_sequential: bool = False,
     external_asset: str | None = None,
     smoke_kwargs: Mapping[str, Any] | None = None,
+    template_values: Mapping[str, Any] | None = None,
     param_adapters: Mapping[str, Callable[[Any], Any]] | None = None,
     summary: str = "",
 ) -> Callable[[T], T]:
@@ -421,6 +428,7 @@ def register(
                 force_sequential=force_sequential,
                 external_asset=external_asset,
                 smoke_kwargs=MappingProxyType(dict(smoke_kwargs or {})),
+                template_values=MappingProxyType(dict(template_values or {})),
                 param_adapters=MappingProxyType(dict(param_adapters or {})),
                 summary=summary or _first_docstring_line(cls),
             )
@@ -589,8 +597,11 @@ def render_matrix(fmt: str = "md") -> str:
 def _json_safe(value: Any) -> Any:
     """Best-effort conversion of a default into something JSON can hold."""
     if value is inspect.Parameter.empty:
-        # Required: no default to show. Null makes the hole visible, and strict
-        # loading will reject it until someone fills it in.
+        # Required and with no `template_values` entry to stand in for it. Null
+        # makes the hole visible, and strict loading rejects it: `validate_section`
+        # counts a required parameter written as null as missing, which it did not
+        # used to -- it only checked whether the key was present, so the shipped
+        # template validated clean and then failed to build.
         return None
     if isinstance(value, tuple):
         return [_json_safe(v) for v in value]
@@ -611,7 +622,10 @@ def render_template(backend: Backend) -> dict[str, dict[str, Any]]:
     """
     section: dict[str, dict[str, Any]] = {}
     for entry in entries(backend):
-        section[entry.name] = {name: _json_safe(param.default) for name, param in sorted(accepted_params(entry).items())}
+        section[entry.name] = {
+            name: entry.template_values[name] if name in entry.template_values else _json_safe(param.default)
+            for name, param in sorted(accepted_params(entry).items())
+        }
     return section
 
 
