@@ -106,13 +106,31 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
     Mirrors the CPU `RedistributeTransform` behavior using GPU-friendly ops.
     Works with inputs shaped [N, C, H, W] or [N, C, D, H, W].
+
+    `retain_stats` defaults to True, and wants to stay that way. The whole method
+    operates in a per-sample [0, 1] min-max space and adds a perturbation of up to
+    2.0 *in that space* -- twice the input's full dynamic range. With
+    `retain_stats=False` nothing maps the result back, so the output is
+    independent of the input's scale entirely: a z-scored patch, the same patch
+    scaled by 100, and anything else all come out in the same [0.5, 2.9] band with
+    mean 2.2. For a network fed z-scored patches that is finite, silent and badly
+    out of distribution -- the same defect the no-foreground branch below carries a
+    comment about.
+
+    Mapping back is not a fix on its own: the perturbation is defined in
+    normalised units, so rescaling it by the input range makes it far larger
+    (measured, mean 18.4 rather than 2.2). Bounding the amplitude in input units
+    would be a redesign of an augmentation inherited from totalspineseg, so this
+    only changes which setting you get by default. `transform_params_hybrid.json`
+    and `transform_params_hybrid_TAGE.json` ask for False explicitly and are
+    unaffected.
     """
 
     def __init__(
         self,
         in_seg: float = 0.2,
         apply_to_channel: Sequence[int] = (0,),
-        retain_stats: bool = False,
+        retain_stats: bool = True,
         same_on_batch: bool = False,
         p: float = 1.0,
         p_batch: float = 1.0,
