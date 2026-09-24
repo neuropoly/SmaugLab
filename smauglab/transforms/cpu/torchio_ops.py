@@ -38,22 +38,36 @@ def _image_data(subject: tio.Subject, key: str) -> torch.Tensor:
     return cast(tio.Image, subject[key]).data
 
 
-def apply_tio(transform: tio.Transform, img: torch.Tensor, seg: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def apply_tio(
+    transform: tio.Transform,
+    img: torch.Tensor,
+    seg: torch.Tensor,
+    *,
+    second_channel_is_labels: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Apply a torchio transform to an image/segmentation pair.
 
     Two input layouts, both from totalspineseg's augment.py:
 
-    * `img` with two channels is the "step 2" layout -- channel 0 is the image and
-      channel 1 an odd-disc segmentation. The second channel goes in as a `LabelMap`
-      so torchio resamples it nearest-neighbour rather than interpolating labels.
-    * Anything else is a plain image plus its segmentation.
+    * the "step 2" layout -- channel 0 is the image and channel 1 an odd-disc
+      segmentation. The second channel goes in as a `LabelMap` so torchio
+      resamples it nearest-neighbour rather than interpolating labels.
+    * anything else is a plain image plus its segmentation.
+
+    Which one applies used to be decided by channel count alone, so a genuine
+    two-modality input (T1+T2, in/out-of-phase) had its second modality
+    registered as a LabelMap: nearest-neighbour resampling, and every intensity
+    artifact skipped on it, so the two modalities diverged in both. Channel count
+    cannot tell those apart, so `second_channel_is_labels` says which it is. It
+    defaults to True, the long-standing behaviour; a multi-modality caller sets it
+    to False.
 
     The explicit `del` and `gc.collect()` are inherited: torchio subjects hold the
     whole volume several times over and these run inside dataloader workers.
     """
     # Images come back through `_image_data`; see its docstring for why neither key
     # nor attribute access type-checks on its own.
-    if img.shape[0] == 2:
+    if img.shape[0] == 2 and second_channel_is_labels:
         subject = transform(
             tio.Subject(
                 image=tio.ScalarImage(tensor=torch.unsqueeze(img[0], dim=0)),
@@ -76,11 +90,13 @@ def apply_enabled(
     img: torch.Tensor,
     seg: torch.Tensor,
     enabled: Mapping[str, bool],
+    *,
+    second_channel_is_labels: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Apply each enabled transform in `factories` order, chaining the result."""
     for name, factory in factories.items():
         if enabled.get(name):
-            img, seg = apply_tio(factory(), img, seg)
+            img, seg = apply_tio(factory(), img, seg, second_channel_is_labels=second_channel_is_labels)
     return img, seg
 
 
