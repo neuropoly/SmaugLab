@@ -603,8 +603,10 @@ class DifferentiableHistogram3D(nn.Module):
         self.max_value = float(value_range[1])
         self.eps = eps
 
-        bin_centers = torch.linspace(self.min_value, self.max_value, num_bins)
-        self.register_buffer("bin_centers", bin_centers.view(1, 1, num_bins, 1), persistent=False)
+        # No bin_centers buffer: `forward` derives every index it needs from
+        # min_value and bin_width arithmetically and never read it, so the buffer
+        # was dead state that still showed up in state_dict() and moved with
+        # .to(device) on every call.
         self.bin_width = (self.max_value - self.min_value) / max(num_bins - 1, 1)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
