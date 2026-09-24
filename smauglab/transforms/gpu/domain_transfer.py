@@ -298,10 +298,20 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         lut_bank = lut_bank.to(input.device)
         # One binary mask per class, whichever layout the caller used. A one-hot mask
         # is sliced to the bank's class count exactly as before; a single-channel
-        # label map -- what nnU-Net's trainer passes -- is expanded to its first NC
-        # label values instead of being blurred as raw integers, which produced a
-        # weight field that normalised to 1 everywhere and so applied one global LUT.
-        class_masks = seg_region_masks(seg, max_regions=NC).float()
+        # label map -- what nnU-Net's trainer passes -- is expanded per label value.
+        #
+        # Per *value*, not per position. `seg_region_masks` orders its channels by
+        # the values that happen to be present, so channel c meant a different label
+        # from one patch to the next: a patch holding {0, 3, 7} sent label 3 to LUT
+        # class 1, and a patch holding {0, 1, 3, 7} sent it to class 2. The bank's
+        # class axis is a fixed taxonomy, so that applied a class's transfer curve to
+        # whatever anatomy happened to sort into its slot, differently per batch.
+        # Indexing by value makes channel c mean label c everywhere.
+        if seg.shape[1] > 1:
+            class_masks = seg_region_masks(seg, max_regions=NC).float()
+        else:
+            values = torch.arange(NC, device=seg.device, dtype=seg.dtype)
+            class_masks = (seg.round() == values.view((1, NC) + (1,) * (seg.dim() - 2))).float()
         n_seg_c = class_masks.shape[1]
 
         # soft per-class weights from Gaussian-blurred one-hot masks (Σ_c w_c ≈ 1)
