@@ -69,9 +69,12 @@ def parser2config(args, path_out: str) -> None:
     :param args: parser arguments
     :param path_out: path out of the config file
     """
-    # Check if path_out exists or create it
-    if not os.path.exists(os.path.dirname(path_out)):
-        os.makedirs(os.path.dirname(path_out))
+    # Check if path_out exists or create it.
+    #
+    # `or "."`: os.path.dirname("config.json") is "", and os.makedirs("") raises
+    # FileNotFoundError, so a bare filename could not be written at all.
+    # exist_ok also closes the race between the check and the create.
+    os.makedirs(os.path.dirname(path_out) or ".", exist_ok=True)
 
     # Serializing json
     json_object = json.dumps(vars(args), indent=4)
