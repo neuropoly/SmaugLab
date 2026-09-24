@@ -76,7 +76,10 @@ def get_parser():
     )
     parser.add_argument("--gamma", type=float, default=0.1, help="Factor used to reduce the learning rate (default=0.1)")
     parser.add_argument(
-        "--channels", type=tuple_type_int, default=(32, 64, 128, 256), help="Channels if attunet selected (default=16,32,64,128,256)"
+        "--channels",
+        type=tuple_type_int,
+        default=(32, 64, 128, 256),
+        help="Channels if attunet selected (default=32,64,128,256). The last value names the run: attunet<last>.",
     )
     parser.add_argument("--patch-size", type=tuple_type_int, default=(64, 64, 64), help="Training patch size (default=(64, 64, 64)).")
     parser.add_argument(
@@ -87,7 +90,7 @@ def get_parser():
         "--weight-folder",
         type=str,
         default=os.path.abspath("weights/"),
-        help='Folder where the weights will be stored and loaded. Will be created if does not exist. (default="src/ply/weights/3DGAN")',
+        help='Folder where the weights will be stored and loaded. Will be created if does not exist. (default="./weights/").',
     )
     parser.add_argument("--start-weights", type=str, default="", help="Path to the model weights used to start the training.")
     return parser
@@ -249,7 +252,11 @@ def main():
             model.load_state_dict(torch.load(args.start_weights, map_location=torch.device(device))["weights"])
 
     # Path to the saved weights
-    weights_path = f"{weight_folder}/{json_name.replace('config_SegVert_', '').replace('.json', '.pth')}"
+    # json_name is f"config_{model}_pixdimRSP_{...}.json", so the old
+    # .replace("config_SegVert_", "") never matched anything -- a leftover from a
+    # renamed project. Dropping the "config_" prefix is what it was reaching for,
+    # and it stops the weights and the params file differing only by extension.
+    weights_path = f"{weight_folder}/{json_name.removeprefix('config_').replace('.json', '.pth')}"
 
     # Init criterion
     loss_func = DiceFocalLoss(sigmoid=True, smooth_dr=1e-4)
