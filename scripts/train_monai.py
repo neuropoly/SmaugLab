@@ -305,9 +305,24 @@ def main():
     wandb.finish()
 
 
+def _dsc_mean(values: list[float]) -> float:
+    """The mean of the epoch's non-zero DSCs.
+
+    Both loops used to seed the accumulator with `dsc_list = [0]`, so every
+    reported DSC carried a spurious zero: ten batches scoring 0.8 came out as
+    0.727. The bias shrinks as the epoch lengthens, which is why it reads as
+    "our DSC is oddly low" rather than as a bug -- and `val_dsc` is what gates
+    checkpoint saving.
+
+    An epoch in which nothing scored above zero has no mean to report; nan says
+    so, where 0.0 would be indistinguishable from a real score of zero.
+    """
+    return float(np.mean(values)) if values else float("nan")
+
+
 def validate(data_loader, model, loss_func, epoch, device):
     model.eval()
-    dsc_list = [0]
+    dsc_list: list[float] = []
     epoch_iterator = tqdm(data_loader, desc="Validation (loss=X.X) (DSC=X.X)", dynamic_ncols=True)
     with torch.no_grad():
         for step, batch in enumerate(epoch_iterator):
@@ -329,7 +344,7 @@ def validate(data_loader, model, loss_func, epoch, device):
             if dsc > 0:
                 dsc_list.append(dsc)
 
-            epoch_iterator.set_description(f"Validation (loss={loss.mean().item():2.5f}) (DSC={np.mean(dsc_list):2.5f})")
+            epoch_iterator.set_description(f"Validation (loss={loss.mean().item():2.5f}) (DSC={_dsc_mean(dsc_list):2.5f})")
 
             # Display first image
             if step == 0:
@@ -340,12 +355,12 @@ def validate(data_loader, model, loss_func, epoch, device):
                 wandb.log({"validation_img/groud_truth": wandb.Image(target_img, caption=f"ground_truth_{epoch}")})
                 wandb.log({"validation_img/prediction": wandb.Image(pred_img, caption=f"prediction_{epoch}")})
 
-    return loss.mean().item(), np.mean(dsc_list)
+    return loss.mean().item(), _dsc_mean(dsc_list)
 
 
 def train(data_loader, gpu_transforms, model, loss_func, optimizer, scaler, device):
     model.train()
-    dsc_list = [0]
+    dsc_list: list[float] = []
     epoch_iterator = tqdm(data_loader, desc="Training (loss=X.X) (DSC=X.X)", dynamic_ncols=True)
     for _step, batch in enumerate(epoch_iterator):
         # Load input and target
@@ -373,8 +388,8 @@ def train(data_loader, gpu_transforms, model, loss_func, optimizer, scaler, devi
         scaler.step(optimizer)
         scaler.update()
 
-        epoch_iterator.set_description(f"Training (loss={loss.mean().item():2.5f}) (DSC={np.mean(dsc_list):2.5f})")
-    return loss.mean().item(), np.mean(dsc_list)
+        epoch_iterator.set_description(f"Training (loss={loss.mean().item():2.5f}) (DSC={_dsc_mean(dsc_list):2.5f})")
+    return loss.mean().item(), _dsc_mean(dsc_list)
 
 
 if __name__ == "__main__":
