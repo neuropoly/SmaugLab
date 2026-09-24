@@ -86,7 +86,12 @@ def validate_section(section: dict, backend: Backend, *, source: str = "<config>
 
         accepted = registry.accepted_params(entry)
         problems.extend(registry.unknown_parameter_message(entry, key).replace("\n", "\n    ") for key in params if key not in accepted)
-        missing = registry.required_params(entry) - set(params) - set(entry.context_params)
+        # `is None` as well as absent: a required parameter written as null is not
+        # supplied, and every consumer treats it as a hole. Checking key presence
+        # alone let `{"allowed_axes": null}` pass validation and then raise
+        # `TypeError: 'NoneType' object is not iterable` at build time.
+        supplied = {key for key, value in params.items() if value is not None}
+        missing = registry.required_params(entry) - supplied - set(entry.context_params)
         if missing:
             problems.append(f"{name}: missing required parameter(s) {', '.join(sorted(missing))}")
     _ = source
