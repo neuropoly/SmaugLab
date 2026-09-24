@@ -28,13 +28,26 @@ T = TypeVar("T")
 _SHARED_RNG_COUNTER = 0
 
 
+def broadcast_device() -> torch.device:
+    """Where a tensor has to live for `dist.broadcast` to accept it.
+
+    NCCL -- the default backend for GPU DDP, which is the case this module exists
+    for -- only handles CUDA tensors, and raises on a CPU one. The seed tensor was
+    built on the CPU unconditionally, so the broadcast failed on exactly the setup
+    it was written for. Gloo takes CPU tensors, so that path is unchanged.
+    """
+    if dist.get_backend() == dist.Backend.NCCL and torch.cuda.is_available():
+        return torch.device("cuda", torch.cuda.current_device())
+    return torch.device("cpu")
+
+
 def next_shared_seed() -> int:
     """A seed every rank agrees on, different on each call."""
     global _SHARED_RNG_COUNTER  # noqa: PLW0603 -- module-level counter is the point: it makes successive seeds distinct
     _SHARED_RNG_COUNTER += 1
     seed = (int(torch.initial_seed()) + _SHARED_RNG_COUNTER) % (2**63 - 1)
     if dist.is_available() and dist.is_initialized():
-        seed_tensor = torch.tensor([seed], dtype=torch.long)
+        seed_tensor = torch.tensor([seed], dtype=torch.long, device=broadcast_device())
         dist.broadcast(seed_tensor, src=0)
         seed = int(seed_tensor.item())
     return seed
