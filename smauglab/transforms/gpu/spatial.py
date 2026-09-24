@@ -302,14 +302,21 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
     def apply_transform_mask(
         self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None
     ) -> Tensor:
-        """Process masks corresponding to the inputs that are transformed.
+        """Leave the segmentation alone: this simulates resolution, not motion.
 
-        Note:
-            Convert "resample" arguments to "nearest" by default.
+        Resampling the image down and back models a thicker slice or a coarser
+        acquisition. The anatomy does not move, so the label map must not change --
+        nnU-Net's `SimulateLowResolutionTransform` is image-only for the same
+        reason, and so is `RandomAcqTransformGPU` below, which is this operation
+        restricted to a single axis.
 
+        This used to call `apply_transform`, which nearest-resampled the mask along
+        with the image and grew the foreground by ~7% on a 24-cube test volume. The
+        override exists at all only because the class inherits
+        `RigidAffineAugmentationBase3D` rather than `ImageOnlyTransform`, so
+        `MaskSequentialOpsCustom` routes the mask through it.
         """
-        output = self.apply_transform(input, params, flags, transform)
-        return output
+        return input
 
 
 def _choose_axis(batch_size: int, device: torch.device, same_on_batch: bool) -> torch.Tensor:
