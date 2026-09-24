@@ -54,6 +54,22 @@ def _restore_stats(x: torch.Tensor, stats: tuple[torch.Tensor, torch.Tensor]) ->
     return (x - new_mean) / (new_std + eps) * orig_stds.view(shape) + orig_means.view(shape)
 
 
+def _check_channel(transform: torch.nn.Module, channel: int, channels: int) -> None:
+    """Reject an `apply_to_channel` entry the input does not have.
+
+    Two transforms used to `continue` past an out-of-range index. Every other one
+    indexes `input[:, c]` straight away and raises IndexError, so a config typo --
+    `apply_to_channel: [1]` on single-channel data is the easy one -- turned those
+    two into a silent no-op while the rest of the pipeline failed loudly. Failing
+    loudly is the useful half of that pair, and it names the config key.
+    """
+    if channel < 0 or channel >= channels:
+        raise IndexError(
+            f"{type(transform).__name__}: apply_to_channel {channel} is out of range for a "
+            f"{channels}-channel input. Channels are 0-based, so valid entries are 0..{channels - 1}."
+        )
+
+
 class _RegionSelecting(Protocol):
     """What `_select_and_check` needs off the transform it is handed.
 
@@ -1487,8 +1503,7 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
 
         # Apply to channels
         for c in self.apply_to_channel:
-            if c < 0 or c >= input.shape[1]:
-                continue  # skip invalid channel index
+            _check_channel(self, c, input.shape[1])
             channel = input[:, c]
             orig = channel.clone()
             if self.retain_stats:
@@ -1640,8 +1655,7 @@ class ZscoreNormalizationGPU(ImageOnlyTransform):
         # input: (N, C, [D,] H, W)
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
-            if c < 0 or c >= input.shape[1]:
-                continue  # skip invalid channel index
+            _check_channel(self, c, input.shape[1])
             channel = input[:, c]
             orig = channel.clone()
             reduce_dims = tuple(range(1, channel.dim()))
