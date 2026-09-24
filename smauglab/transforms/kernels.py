@@ -222,21 +222,30 @@ SCHARR_2D = [
 ]
 
 #: 3-D Scharr, (x, y, z).
+#:
+#: Signed the same way as SCHARR_2D above and as the usual Scharr/Sobel
+#: convention: the derivative runs [-1, 0, +1], so the positive lobe is on the
+#: far side of each axis. This table used to be the exact negation of that, so a
+#: 2-D and a 3-D run produced opposite-signed gradients from the same image.
+#:
+#: Every shipped config sets `absolute: true`, and |(-k) * x| == |k * x|, so no
+#: shipped pipeline changes. It matters for `absolute=False`, which is the
+#: default of `RandomScharrGPU`.
 SCHARR_3D = [
     [
-        [[9, 0, -9], [30, 0, -30], [9, 0, -9]],
-        [[30, 0, -30], [100, 0, -100], [30, 0, -30]],
-        [[9, 0, -9], [30, 0, -30], [9, 0, -9]],
+        [[-9, 0, 9], [-30, 0, 30], [-9, 0, 9]],
+        [[-30, 0, 30], [-100, 0, 100], [-30, 0, 30]],
+        [[-9, 0, 9], [-30, 0, 30], [-9, 0, 9]],
     ],
     [
-        [[9, 30, 9], [0, 0, 0], [-9, -30, -9]],
-        [[30, 100, 30], [0, 0, 0], [-30, -100, -30]],
-        [[9, 30, 9], [0, 0, 0], [-9, -30, -9]],
+        [[-9, -30, -9], [0, 0, 0], [9, 30, 9]],
+        [[-30, -100, -30], [0, 0, 0], [30, 100, 30]],
+        [[-9, -30, -9], [0, 0, 0], [9, 30, 9]],
     ],
     [
-        [[9, 30, 9], [30, 100, 30], [9, 30, 9]],
-        [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
         [[-9, -30, -9], [-30, -100, -30], [-9, -30, -9]],
+        [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
+        [[9, 30, 9], [30, 100, 30], [9, 30, 9]],
     ],
 ]
 
