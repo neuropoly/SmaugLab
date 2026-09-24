@@ -33,14 +33,19 @@ import torch
 
 from smauglab.utils.image import Image, resample_nib
 
+#: The packaged config each backend demonstrates. `transform_params_gpu.json` holds
+#: one CPU transform, so using it for `--backend cpu` rendered a grid of nearly
+#: identical tiles and looked like the pipeline was broken.
+DEFAULT_CONFIGS = {"gpu": "transform_params_gpu.json", "cpu": "transform_params.json"}
 
-def default_config_path() -> Path:
-    """The packaged GPU config, resolved the way smauglab.add_trainer resolves its own."""
+
+def default_config_path(backend: str = "gpu") -> Path:
+    """The packaged config for a backend, resolved the way add_trainer resolves its own."""
     import importlib.resources
 
     from smauglab import configs
 
-    return Path(str(importlib.resources.files(configs))) / "transform_params_gpu.json"
+    return Path(str(importlib.resources.files(configs))) / DEFAULT_CONFIGS[backend]
 
 
 #: Segmentation values pulled into their own channels. The old demos hardcoded two
@@ -236,7 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--image", action="append", required=True, help="NIfTI image; repeat for a multi-subject batch")
     parser.add_argument("--seg", action="append", required=True, help="matching NIfTI segmentation; repeat alongside --image")
-    parser.add_argument("--config", default=None, help="config JSON (default: the packaged GPU config)")
+    parser.add_argument("--config", default=None, help="config JSON (default: the packaged config for the chosen backend)")
     parser.add_argument("--backend", choices=["gpu", "cpu"], default="gpu")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--out-dir", default="img", help="where the PNGs go (default: img/)")
@@ -260,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"got {len(args.image)} --image but {len(args.seg)} --seg; they pair up one to one")
         return 2
     if args.config is None:
-        args.config = str(default_config_path())
+        args.config = str(default_config_path(args.backend))
     args.labels = tuple(args.labels)
 
     return demo_gpu(args) if args.backend == "gpu" else demo_cpu(args)
