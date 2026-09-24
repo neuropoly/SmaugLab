@@ -94,3 +94,77 @@ class TestPartialBatchSelection(SmaugLabTestCase):
                     bool(torch.equal(injected[i], seg[b])),
                     f"row {i} of the injected seg is not sample {b}'s segmentation",
                 )
+
+
+class TestSameOnBatchIsConfigurable(SmaugLabTestCase):
+    """`pipeline.same_on_batch` decides whether `p` is per-sample or per-batch.
+
+    `AugTransformsGPU` used to pass `same_on_batch=True` unconditionally. kornia's
+    `SequentialBase.update_attribute` then writes that onto every child, so the
+    `"same_on_batch": false` that every shipped config sets per transform was
+    discarded -- and since `_BasicAugmentationBase.__batch_prob_generator__` draws
+    the application mask with `_adapted_sampling((B,), p, same_on_batch)`, a `p`
+    of 0.5 stopped meaning "half the samples" and started meaning "half the
+    batches, all of it".
+
+    The default stays True so the published configs reproduce.
+    """
+
+    def _write(self, tmp_path, same_on_batch):
+        import json
+
+        payload = {
+            "GPU": {"RandomBrightnessGPU": {"p": 0.5, "same_on_batch": False}},
+            "pipeline": {} if same_on_batch is None else {"same_on_batch": same_on_batch},
+        }
+        tmp_path.write_text(json.dumps(payload))
+        return str(tmp_path)
+
+    def _pipeline(self, path):
+        from smauglab.transforms.gpu.transforms import AugTransformsGPU
+
+        return AugTransformsGPU(json_path=path)
+
+    def _applied_per_batch(self, pipeline, seeds=8):
+        image, seg = torch.rand(*SHAPE), batched_seg()
+        counts = []
+        for seed in range(seeds):
+            torch.manual_seed(seed)
+            out, _ = pipeline(image.clone(), seg.clone())
+            counts.append(sum(bool((out[b] != image[b]).any()) for b in range(BATCH)))
+        return counts
+
+    def test_the_default_is_unchanged(self):
+        """No `pipeline.same_on_batch` key must behave exactly as before."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(Path(tmp) / "transform_params_gpu_default.json", None)
+            pipeline = self._pipeline(path)
+
+            child = next(iter(pipeline.children()))
+            self.assertTrue(child.same_on_batch, "the default must still force same_on_batch onto every child")
+
+            counts = self._applied_per_batch(pipeline)
+            self.assertTrue(
+                all(c in (0, BATCH) for c in counts),
+                f"the default must stay all-or-nothing per batch, got {counts}",
+            )
+
+    def test_false_restores_the_configured_value_and_per_sample_p(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(Path(tmp) / "transform_params_gpu_persample.json", False)
+            pipeline = self._pipeline(path)
+
+            child = next(iter(pipeline.children()))
+            self.assertFalse(child.same_on_batch, "the config's per-transform same_on_batch was still overwritten")
+
+            counts = self._applied_per_batch(pipeline)
+            self.assertTrue(
+                any(0 < c < BATCH for c in counts),
+                f"p should select part of the batch at least once over 8 seeds, got {counts}",
+            )
