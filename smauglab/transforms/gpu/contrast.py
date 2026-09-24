@@ -113,7 +113,24 @@ def _foreground(mask: torch.Tensor, dim: int) -> torch.Tensor:
 
     `amax > 0` asks the question that was meant, and matches what
     `collapse_onehot_to_index` already does with `seg_raw.any(dim=1)`.
+
+    That still leaves one layout it cannot read off the values alone: a one-hot
+    that *includes* a background channel, which is what `seg_region_masks` emits
+    for a single-channel label map and what `unit_tests/test_seg_layout.py`
+    builds. Every voxel then has some channel set, `amax > 0` is True everywhere,
+    and `in_seg` applies the transform to the whole patch while `out_seg` applies
+    it nowhere -- the exact failure this function was written to fix, in the one
+    layout it was not checked against.
+
+    A background-inclusive one-hot is recognisable: it is multi-channel and leaves
+    no voxel unset, because the background channel covers whatever the foreground
+    channels do not. A background-implicit one-hot always has all-zero background
+    voxels unless the patch is labelled edge to edge, which a real segmentation
+    patch is not. So full coverage plus more than one channel means channel 0 is
+    background, and the reduction skips it.
     """
+    if mask.shape[dim] > 1 and bool((mask.amax(dim=dim) > 0).all()):
+        return mask.narrow(dim, 1, mask.shape[dim] - 1).amax(dim=dim) > 0
     return mask.amax(dim=dim) > 0
 
 
