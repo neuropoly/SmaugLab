@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import multiprocessing as mp
 import textwrap
 import warnings
@@ -17,6 +18,11 @@ from smauglab.utils.image import Image, resample_nib, zeros_like
 warnings.filterwarnings("ignore")
 
 rs = np.random.RandomState()
+
+#: Half-range of the SpatialTransform rotation, in degrees. Online the trainer gets
+#: this from nnU-Net's configure_rotation_dummyDA_mirroring_and_inital_patch_size;
+#: offline there is nobody to ask, so it is an option with a stated default.
+DEFAULT_ROTATION_DEGREES = 30.0
 
 
 def main():
@@ -67,6 +73,12 @@ def main():
     parser.add_argument(
         "--quiet", "-q", action="store_true", default=False, help="Do not display inputs and progress bar, defaults to false (display)."
     )
+    parser.add_argument(
+        "--rotation-degrees",
+        type=float,
+        default=DEFAULT_ROTATION_DEGREES,
+        help=f"Half-range of the SpatialTransform rotation, in degrees, defaults to {DEFAULT_ROTATION_DEGREES:g}.",
+    )
 
     # Parse the command-line arguments
     args = parser.parse_args()
@@ -79,6 +91,7 @@ def main():
     overwrite = args.overwrite
     max_workers = args.max_workers
     quiet = args.quiet
+    rotation_degrees = args.rotation_degrees
 
     # Print the argument values if not quiet
     if not quiet:
@@ -92,6 +105,7 @@ def main():
             overwrite = {overwrite}
             max_workers = {max_workers}
             quiet = {quiet}
+            rotation_degrees = {rotation_degrees}
         """)
         )
 
@@ -103,6 +117,7 @@ def main():
         overwrite=overwrite,
         max_workers=max_workers,
         quiet=quiet,
+        rotation_degrees=rotation_degrees,
     )
 
 
@@ -114,6 +129,7 @@ def augment_mp(
     overwrite=False,
     max_workers=None,
     quiet=False,
+    rotation_degrees=DEFAULT_ROTATION_DEGREES,
 ):
     """
     Wrapper function to handle multiprocessing.
@@ -149,6 +165,7 @@ def augment_mp(
             ofolder=ofolder,
             train_transforms_path=transforms_json_path,
             overwrite=overwrite,
+            rotation_degrees=rotation_degrees,
         ),
         data_list,
         max_workers=max_workers,
@@ -163,13 +180,11 @@ def augment(
     train_transforms_path,
     ofolder,
     overwrite=False,
+    rotation_degrees=DEFAULT_ROTATION_DEGREES,
 ):
     """
     Augmentation function.
     """
-    # Load transforms
-    train_transforms = AugTransforms(json_path=str(train_transforms_path))
-
     # Create PATH objects
     img_path = Path(data_dict["image"])
     seg_path = Path(data_dict["segmentation"])
@@ -190,6 +205,20 @@ def augment(
     img_tensor = torch.from_numpy(img.data.copy()).unsqueeze(0).to(torch.float32)
     seg_tensor = torch.from_numpy(seg.data.copy()).unsqueeze(0)
 
+    # Built here, not at the top of the function: `patch_size` has no default and
+    # there is no patching offline, so the patch is the resampled volume -- which
+    # is only known once the image is loaded. `rotation` is nnU-Net's runtime
+    # context too, in radians; the trainer gets it from
+    # configure_rotation_dummyDA_mirroring_and_inital_patch_size, and offline
+    # there is nobody to ask, so it is an argument with a stated default.
+    radians = math.radians(rotation_degrees)
+    train_transforms = AugTransforms(
+        json_path=str(train_transforms_path),
+        do_dummy_2d_data_aug=False,
+        patch_size=tuple(img_tensor.shape[1:]),
+        rotation_for_DA=(-radians, radians),
+    )
+
     # Create augmentations
     for i in range(augmentations_per_image):
         # Create output path
@@ -201,7 +230,10 @@ def augment(
             continue
 
         # Transform data
-        tensor_dict = train_transforms({"image": img_tensor.detach().clone(), "segmentation": seg_tensor.detach().clone()})
+        # Keyword arguments, not a positional dict: batchgeneratorsv2's
+        # BasicTransform.__call__ takes **data_dict, so the dict form raised
+        # "takes 1 positional argument but 2 were given".
+        tensor_dict = train_transforms(image=img_tensor.detach().clone(), segmentation=seg_tensor.detach().clone())
 
         img_out = zeros_like(img)
         img_out.data = tensor_dict["image"].squeeze(0).numpy()
