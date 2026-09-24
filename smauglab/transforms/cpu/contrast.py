@@ -368,9 +368,3 @@ class ZscoreNormalization(ImageOnlyTransform):
             std = torch.std(img[c])
             img[c] = (img[c] - mean) / torch.clamp(std, min=1e-8)
         return img
-
-
-# Temporary bridge for the CPU `if` ladder, which passes kernel_type from the config.
-# Removed with that ladder; see the note in gpu/contrast.py.
-ConvTransform = _ConvBaseTransform
-FunctionTransform = _FunctionBaseTransform
