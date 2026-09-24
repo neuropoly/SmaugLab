@@ -26,6 +26,7 @@ TRANSFORM_MODULES = [
     "smauglab.transforms.gpu.spatial",
     "smauglab.transforms.gpu.fromSeg",
     "smauglab.transforms.gpu.domain_transfer",
+    "smauglab.transforms.gpu.palette.transform",
 ]
 
 # Not augmentations: helper modules that happen to be nn.Module subclasses.

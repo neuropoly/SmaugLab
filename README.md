@@ -204,6 +204,7 @@ means no implementation on that backend yet. Regenerate with `smauglab matrix --
 | histogram_equal | TA | `RandomHistogramEqualizationGPU` | `HistogramEqualTransform` | — |
 | redistribute_seg | TA | `RandomRedistributeSegGPU` | `RedistributeTransform` | — |
 | palette | TA | `RandomPaletteGPU` | — | — |
+| palette_composed | TA | `PaletteSynthesisGPU` | — | — |
 | domain_transfer | TA | `RandomDomainTransferGPU` | — | — |
 | synthseg | TA | `RandomSynthSegGPU` | — | — |
 | artifact | TA | — | `ArtifactTransform` | — |
