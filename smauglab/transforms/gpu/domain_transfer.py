@@ -46,6 +46,7 @@ from torch.nn import functional as F
 
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.fromSeg import seg_region_masks
 from smauglab.transforms.kernels import gaussian_blur3d, random_bias_field3d
 
 # Default transfer LUT bank (built by embeddaug/analysis/playground/build_transfer_bank.py).
@@ -295,10 +296,16 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         lut_bank = self.lut_bank
         assert isinstance(lut_bank, Tensor)
         lut_bank = lut_bank.to(input.device)
-        n_seg_c = min(seg.shape[1], NC)
+        # One binary mask per class, whichever layout the caller used. A one-hot mask
+        # is sliced to the bank's class count exactly as before; a single-channel
+        # label map -- what nnU-Net's trainer passes -- is expanded to its first NC
+        # label values instead of being blurred as raw integers, which produced a
+        # weight field that normalised to 1 everywhere and so applied one global LUT.
+        class_masks = seg_region_masks(seg, max_regions=NC).float()
+        n_seg_c = class_masks.shape[1]
 
         # soft per-class weights from Gaussian-blurred one-hot masks (Σ_c w_c ≈ 1)
-        w = _gaussian_blur3d(seg[:, :n_seg_c].float(), self.sigma)
+        w = _gaussian_blur3d(class_masks, self.sigma)
         w = w / w.sum(dim=1, keepdim=True).clamp_min(1e-6)
 
         N = input.shape[0]

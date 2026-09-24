@@ -8,13 +8,20 @@
   path injects -- so it raised `KeyError` standalone and inside a bucket.
 * Blur sigmas and kernel sizes were drawn with Python's `random`, which
   `torch.manual_seed` does not reach and which diverges across DDP ranks.
+* The bucket spent a generator transform's probability twice -- once on its own gate,
+  then again inside `forward_parameters` -- so below `p=1.0` it both crashed on an
+  empty parameter draw and, when it survived, applied the transform at `p**2`. Every
+  test above builds its transforms at `p=1.0`, where the second draw always selects,
+  which is exactly why it went unnoticed.
 """
 
 import torch
 
+from smauglab.config import write_temp_config
+from smauglab.transforms.gpu.base import record_applications
 from smauglab.transforms.gpu.contrast import RandomLaplaceGPU, RandomRandConvGPU
-from smauglab.transforms.gpu.spatial import RandomLowResTransformGPU
-from smauglab.transforms.gpu.transforms_list import RandomChooseXTransformsGPU
+from smauglab.transforms.gpu.spatial import RandomAcqTransformGPU, RandomLowResTransformGPU
+from smauglab.transforms.gpu.transforms_list import AugTransformsGPURandomOrder, RandomChooseXTransformsGPU
 from smauglab.transforms.rng import shared_choice, shared_rand
 from unit_tests.helpers import SmaugLabTestCase, first_output
 
@@ -150,3 +157,116 @@ class TestTorchSeedReachesEveryDraw(SmaugLabTestCase):
         torch.manual_seed(11)
 
         self.assertTrue(torch.equal(shared_rand((4,), torch.device("cpu")), expected))
+
+
+class TestProbabilityIsSpentOnce(SmaugLabTestCase):
+    """A generator transform below p=1.0, which is the configuration that broke.
+
+    `RandomAcqTransformGPU` is the only registered augmentation that reaches this path
+    in a real pipeline -- the only one with a `_param_generator` that is neither GEO nor
+    force_sequential, so the only one the builder puts inside a bucket.
+    """
+
+    P = 0.5
+    DRAWS = 400
+
+    def _bucket(self):
+        return RandomChooseXTransformsGPU(transforms_list=[RandomAcqTransformGPU(p=self.P, scale=[0.3, 1.0])], num_transforms=1, p=1.0)
+
+    def test_a_low_probability_generator_transform_never_raises(self):
+        """It used to raise IndexError on the draws where the second gate said no."""
+        torch.manual_seed(0)
+        bucket = self._bucket()
+        volume = self.tiny_volume()
+
+        for draw in range(self.DRAWS):
+            with self.subTest(draw=draw):
+                out = bucket.apply_transform(volume.clone(), {}, {}, transform=None)
+                self.assertIsImageLike(out, volume, "RandomAcqTransformGPU in a bucket")
+
+    def test_the_transform_applies_at_p_not_p_squared(self):
+        """The crash was half the bug; the surviving draws were also too rare.
+
+        Bounds are wide because the rate is binomial and a scale that rounds back to
+        the original size is a legitimate no-op, but p=0.5 and p**2=0.25 are far enough
+        apart that the band separates them.
+        """
+        torch.manual_seed(0)
+        bucket = self._bucket()
+        volume = self.tiny_volume()
+
+        applied = sum(not torch.allclose(bucket.apply_transform(volume.clone(), {}, {}, transform=None), volume) for _ in range(self.DRAWS))
+
+        expected = self.P * self.DRAWS
+        self.assertGreater(applied, 0.65 * expected, f"applied {applied}/{self.DRAWS}, near p**2 -- probability spent twice")
+        self.assertLess(applied, 1.35 * expected, f"applied {applied}/{self.DRAWS}, above p -- gate not applied")
+
+    def test_sampling_leaves_the_transforms_own_probability_alone(self):
+        """The fix forces p during the draw; a leak would make the transform p=1.0."""
+        torch.manual_seed(0)
+        transform = RandomAcqTransformGPU(p=self.P, scale=[0.3, 1.0])
+
+        RandomChooseXTransformsGPU._sample_params(transform, self.tiny_volume().shape)
+
+        self.assertEqual(transform.p, self.P)
+        self.assertEqual(transform.p_batch, 1.0)
+
+    def test_sampling_restores_probability_even_when_the_draw_raises(self):
+        """`finally`, not a bare restore after the call."""
+        transform = RandomAcqTransformGPU(p=self.P, scale=[0.3, 1.0])
+
+        with self.assertRaises(TypeError):
+            RandomChooseXTransformsGPU._sample_params(transform, "not a shape")
+
+        self.assertEqual(transform.p, self.P)
+
+
+class TestProvenanceNamesWhatItRecorded(SmaugLabTestCase):
+    """`record_applications` reports one entry per (transform, data key).
+
+    Two things in its output read as bugs and are not, and both cost an afternoon
+    before they were labelled. A 3D geometric transform appears twice because
+    `AugmentationSequential` runs each module over the image and then the mask, and
+    those transforms implement `apply_transform_mask` by calling `self.apply_transform`
+    -- which is the recorder's own instance-attribute patch. And `random_order` emits
+    two `RandomChooseXTransformsGPU`, the transfer bucket and the general-enhancement
+    one, which the class name alone cannot tell apart.
+    """
+
+    def _pipeline(self):
+        payload = {
+            "GPU": {
+                "RandomCropTransformGPU": {"p": 1.0, "crop": [0.5, 0.6]},
+                "RandomGammaGPU": {"p": 1.0},
+                "RandomGaussianNoiseGPU": {"p": 1.0},
+            },
+            "pipeline": {"mode": "random_order"},
+        }
+        return AugTransformsGPURandomOrder(str(write_temp_config(payload)))
+
+    def _fired(self):
+        pipeline = self._pipeline()
+        with record_applications(pipeline) as fired:
+            pipeline(self.tiny_volume(), self.tiny_seg())
+        return fired
+
+    def test_a_geometric_transform_is_recorded_once_per_data_key(self):
+        entries = [e for e in self._fired() if e["transform"] == "RandomCropTransformGPU"]
+
+        self.assertEqual([e["target"] for e in entries], ["image", "mask"])
+        self.assertEqual(entries[0]["params"], entries[1]["params"], "image and mask moved on different draws")
+
+    def test_an_intensity_transform_is_recorded_once(self):
+        entries = [e for e in self._fired() if e["transform"] == "RandomGammaGPU"]
+
+        self.assertEqual([e["target"] for e in entries], ["image"])
+
+    def test_the_two_buckets_are_distinguishable(self):
+        entries = [e for e in self._fired() if e["transform"] == "RandomChooseXTransformsGPU"]
+
+        self.assertEqual([e["label"] for e in entries], ["ta", "ge"])
+
+    def test_the_old_flag_name_still_reads(self):
+        """`changed_image` predates `target` and analyses still load it."""
+        for entry in self._fired():
+            self.assertEqual(entry["changed_image"], entry["changed"])

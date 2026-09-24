@@ -13,10 +13,16 @@ The first two groups fail against the implementation that preceded them:
 """
 
 import torch
-from kornia.constants import Resample
+from kornia.constants import DataKey, Resample
 
 from smauglab.transforms.gpu.base import AugmentationSequentialCustom
-from smauglab.transforms.gpu.spatial import CropGenerator3D, RandomAffineGPU, RandomFlipTransformGPU, ScaleGenerator3D
+from smauglab.transforms.gpu.spatial import (
+    CropGenerator3D,
+    RandomAffineGPU,
+    RandomCropTransformGPU,
+    RandomFlipTransformGPU,
+    ScaleGenerator3D,
+)
 from unit_tests.helpers import SmaugLabTestCase, first_output
 
 
@@ -191,3 +197,82 @@ class TestMaskResampleRestore(SmaugLabTestCase):
         transform.apply_transform_mask(seg.clone(), params, flags, transform=matrix)
 
         self.assertEqual(flags["resample"], Resample.get("bilinear"))
+
+
+class TestCropPadValue(SmaugLabTestCase):
+    """What `RandomCropTransformGPU` leaves outside the box it keeps.
+
+    The transform occludes rather than translates: the kept box stays at the
+    coordinates it was read from and everything else is overwritten. The volumes
+    reaching it are z-scored, so the old hard-coded `0.0` was the dataset mean --
+    water -- and left a flat soft-tissue slab where the field of view ended. Every
+    intensity transform downstream then read that slab as tissue and textured it, and
+    the one-voxel step at the box faces outranked real anatomy for the edge filters.
+    The default is now the volume's own minimum, which is what air already is.
+    """
+
+    def _cropped(self, volume, **kwargs):
+        transform = RandomCropTransformGPU(p=1.0, crop=(0.5, 0.5), pos=(0.5, 0.5), **kwargs)
+        params = transform.forward_parameters(volume.shape)
+        image = transform.apply_transform(volume.clone(), params, transform.flags)
+        return transform, params, image
+
+    def _volume(self):
+        """Roughly a z-scored CT patch: air at -2.7, tissue above it."""
+        volume = self.tiny_volume() * 3.0 - 1.0
+        volume[:, :, 0, 0, 0] = -2.7
+        return volume
+
+    def test_the_discarded_region_is_the_volume_minimum(self):
+        volume = self._volume()
+        _, _, image = self._cropped(volume)
+
+        outside = image[image != volume]
+        self.assertGreater(outside.numel(), 0, "the crop kept the whole volume")
+        self.assertTrue(bool((outside == volume.min()).all()), "padded with something other than the minimum")
+
+    def test_the_kept_box_is_untouched(self):
+        volume = self._volume()
+        _, _, image = self._cropped(volume)
+
+        kept = image == volume
+        self.assertTrue(bool(kept.any()), "the crop kept nothing")
+        self.assertTrue(bool(torch.equal(image[kept], volume[kept])))
+
+    def test_an_explicit_pad_value_is_used_verbatim(self):
+        """`pad_value=0.0` is how a caller asks for the old behaviour back."""
+        volume = self._volume()
+        _, _, default = self._cropped(volume)
+        _, _, legacy = self._cropped(volume, pad_value=0.0)
+
+        outside = default == volume.min()
+        self.assertTrue(bool(outside.any()), "the crop kept the whole volume")
+        self.assertTrue(bool((legacy[outside] == 0.0).all()))
+        self.assertFalse(bool(torch.equal(default, legacy)))
+
+    def test_a_mask_is_always_padded_with_background(self):
+        """A label number is not an intensity: outside the box has to stay label 0."""
+        seg = self.tiny_seg() + 1.0  # every voxel labelled, so a min-fill would be visible
+        transform = RandomCropTransformGPU(p=1.0, crop=(0.5, 0.5), pos=(0.5, 0.5))
+        params = transform.forward_parameters(seg.shape)
+        flags = dict(transform.flags) | {"data_keys": [DataKey.MASK]}
+
+        out = transform.apply_transform_mask(seg.clone(), params, flags)
+
+        self.assertTrue(bool((out == 0.0).any()), "nothing was cropped away")
+        self.assertEqual(float(out.min()), 0.0)
+
+    def test_image_and_mask_are_cropped_to_the_same_box(self):
+        volume, seg = self._volume(), self.tiny_seg() + 1.0
+        transform = RandomCropTransformGPU(p=1.0, crop=(0.5, 0.5), pos=(0.5, 0.5))
+        params = transform.forward_parameters(volume.shape)
+        mask_flags = dict(transform.flags) | {"data_keys": [DataKey.MASK]}
+
+        image = transform.apply_transform(volume.clone(), params, transform.flags)
+        out_seg = transform.apply_transform_mask(seg.clone(), params, mask_flags)
+
+        self.assertTrue(bool(torch.equal(image == volume.min(), out_seg == 0.0)))
+
+    def test_an_unusable_pad_value_is_rejected(self):
+        with self.assertRaises(ValueError):
+            RandomCropTransformGPU(pad_value="air")

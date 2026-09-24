@@ -60,9 +60,12 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
         # Compute original mean, std and min/max values
         original_mean, original_std = img.mean(), img.std()
 
-    # Normalize image
+    # Normalize image. The clamp mirrors the GPU implementation: a constant patch -- CT
+    # air, which preprocessing clips to a single value -- makes this 0/0, and unlike the
+    # GPU path nothing downstream inspects the result, so the NaN reaches the loss and
+    # `GradScaler` then skips the step without a word in the log.
     img_min, img_max = img.min(), img.max()
-    img = (img - img_min) / (img_max - img_min)
+    img = (img - img_min) / (img_max - img_min).clamp_min(1e-6)
 
     # Get the unique label values (excluding 0)
     labels = torch.unique(_seg)

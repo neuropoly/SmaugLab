@@ -41,6 +41,9 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
           probabilities batch-wise.
         keepdim: whether to keep the output shape the same as input ``True`` or broadcast it to the batch
           form ``False``.
+        label: a name for this bucket, reported by `record_applications`. A
+          `random_order` pipeline holds two of these and the class name alone cannot
+          tell them apart.
 
     """
 
@@ -53,13 +56,33 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
         p_batch: float = 1.0,
         keepdim: bool = True,
         random_order: bool = True,
+        label: str | None = None,
     ) -> None:
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
+        self.provenance_label = label
         if not isinstance(num_transforms, int) or num_transforms < 0:
             raise ValueError(f"num_transforms must be a non-negative int. Got {num_transforms!r}.")
         self.transforms_list = nn.ModuleList(transforms_list)
         self.num_transforms = num_transforms
         self.random_order = random_order
+
+    @staticmethod
+    def _sample_params(transform: ImageOnlyTransform, shape: tuple[int, ...]) -> dict[str, Tensor]:
+        """Draw a transform's kornia parameters, with its probability already spent.
+
+        `forward_parameters` re-applies `p` and `p_batch`, returning parameters only for
+        the elements it selects. The bucket has already decided to apply this transform,
+        so a second draw is not a second chance -- it is a chance to return parameters
+        for *nothing*, and the transform then indexes into an empty tensor
+        (`RandomAcqTransformGPU` unpacking `scale[0]` of a `[0, 3]`, for one). Forcing
+        selection here keeps the two probability draws from compounding.
+        """
+        p, p_batch = transform.p, transform.p_batch
+        transform.p, transform.p_batch = 1.0, 1.0
+        try:
+            return transform.forward_parameters(shape)
+        finally:
+            transform.p, transform.p_batch = p, p_batch
 
     def _apply_mix(self, x: Tensor, seg: Tensor | None) -> Tensor:
         if self.num_transforms == 0 or len(self.transforms_list) == 0:
@@ -91,7 +114,7 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
             # the bucket usable for both kinds.
             t_params = child_params
             if getattr(t, "_param_generator", None) is not None:
-                t_params = {**child_params, **t.forward_parameters(x.shape)}
+                t_params = {**child_params, **self._sample_params(t, x.shape)}
             t_flags = getattr(t, "flags", {})
             x = t.apply_transform(x, t_params, t_flags, transform=None)
         return x

@@ -1,9 +1,11 @@
+import contextlib
 import copy
 import warnings
 from collections.abc import Sequence
 from typing import Any, Union
 
 import kornia.augmentation as K
+import torch
 from kornia.augmentation import AugmentationSequential
 from kornia.augmentation._2d.base import RigidAffineAugmentationBase2D
 from kornia.augmentation._3d.base import AugmentationBase3D, RigidAffineAugmentationBase3D
@@ -329,3 +331,93 @@ class AugmentationSequentialOpsCustom(AugmentationSequentialOps):
         if len(outputs) == 1 and isinstance(outputs, (list, tuple)):
             return outputs[0]
         return outputs
+
+
+@contextlib.contextmanager
+def record_applications(pipeline):
+    """Record which transforms actually fire, in call order.
+
+    A combined pass gives every augmentation its own probability, so any one output
+    is the product of a random subset. The config only says what *could* have fired,
+    which is no use at all when one draw in ten comes out destroyed and the question
+    is which transform did it.
+
+    Yields a list that fills as the pipeline runs. Each entry is the transform's
+    class name, which tensor it ran on, whether that tensor changed, and its scalar
+    parameters -- tensors are summarised rather than stored, because a spatial
+    transform's parameters are the size of the batch.
+
+    `apply_transform` is the hook because it is the one method every leaf
+    augmentation implements and kornia only calls it for the elements it selected,
+    including down the `RandomChooseXTransformsGPU` path, which dispatches to it
+    directly rather than through `forward`.
+
+    Two things in the output used to read as bugs and are not:
+
+    * A geometric transform appears **twice**, once with `target: "image"` and once
+      with `target: "mask"`. `AugmentationSequential` runs each module over the image
+      and the mask in turn from the same sampled parameters, and the 3D geometric
+      transforms implement `apply_transform_mask` by calling `self.apply_transform`
+      -- which is this wrapper, since the patch is an instance attribute. One
+      application per record; the identical `params` on the pair is the proof that
+      image and mask moved together.
+    * `RandomChooseXTransformsGPU` appears twice in `random_order` mode because the
+      builder emits two of them, the transfer bucket and the general-enhancement one.
+      `label` tells them apart.
+    """
+    fired: list[dict] = []
+    patched = []
+
+    for module in pipeline.modules():
+        if not hasattr(module, "apply_transform") or module is pipeline:
+            continue
+        original = module.apply_transform
+
+        def wrapper(input, params, flags, transform=None, _original=original, _module=module):
+            # Most of these write through their input and return the same tensor
+            # (`input[b, c] = x`), so comparing the result against `input` afterwards
+            # compares it against itself. Keep a copy of what went in.
+            before = input.clone()
+            output = _original(input, params, flags, transform)
+            changed = not (output.shape == before.shape and bool(torch.equal(output, before)))
+            entry = {
+                "transform": type(_module).__name__,
+                "target": "mask" if DataKey.MASK in (flags or {}).get("data_keys", ()) else "image",
+                "changed": changed,
+                # The old name, kept so analyses written against it keep loading. It was
+                # never true of the mask pass, which is exactly why `target` exists now.
+                "changed_image": changed,
+                "params": _scalar_params(params),
+            }
+            label = getattr(_module, "provenance_label", None)
+            if label is not None:
+                entry["label"] = label
+            fired.append(entry)
+            return output
+
+        module.apply_transform = wrapper
+        patched.append((module, original))
+
+    try:
+        yield fired
+    finally:
+        for module, original in patched:
+            module.apply_transform = original
+
+
+def _scalar_params(params) -> dict:
+    """Keep what is readable; a spatial transform's parameters are batch-sized tensors."""
+    out: dict[str, Any] = {}
+    for key, value in (params or {}).items():
+        if key == "seg":
+            continue
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+                out[key] = []
+            elif value.numel() <= 8:
+                out[key] = [round(float(v), 5) for v in value.flatten().tolist()]
+            else:
+                out[key] = f"<tensor {tuple(value.shape)}>"
+        elif isinstance(value, (int, float, bool, str)):
+            out[key] = value
+    return out

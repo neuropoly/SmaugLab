@@ -592,8 +592,21 @@ class FlipGenerator3D(RandomGeneratorBase):
     group=AugType.GEO,
 )
 class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
-    """
-    Apply low resolution simulation to 3D volumes (5D tensor).
+    """Restrict the field of view to a random sub-box, filling the rest with `pad_value`.
+
+    The kept box stays at the coordinates it was read from -- this occludes everything
+    outside it rather than translating the contents -- so image and mask stay aligned
+    voxel for voxel.
+
+    `pad_value` carries more weight than it looks. The volumes reaching this transform
+    are z-scored, so 0.0 is the dataset mean -- water, not air -- and a zero fill leaves
+    a flat soft-tissue slab where the field of view ended. Everything downstream then
+    treats that slab as tissue: PALETTE's foreground test (`> dark_threshold` on the
+    min-max normalised volume) keeps it and paints per-cluster texture into it, and the
+    edge filters render the one-voxel step at the box faces as the dominant structure in
+    the image. `"min"`, the default, fills with the volume's own minimum instead, which
+    is what air already is, so the discarded region stays background to every later
+    transform. Pass `pad_value=0.0` for the old behaviour.
     """
 
     def __init__(
@@ -603,16 +616,33 @@ class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
         # feeds it to _tuple_range_reader(..., 3, ...), which broadcasts the range
         # across all three axes. The annotation said triple, the default was a pair.
         pos: tuple[float, float] = (0.0, 1.0),  # Fraction of the pos
+        pad_value: float | str = "min",  # "min" = this volume's own minimum, else a literal
         same_on_batch: bool = False,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
     ) -> None:
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
+        if not (pad_value == "min" or (isinstance(pad_value, (int, float)) and not isinstance(pad_value, bool))):
+            raise ValueError(f'pad_value must be "min" or a number. Got {pad_value!r}.')
+        self.pad_value = pad_value
         self._param_generator = CropGenerator3D(crop=crop, pos=pos)
 
     def compute_transformation(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any]) -> Tensor:
         return self.identity_matrix(input)
+
+    def _fill_value(self, volume: Tensor, flags: dict[str, Any]) -> float:
+        """What goes outside the kept box, for one batch element.
+
+        A mask is padded with 0 -- background -- whatever `pad_value` says: a label
+        number is not an intensity, and an argmax over a one-hot volume still has to
+        resolve to the background channel out there. The mask pass identifies itself
+        through `flags["data_keys"]`, which `MaskSequentialOpsCustom` sets before calling
+        `transform_masks` (see gpu/base.py).
+        """
+        if DataKey.MASK in (flags or {}).get("data_keys", ()):
+            return 0.0
+        return float(volume.amin()) if self.pad_value == "min" else float(self.pad_value)
 
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -670,8 +700,9 @@ class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
 
             patch = x[:, z1:z2, y1:y2, x1:x2]
 
-            # place patch back into a full-resolution canvas of the original size (zeros elsewhere)
-            canvas = torch.zeros((C, D, H, W), dtype=patch.dtype, device=patch.device)
+            # Place the patch back where it came from, on a canvas of the discarded
+            # region's fill value -- see the class docstring for why that value is not 0.
+            canvas = torch.full((C, D, H, W), self._fill_value(x, flags), dtype=patch.dtype, device=patch.device)
             canvas[:, z1:z2, y1:y2, x1:x2] = patch
 
             out[b] = canvas
