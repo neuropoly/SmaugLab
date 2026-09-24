@@ -1,6 +1,6 @@
 import math
 from collections.abc import Callable, Sequence
-from typing import Any, Protocol, Union
+from typing import Any, Protocol, Union, cast
 
 import torch
 import torchvision.transforms._functional_tensor as F_t
@@ -288,15 +288,41 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
 
             # The asserts below restate what get_kernel guarantees per kernel_type:
             # only Scharr yields a list, and only its branch iterates.
-            if self.kernel_type in ["Laplace", "GaussianBlur"]:
+            if self.kernel_type == "Laplace":
                 assert isinstance(kernel, Tensor)
                 x = apply_convolution(channel_data, kernel, dim=3)
+            elif self.kernel_type == "GaussianBlur":
+                # The sigma is drawn in get_kernel, so sharing the kernel shares the
+                # sigma. With same_on_batch off, every sample gets its own -- which
+                # is what the flag asks for and what it silently did not do.
+                if self.same_on_batch:
+                    assert isinstance(kernel, Tensor)
+                    x = apply_convolution(channel_data, kernel, dim=3)
+                else:
+                    x = torch.stack(
+                        [
+                            apply_convolution(channel_data[b : b + 1], cast(Tensor, self.get_kernel(device=input.device)), dim=3).squeeze(0)
+                            for b in range(channel_data.shape[0])
+                        ],
+                        dim=0,
+                    )
             elif self.kernel_type == "UnsharpMask":
                 # blur selected channel, compute mask and add scaled mask back Isharp​=I+α(I−G​∗I)
-                assert isinstance(kernel, Tensor)
-                blurred = apply_convolution(channel_data, kernel, dim=3)
+                if self.same_on_batch:
+                    assert isinstance(kernel, Tensor)
+                    blurred = apply_convolution(channel_data, kernel, dim=3)
+                    unsharp_amount = torch.rand(1, device=input.device) * self.unsharp_amount
+                else:
+                    blurred = torch.stack(
+                        [
+                            apply_convolution(channel_data[b : b + 1], cast(Tensor, self.get_kernel(device=input.device)), dim=3).squeeze(0)
+                            for b in range(channel_data.shape[0])
+                        ],
+                        dim=0,
+                    )
+                    amount_shape = [channel_data.shape[0]] + [1] * (channel_data.dim() - 1)
+                    unsharp_amount = torch.rand(channel_data.shape[0], device=input.device).view(amount_shape) * self.unsharp_amount
                 mask = channel_data - blurred
-                unsharp_amount = torch.rand(1, device=input.device) * self.unsharp_amount
                 x = channel_data + unsharp_amount * mask
             elif self.kernel_type == "Scharr":
                 tot_ = torch.zeros_like(channel_data, device=input.device)
@@ -307,17 +333,24 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
                         tot_ += apply_convolution(channel_data, k, dim=3)
                 x = tot_
             elif self.kernel_type == "RandConv":
-                # RandConv kernels are per-sample, per-call
-                out = []
-                for b in range(channel_data.shape[0]):
-                    kernel = self.get_kernel(device=input.device)
+                # One kernel for the batch under same_on_batch, a fresh one per
+                # sample otherwise. This used to draw per sample unconditionally,
+                # so `same_on_batch=True` -- which the sequential forces onto every
+                # child -- did nothing here while it held for every sibling.
+                if self.same_on_batch:
                     assert isinstance(kernel, Tensor)
+                    x = apply_convolution(channel_data, kernel, dim=3)
+                else:
+                    out = []
+                    for b in range(channel_data.shape[0]):
+                        per_sample = self.get_kernel(device=input.device)
+                        assert isinstance(per_sample, Tensor)
 
-                    conv = apply_convolution(channel_data[b : b + 1], kernel, dim=3).squeeze(0)
+                        conv = apply_convolution(channel_data[b : b + 1], per_sample, dim=3).squeeze(0)
 
-                    out.append(conv)
+                        out.append(conv)
 
-                x = torch.stack(out, dim=0)
+                    x = torch.stack(out, dim=0)
 
             # Mix with original based on mix_prob
             if torch.rand(1).item() < self.mix_prob:
