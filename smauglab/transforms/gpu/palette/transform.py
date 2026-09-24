@@ -1,7 +1,7 @@
 """The composed PALETTE synthesis transform."""
 
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Iterable, Sequence
+from typing import Any, cast
 
 import torch
 from torch import Tensor, nn
@@ -147,7 +147,8 @@ class PaletteSynthesisGPU(ImageOnlyTransform):
                 device=device,
             )
             region_ids, n_regions = self.initial.partition(ctx)
-            for refinement in self.refinements:
+            # ModuleList's iterator yields bare Modules, which loses `refine`.
+            for refinement in cast(Iterable[RefinementPartitioner], self.refinements):
                 region_ids, n_regions = refinement.refine(ctx, region_ids, n_regions)
             synth_list.append(signed_alpha_affine_remap(ctx.image01, ctx.fg_mask, region_ids, n_regions, self.alpha_magnitude_range))
 
