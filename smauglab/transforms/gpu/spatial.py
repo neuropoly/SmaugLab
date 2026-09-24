@@ -571,13 +571,19 @@ class FlipGenerator3D(RandomGeneratorBase):
         flips = torch.stack(samples, dim=1).to(device=_device, dtype=_dtype)
         flips = (flips > 0.5).to(torch.int8)
 
-        # ensure at least one flip per batch element (choose randomly among allowed axes)
+        # Ensure at least one *allowed* axis is flipped per batch element.
+        #
+        # The zero-test has to look at self.flip_axis, not at all three columns.
+        # `flips` is sampled over every axis but `apply_transform` only acts on the
+        # allowed ones, so a 1 drawn on a disallowed axis used to satisfy the test
+        # while nothing was actually flipped. With the default flip_axis=(0,) that
+        # made RandomFlipTransformGPU(p=1.0) a no-op on 35% of draws.
+        if len(self.flip_axis) == 0:
+            return {"flip": flips}
+        allowed = torch.as_tensor(self.flip_axis, device=flips.device, dtype=torch.long)
         for b in range(batch_size):
-            if flips[b].sum() == 0:
+            if flips[b, allowed].sum() == 0:
                 # pick one allowed axis at random
-                if len(self.flip_axis) == 0:
-                    # nothing to flip
-                    continue
                 choice = int(torch.randint(low=0, high=len(self.flip_axis), size=(1,)).item())
                 axis = int(self.flip_axis[choice])
                 flips[b, axis] = 1
