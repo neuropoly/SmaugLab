@@ -216,6 +216,22 @@ class TestConstructorMatchesNnUNet(unittest.TestCase):
                 ours = set(inspect.signature(self._trainer(name).__init__).parameters)
                 self.assertEqual(upstream - ours, set(), f"{name} would reject arguments nnU-Net passes")
 
+    def test_get_training_transforms_declares_nothing_extra(self):
+        """The other direction: a parameter upstream does not have is never passed.
+
+        nnU-Net calls `get_training_transforms` by keyword and knows nothing about
+        anything else, so an extra parameter can only ever sit at its default --
+        it reads as configurable and is not. `nnUNetTrainerTest` declared a
+        `retain_stats` that neither body used.
+        """
+        from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+
+        upstream = set(inspect.signature(nnUNetTrainer.get_training_transforms).parameters)
+        for name in self.TRAINERS:
+            with self.subTest(trainer=name):
+                ours = set(inspect.signature(self._trainer(name).get_training_transforms).parameters)
+                self.assertEqual(ours - upstream, set(), f"{name} declares parameters nnU-Net never passes")
+
     def test_the_parameter_order_matches(self):
         """They are forwarded to `super().__init__`, and a caller may pass positionally."""
         from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
