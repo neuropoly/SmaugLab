@@ -15,12 +15,13 @@ torchio simply stores as unrecognised metadata. It was almost certainly meant to
 from __future__ import annotations
 
 import gc
-import random
 from collections.abc import Callable, Mapping
 from typing import cast
 
 import torch
 import torchio as tio
+
+from smauglab.transforms.rng import shared_choice
 
 #: A no-argument factory, so each call builds a freshly seeded torchio transform
 #: rather than reusing one instance's sampling state across the run.
@@ -94,6 +95,6 @@ def select(flags: Mapping[str, bool], random_pick: bool) -> dict[str, bool]:
     chosen = dict(flags)
     enabled = [name for name, on in flags.items() if on]
     if random_pick and enabled:
-        keep = random.choice(enabled)
+        keep = shared_choice(enabled)
         chosen = {name: name == keep for name in flags}
     return chosen

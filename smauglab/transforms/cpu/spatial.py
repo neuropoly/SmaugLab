@@ -1,5 +1,3 @@
-import random
-
 import torch
 import torchio as tio
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform, ImageOnlyTransform
@@ -81,7 +79,16 @@ class ShapeTransform(ImageOnlyTransform):
     def _apply_to_image(self, img: torch.Tensor, seg: torch.Tensor, **params) -> tuple[torch.Tensor, torch.Tensor]:
         # Compute random shape
         img_shape = img.shape[1:]
-        new_shape = [random.randint(params["shape_min"], s) if i not in params["ignore_axes"] else s for i, s in enumerate(img_shape)]
+        # torch, not random.randint: `torch.manual_seed` does not reach Python's
+        # `random`, so a seeded training run was not reproducible here -- which is
+        # exactly what smauglab.transforms.rng exists to fix, and the
+        # batchgeneratorsv2 RandomTransform wrapping this one already draws from
+        # torch. `shape_min` is clamped so a config larger than an axis crops to
+        # the axis instead of raising.
+        new_shape = [
+            s if i in params["ignore_axes"] else int(torch.randint(min(params["shape_min"], s), s + 1, (1,)).item())
+            for i, s in enumerate(img_shape)
+        ]
 
         # Find image center
         img_center = [s // 2 for s in img_shape]
