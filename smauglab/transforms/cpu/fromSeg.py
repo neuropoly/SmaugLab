@@ -114,9 +114,20 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
         else:
             to_add += torch.tensor(redist(img.cpu().numpy()), device=device) * (2 * torch.rand(1, device=device) - 1)
 
-    # Normalize to_add and apply it to the image
-    to_add_min, to_add_max = to_add.min(), to_add.max()
-    img += 2 * (to_add - to_add_min) / (to_add_max - to_add_min + 1e-6)
+    # Normalize to_add and apply it to the image.
+    #
+    # The min-max form used here shifted zero: with `2 * (to_add - min) / range`,
+    # a voxel where nothing was redistributed picks up `-2 * min / range`, which is
+    # non-zero whenever min < 0 -- and it always is, since the per-label scale is
+    # `2 * rand - 1` in [-1, 1]. On the `in_seg` branch `to_add` is exactly zero
+    # outside the labels, so that constant became a DC offset applied to the whole
+    # patch: `in_seg` restricted where the redistribution was *computed* but not
+    # where it landed.
+    #
+    # Scaling by the largest magnitude keeps the same peak amplitude of 2 and maps
+    # zero to zero, so an untouched voxel stays untouched.
+    to_add_scale = to_add.abs().max()
+    img += 2 * to_add / (to_add_scale + 1e-6)
 
     if retain_stats:
         # Return to original range
