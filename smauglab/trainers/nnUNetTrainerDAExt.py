@@ -103,6 +103,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                     mode=config.pipeline_mode(),
                     options=config.pipeline_options("random_choose"),
                     source=config.source,
+                    order_source=config.order_source(),
                 ),
                 data_keys=["input", "mask"],
                 # See AugTransformsGPU: True forces the flag onto every child and
@@ -153,6 +154,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                 patch_size=patch_size,
                 rotation=rotation_for_DA,
                 source=config.source,
+                order_source=config.order_source(),
             )
         )
 
