@@ -253,7 +253,16 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
         if data_keys[0] in (DataKey.INPUT, DataKey.IMAGE):
             resample = "trilinear"
         elif data_keys[0] is DataKey.MASK:
-            resample = "nearest"
+            # `apply_transform_mask` no longer routes a mask here, so this branch is
+            # reachable only by a direct call. It stays correct anyway, and the mode is
+            # "nearest-exact", not "nearest": torch's "nearest" is not half-pixel centred
+            # (src = floor(dst * scale)), and the down and the up step each drop ~0.5
+            # voxels, so the composed map is out[i] = in[i - 1] almost regardless of the
+            # scale factor. That measured a mean edge displacement of +1.16 voxels (sd
+            # 0.44) over the shipped 0.5-1.0 range while the trilinear image path did not
+            # move at all -- a label-to-image misregistration, which is what the "the
+            # foreground grew" symptom above actually was. "nearest-exact" measures -0.06.
+            resample = "nearest-exact"
         else:
             raise ValueError(f"Unsupported data key {data_keys[0]} for RandomLowResTransformGPU. Expected IMAGE or MASK.")
 
@@ -310,9 +319,22 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
         reason, and so is `RandomAcqTransformGPU` below, which is this operation
         restricted to a single axis.
 
-        This used to call `apply_transform`, which nearest-resampled the mask along
-        with the image and grew the foreground by ~7% on a 24-cube test volume. The
-        override exists at all only because the class inherits
+        It is also what the CPU backend already did: `AugId.LOW_RES` maps to nnU-Net's
+        image-only `SimulateLowResolutionTransform` there (transforms/cpu/external.py),
+        so before this change `low_res` meant two different things depending on
+        `Backend`, and any GPU-vs-CPU comparison carried that confound.
+
+        This used to call `apply_transform`, which nearest-resampled the mask along with
+        the image. The visible symptom was a foreground count that moved by a few percent,
+        but that is not what the damage was: the volume change is unbiased (mean -0.02%,
+        sd 0.85% over 200 spheres at the shipped scale range, growing about half the
+        time). What was biased was the *position*. Torch's `F.interpolate(mode="nearest")`
+        is not half-pixel centred, so the label came back displaced by +1.16 voxels
+        (sd 0.44) on every axis while the trilinear image path stayed put -- a systematic
+        ~1 voxel label-to-image misregistration on a quarter of the samples, in the same
+        direction every time. See `unit_tests/test_resample_alignment.py`.
+
+        The override exists at all only because the class inherits
         `RigidAffineAugmentationBase3D` rather than `ImageOnlyTransform`, so
         `MaskSequentialOpsCustom` routes the mask through it.
         """
