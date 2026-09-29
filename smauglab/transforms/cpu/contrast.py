@@ -159,19 +159,24 @@ class HistogramEqualTransform(ImageOnlyTransform):
 
             # Flatten the image and compute the histogram
             img_flattened = img[c].flatten().to(torch.float32)
-            hist, bins = torch.histogram(img_flattened, bins=256)
-
-            # Compute bin edges
-            bin_edges = torch.linspace(img_min, img_max, steps=257)  # 256 bins -> 257 edges
+            hist, bin_edges = torch.histogram(img_flattened, bins=256)
 
             # Compute the normalized cumulative distribution function (CDF)
             cdf = hist.cumsum(dim=0)
             cdf = (cdf - cdf.min()) / (cdf.max() - cdf.min())  # Normalize to [0,1]
             cdf = cdf * (img_max - img_min) + img_min  # Scale back to image range
 
-            # Perform histogram equalization
-            indices = torch.searchsorted(bin_edges[:-1], img_flattened)
-            img_eq = torch.index_select(cdf, dim=0, index=torch.clamp(indices, 0, 255))
+            # Perform histogram equalization.
+            #
+            # bucketize against the 255 *interior* edges gives the index of the bin
+            # a value falls in: 0 for anything below edge 1, 255 for anything at or
+            # above edge 255. `searchsorted(bin_edges[:-1], v)` used to be used
+            # here, which returns the number of edges strictly below v -- that is
+            # bin + 1 for every value above the minimum, and 256 at the maximum,
+            # one past the end of a 256-entry CDF. The clamp hid the overflow and
+            # 63 of 64 voxels in a linear ramp landed one bin too high.
+            indices = torch.bucketize(img_flattened, bin_edges[1:-1])
+            img_eq = torch.index_select(cdf, dim=0, index=indices)
             img[c] = img_eq.reshape(img[c].shape)
 
             if params["retain_stats"]:
