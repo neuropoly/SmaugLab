@@ -25,6 +25,17 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             source=config.source,
             order_source=config.order_source(),
         )
-        # same_on_batch keeps the mask aligned with the image; see
-        # AugmentationSequentialOpsCustom in base.py.
-        super().__init__(*transforms, data_keys=["input", "mask"], same_on_batch=True)
+        # None, not False: kornia only overwrites a child's own `same_on_batch`
+        # when the argument is not None, and every config sets the flag per
+        # transform. Passing True discards all of those -- and, because kornia
+        # draws the per-sample application mask with the same flag, turns every
+        # configured `p` into a single batch-wide coin flip.
+        #
+        # The mask stays aligned with the image either way: that comes from
+        # AugmentationSequential replaying the same ParamItem over both, not
+        # from this flag.
+        super().__init__(
+            *transforms,
+            data_keys=["input", "mask"],
+            same_on_batch=True if config.same_on_batch() else None,
+        )
