@@ -3,8 +3,6 @@ import importlib.resources
 import shutil
 from pathlib import Path
 
-import nnunetv2
-
 from smauglab import trainers
 
 #: Module to copy -> the trainer classes it provides.
@@ -47,6 +45,10 @@ def main(argv: list[str] | None = None):
 
 
 def add_trainer(trainer_name: str, overwrite: bool = False):
+    # nnunetv2 is an optional extra, and only copying needs it. Importing it here
+    # rather than at module level keeps TRAINER_CLASSES and --help usable, and this
+    # module importable, without the extra.
+    import nnunetv2
 
     # Find trainer path.
     # importlib.resources returns a Traversable, which only promises open()/read_bytes()

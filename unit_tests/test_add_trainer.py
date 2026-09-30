@@ -13,12 +13,19 @@ resolves the class from it at inference.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import unittest
 
 from smauglab.add_trainer import TRAINER_CLASSES, _trainer_help, main
 
+#: The trainer modules import nnunetv2 at module level, so the two tests that
+#: load them need the extra. The help tests do not, and must keep running in CI,
+#: which installs `.[dev]` only.
+needs_nnunetv2 = unittest.skipIf(importlib.util.find_spec("nnunetv2") is None, "needs the nnunetv2 extra")
+
 
 class TestTrainerClassesAreReal(unittest.TestCase):
+    @needs_nnunetv2
     def test_every_declared_class_exists_in_its_module(self):
         for module_name, classes in TRAINER_CLASSES.items():
             module = importlib.import_module(f"smauglab.trainers.{module_name}")
@@ -26,6 +33,7 @@ class TestTrainerClassesAreReal(unittest.TestCase):
                 with self.subTest(module=module_name, cls=class_name):
                     self.assertTrue(hasattr(module, class_name), f"{module_name}.py does not define {class_name}")
 
+    @needs_nnunetv2
     def test_every_trainer_class_in_the_package_is_declared(self):
         """So a new trainer cannot be shipped without the help mentioning it."""
         import inspect
