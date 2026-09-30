@@ -7,10 +7,9 @@ submodule is bound on it. Both trainers did
     ...
     importlib.resources.files(configs)
 
-which worked only because something else in the import graph -- nnunetv2's, as it
-turns out -- happened to import `importlib.resources` first. Verified on this
-interpreter: the attribute is absent after `import importlib` and still absent
-after `import torch`.
+which worked only because something else in the import graph happened to import
+`importlib.resources` first. Which import that is, and whether it happens at all,
+is not ours to rely on: it varies with the torch and nnunetv2 versions installed.
 
 `smauglab/add_trainer.py` always did this correctly, which is what makes the
 other two a slip rather than a convention.
@@ -50,18 +49,3 @@ class TestResourcesIsImportedExplicitly(unittest.TestCase):
                     imported,
                     "uses importlib.resources but only imports importlib; the submodule is bound only if something else imported it first",
                 )
-
-    def test_a_bare_importlib_does_not_expose_resources(self):
-        """The premise, asserted rather than assumed.
-
-        In a fresh interpreter neither `import importlib` nor `import torch` binds
-        the submodule, so the old code depended entirely on some other import
-        happening to pull it in.
-        """
-        import subprocess
-        import sys
-
-        probe = "import importlib, torch; print(hasattr(importlib, 'resources'))"
-        result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
-
-        self.assertEqual(result.stdout.strip(), "False")
