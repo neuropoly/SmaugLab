@@ -471,7 +471,10 @@ class RandomPaletteGPU(ImageOnlyTransform):
         # ── Step 2: per-anatomical-label affine remap (PALETTE) ───────────────
         if labels is not None:
             if labels.shape[2:] != (D, H, W):
-                labels = F.interpolate(labels.float(), size=(D, H, W), mode="nearest").long()
+                # "nearest-exact", not "nearest": the latter maps src = floor(dst * scale)
+                # with no half-pixel offset, which walks the label map about half a voxel
+                # toward higher indices relative to the intensities synthesised from it.
+                labels = F.interpolate(labels.float(), size=(D, H, W), mode="nearest-exact").long()
             lbl = labels[:, 0].reshape(B, N).clamp(min=0)
 
             unique_classes = lbl.unique()
