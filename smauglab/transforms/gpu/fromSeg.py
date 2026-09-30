@@ -130,6 +130,12 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
         # Expect segmentation provided in params: shape [N, 1, ...] or [N, C_seg, ...]
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         if "seg" not in params:
             return input
         seg = params["seg"]
@@ -363,6 +369,12 @@ class RandomPaletteGPU(ImageOnlyTransform):
         flags: dict[str, Any],
         transform: Tensor | None = None,
     ) -> Tensor:
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_raw: torch.Tensor | None = params.get("seg")
 
         labels: torch.Tensor | None = None
