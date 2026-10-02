@@ -41,6 +41,18 @@ def _gaussian_blur_3d(x: torch.Tensor, sigma: float) -> torch.Tensor:
     return y.clamp(0, 1)
 
 
+def _id_boundary(ids: torch.Tensor) -> torch.Tensor:
+    """Boundary band of an integer id map. ids: (B, 1, D, H, W) float.
+
+    A voxel is on a boundary if its 3x3x3 neighbourhood contains more than one id
+    (max-pool != min-pool) -> a ~2-voxel band straddling every interface.
+    Two max-pool calls; no Python loop over regions.
+    """
+    mx = F.max_pool3d(ids, 3, stride=1, padding=1)
+    mn = -F.max_pool3d(-ids, 3, stride=1, padding=1)
+    return (mx != mn).float()
+
+
 def _voronoi_region_ids(
     coords: torch.Tensor,
     lbl_l: torch.Tensor,
@@ -49,13 +61,19 @@ def _voronoi_region_ids(
     device: torch.device,
     s_choices: List[int],
     skip_sub_parc_prob: float,
-) -> tuple[torch.Tensor, int]:
+    return_full: bool = False,
+):
     """Spatially subdivide each K-means cluster into Voronoi sub-regions.
 
     Returns (rid, R): per-voxel sub-region id and total region count.
+    With return_full, also returns full (C, N) long: the region id every voxel
+    WOULD get if it belonged to cluster c (each cluster's own tessellation over
+    the whole grid; -1 for a cluster with no foreground voxels) -- used by the
+    boundary partial-volume simulation.
     """
     N = lbl_l.shape[0]
     rid = torch.zeros(N, dtype=torch.long, device=device)
+    full = torch.full((C, N), -1, dtype=torch.long, device=device) if return_full else None
     offset = 0
     for c in range(C):
         c_mask = lbl_l == c
@@ -70,6 +88,8 @@ def _voronoi_region_ids(
             S = min(s_choices[s_idx], n_fg)
         if S <= 1:
             rid = torch.where(c_mask, torch.full_like(rid, offset), rid)
+            if return_full:
+                full[c] = offset
             offset += 1
             continue
         seed_idx = torch.multinomial(c_fg_mask.float(), S, replacement=False)
@@ -77,7 +97,11 @@ def _voronoi_region_ids(
         d = torch.cdist(coords, centroids_v)
         sub = torch.argmin(d, dim=1)
         rid = torch.where(c_mask, offset + sub, rid)
+        if return_full:
+            full[c] = offset + sub
         offset += S
+    if return_full:
+        return rid, offset, full
     return rid, offset
 
 
@@ -377,10 +401,25 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
         label_remap_prob: float = 0.5,
         min_label_voxels: int = 4,
         label_classes: Optional[List[int]] = None,
+        pv_prob: float = 0.0,
+        pv_levels: Optional[List[List[float]]] = None,
         p: float = 1.0,
         **kwargs: Any,
     ) -> None:
         super().__init__(p=p, **kwargs)
+        # Boundary partial-volume (PV) simulation, opt-in (pv_prob=0 -> exact legacy
+        # behaviour, no extra RNG draws). With probability pv_prob a sample draws ONE
+        # level [sigma, weight, tau] uniformly from pv_levels (repeat an entry to
+        # up-weight it; [0, 0, 0] = no PV), shared by all three boundary types:
+        #  * K-means boundaries -- intensity space (mixel model): within tau of a
+        #    cluster threshold a voxel blends its own region's affine with the
+        #    adjacent cluster's (weight 0.5 at the threshold -> 0 at distance tau),
+        #    so the remap is continuous in x; no spatial blur, texture untouched.
+        #  * Voronoi cuts + label-remap edges -- spatial (PSF model): inside a
+        #    ~2-voxel band around each cut, y <- y + weight * (blur_sigma(y) - y).
+        self.pv_prob = pv_prob
+        self.pv_levels = pv_levels if pv_levels is not None else [
+            [0.0, 0.0, 0.0], [0.7, 0.4, 0.02], [1.0, 0.7, 0.04], [1.0, 0.7, 0.04], [1.5, 1.0, 0.08]]
         self.c_choices = c_choices
         self.s_choices = s_choices
         self.blur_sigmas = blur_sigmas
@@ -392,6 +431,26 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
         self.label_remap_prob = label_remap_prob
         self.min_label_voxels = min_label_voxels
         self.label_classes = label_classes
+
+    def _apply_spatial_pv(self, synth, fg, vor_band, lbl_ids, levels, shape5):
+        """Blend a blurred copy into synth only inside Voronoi / label-remap bands.
+
+        Per PV sample: 2 max-pools (label edges) + one separable blur. vor_band is
+        precomputed in step 1. The foreground/background edge is NOT a band.
+        """
+        out = synth.clone()
+        for i, lvl in enumerate(levels):
+            if lvl is None or lvl[1] <= 0 or lvl[0] <= 0:
+                continue
+            band = vor_band[i].view(1, *shape5[1:])
+            ids_i = lbl_ids[i].view(1, *shape5[1:])
+            if ids_i.max() > ids_i.min():
+                band = torch.maximum(band, _id_boundary(ids_i))
+            if band.max() == 0:
+                continue
+            blurred = _gaussian_blur_3d(synth[i:i + 1], lvl[0])
+            out[i:i + 1] = synth[i:i + 1] + lvl[1] * band * (blurred - synth[i:i + 1])
+        return out * fg
 
     @torch.no_grad()
     def apply_transform(
@@ -432,6 +491,13 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
 
         # ── Step 1: V26_6 K-means + Voronoi per-region affine remap ──────────
         synth_list = []
+        do_pv = self.pv_prob > 0
+        pv_lvls = [None] * B
+        if do_pv:
+            for i in range(B):
+                if random.random() < self.pv_prob:
+                    pv_lvls[i] = random.choice(self.pv_levels)
+        vor_band = torch.zeros(B, N, device=device) if do_pv else None
         for i in range(B):
             flat = images_01[i]
             flat_m = flat_m_all[i]
@@ -459,10 +525,12 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
                 lbl_s = torch.bucketize(flat, boundaries)
                 lbl_l = sort_idx[lbl_s].long()
 
-                rid, R = _voronoi_region_ids(
+                lvl = pv_lvls[i]
+                vor = _voronoi_region_ids(
                     coords, lbl_l, flat_m, C_k, device,
-                    self.s_choices, self.skip_sub_parc_prob,
+                    self.s_choices, self.skip_sub_parc_prob, return_full=lvl is not None,
                 )
+                rid, R = vor[0], vor[1]
 
                 s_c = torch.zeros(R, device=device).scatter_add_(0, rid, flat * flat_m)
                 n_c = torch.zeros(R, device=device).scatter_add_(0, rid, flat_m)
@@ -474,6 +542,28 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
                 alp_c = mag_c * sign_c
 
                 synth_i = (mu_c[rid] + alp_c[rid] * (flat - mean_c[rid])).clamp(0, 1) * flat_m
+                if lvl is not None and lvl[2] > 0:
+                    # K-means PV in intensity space: blend with the adjacent cluster's map
+                    full, tau = vor[2], lvl[2]
+                    lo = torch.cat([boundaries.new_tensor([-1e9]), boundaries])[lbl_s]
+                    hi = torch.cat([boundaries, boundaries.new_tensor([1e9])])[lbl_s]
+                    go_up = (hi - flat) < (flat - lo)
+                    dist = torch.where(go_up, hi - flat, flat - lo)
+                    alt_s = (lbl_s + torch.where(go_up, 1, -1)).clamp(0, C_k - 1)
+                    alt_rid = full.gather(0, sort_idx[alt_s].long().view(1, -1)).view(-1)
+                    # cap tau at half the voxel's own cluster width so w hits 0 at the
+                    # cluster midpoint, where the nearest-threshold side flips (continuity)
+                    tau_eff = torch.minimum(torch.full_like(flat, tau), (hi - lo) / 2)
+                    w = 0.5 * (1 - dist / tau_eff.clamp(min=1e-6)).clamp(0, 1) * (alt_rid >= 0).float()
+                    alt_rid = alt_rid.clamp(min=0)
+                    alt_v = (mu_c[alt_rid] + alp_c[alt_rid] * (flat - mean_c[alt_rid])).clamp(0, 1)
+                    synth_i = ((1 - w) * synth_i + w * alt_v) * flat_m
+                if lvl is not None and lvl[1] > 0:
+                    # Voronoi band = cuts of each cluster's own tessellation, inside that cluster
+                    for c in range(C_k):
+                        if vor[2][c].max() > vor[2][c].min():
+                            vor_band[i] = torch.maximum(vor_band[i], _id_boundary(
+                                vor[2][c].float().view(1, 1, D, H, W)).view(-1) * (lbl_l == c).float())
 
             synth_list.append(synth_i)
 
@@ -486,6 +576,7 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
             synth = synth_01.reshape(B, N)
 
         # ── Step 2: per-anatomical-label affine remap (V26_6_2) ───────────────
+        lbl_ids = torch.zeros(B, N, device=device) if do_pv else None
         if labels is not None:
             if labels.shape[2:] != (D, H, W):
                 labels = F.interpolate(labels.float(), size=(D, H, W), mode="nearest").long()
@@ -520,6 +611,15 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
                 new_vals = (mu_c + alp_c * (synth - c_mean)).clamp(0, 1)
                 write_mask = c_mask * apply
                 synth = synth * (1.0 - write_mask) + new_vals * write_mask
+                if do_pv:
+                    lbl_ids = lbl_ids + write_mask * c_val
+
+        # ── Step 2b: boundary partial-volume simulation (opt-in) ──────────────
+        if do_pv and any(l is not None for l in pv_lvls):
+            synth = self._apply_spatial_pv(
+                synth.reshape(B, 1, D, H, W), flat_m_all.reshape(B, 1, D, H, W),
+                vor_band, lbl_ids, pv_lvls, (B, 1, D, H, W),
+            ).reshape(B, N)
 
         # ── Step 3: optional second blur, then foreground z-score ─────────────
         synth_01 = synth.reshape(B, 1, D, H, W)

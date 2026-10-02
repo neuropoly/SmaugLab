@@ -110,6 +110,8 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                     label_remap_prob=v26_6_2_params.get("label_remap_prob", 0.5),
                     min_label_voxels=v26_6_2_params.get("min_label_voxels", 4),
                     label_classes=v26_6_2_params.get("label_classes", None),
+                    pv_prob=v26_6_2_params.get("pv_prob", 0.0),
+                    pv_levels=v26_6_2_params.get("pv_levels", None),
                 )
             )
 
