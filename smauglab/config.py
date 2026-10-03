@@ -97,7 +97,7 @@ def validate_section(section: dict, backend: Backend, *, source: str = "<config>
 RESERVED_SECTIONS = ("pipeline",)
 
 #: Keys the `pipeline` section may hold.
-PIPELINE_KEYS = ("mode", "order", "random_choose")
+PIPELINE_KEYS = ("mode", "order", "random_choose", "same_on_batch")
 
 #: How to bring a pre-registry config forward. The migrator is a one-time tool kept
 #: in the repository rather than shipped in the wheel, so this points at the repo.
@@ -158,6 +158,25 @@ class SmaugConfig:
         raw = self.payload.get("pipeline", {}).get("order")
         return OrderSource(raw) if raw else OrderSource.REGISTRY
 
+    def same_on_batch(self) -> bool:
+        """Whether every sample of a batch shares one set of augmentation draws.
+
+        Defaults to True, which is what the GPU pipeline has always forced. That is
+        not only about sharing parameters: kornia samples the per-sample
+        application mask with the same flag
+        (`_adapted_sampling((B,), p, same_on_batch)`), so with True a transform's
+        `p` is spent once for the whole batch -- either every sample is augmented
+        or none is. Setting it to False restores the per-transform
+        `"same_on_batch"` values the configs already carry, and makes `p`
+        per-sample.
+
+        It defaults to True rather than to the configs' own values because every
+        published run was trained under the batch-wise behaviour; flipping it by
+        default would silently stop the shipped configs reproducing their results.
+        """
+        raw = self.payload.get("pipeline", {}).get("same_on_batch")
+        return True if raw is None else bool(raw)
+
     def names(self, backend: Backend) -> list[str]:
         return [k for k in self.section(backend) if not k.startswith("_")]
 
@@ -216,6 +235,10 @@ class SmaugConfig:
                 close = difflib.get_close_matches(str(order), valid_orders, n=2, cutoff=0.5)
                 hint = f" Did you mean: {', '.join(close)}?" if close else ""
                 problems.append(f"pipeline.order: unknown source {order!r}. Accepted: {', '.join(valid_orders)}.{hint}")
+
+        same_on_batch = pipeline.get("same_on_batch")
+        if same_on_batch is not None and not isinstance(same_on_batch, bool):
+            problems.append(f"pipeline.same_on_batch: expected true or false, got {same_on_batch!r}")
 
         mode = pipeline.get("mode")
         if mode is not None:
