@@ -311,9 +311,21 @@ def main():
     wandb.finish()
 
 
+def _mean(values: list[float]) -> float:
+    """The mean of an epoch's per-batch losses.
+
+    Both loops used to return `loss.mean().item()`, the loop variable -- i.e. the
+    *last mini-batch's* loss, logged to wandb as the epoch loss, while the DSC
+    beside it was accumulated. It also raised UnboundLocalError on an empty
+    loader; nan says "no batches" without taking the run down.
+    """
+    return float(np.mean(values)) if values else float("nan")
+
+
 def validate(data_loader, model, loss_func, epoch, device):
     model.eval()
     dsc_list = [0]
+    loss_list: list[float] = []
     epoch_iterator = tqdm(data_loader, desc="Validation (loss=X.X) (DSC=X.X)", dynamic_ncols=True)
     with torch.no_grad():
         for step, batch in enumerate(epoch_iterator):
@@ -335,7 +347,9 @@ def validate(data_loader, model, loss_func, epoch, device):
             if dsc > 0:
                 dsc_list.append(dsc)
 
-            epoch_iterator.set_description(f"Validation (loss={loss.mean().item():2.5f}) (DSC={np.mean(dsc_list):2.5f})")
+            loss_list.append(loss.mean().item())
+
+            epoch_iterator.set_description(f"Validation (loss={np.mean(loss_list):2.5f}) (DSC={np.mean(dsc_list):2.5f})")
 
             # Display first image
             if step == 0:
@@ -346,12 +360,13 @@ def validate(data_loader, model, loss_func, epoch, device):
                 wandb.log({"validation_img/groud_truth": wandb.Image(target_img, caption=f"ground_truth_{epoch}")})
                 wandb.log({"validation_img/prediction": wandb.Image(pred_img, caption=f"prediction_{epoch}")})
 
-    return loss.mean().item(), np.mean(dsc_list)
+    return _mean(loss_list), np.mean(dsc_list)
 
 
 def train(data_loader, gpu_transforms, model, loss_func, optimizer, scaler, device):
     model.train()
     dsc_list = [0]
+    loss_list: list[float] = []
     epoch_iterator = tqdm(data_loader, desc="Training (loss=X.X) (DSC=X.X)", dynamic_ncols=True)
     for _step, batch in enumerate(epoch_iterator):
         # Load input and target
@@ -379,8 +394,10 @@ def train(data_loader, gpu_transforms, model, loss_func, optimizer, scaler, devi
         scaler.step(optimizer)
         scaler.update()
 
-        epoch_iterator.set_description(f"Training (loss={loss.mean().item():2.5f}) (DSC={np.mean(dsc_list):2.5f})")
-    return loss.mean().item(), np.mean(dsc_list)
+        loss_list.append(loss.mean().item())
+
+        epoch_iterator.set_description(f"Training (loss={np.mean(loss_list):2.5f}) (DSC={np.mean(dsc_list):2.5f})")
+    return _mean(loss_list), np.mean(dsc_list)
 
 
 if __name__ == "__main__":

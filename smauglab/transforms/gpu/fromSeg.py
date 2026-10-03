@@ -130,6 +130,12 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
         # Expect segmentation provided in params: shape [N, 1, ...] or [N, C_seg, ...]
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         if "seg" not in params:
             return input
         seg = params["seg"]
@@ -363,6 +369,12 @@ class RandomPaletteGPU(ImageOnlyTransform):
         flags: dict[str, Any],
         transform: Tensor | None = None,
     ) -> Tensor:
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_raw: torch.Tensor | None = params.get("seg")
 
         labels: torch.Tensor | None = None
@@ -459,7 +471,10 @@ class RandomPaletteGPU(ImageOnlyTransform):
         # ── Step 2: per-anatomical-label affine remap (PALETTE) ───────────────
         if labels is not None:
             if labels.shape[2:] != (D, H, W):
-                labels = F.interpolate(labels.float(), size=(D, H, W), mode="nearest").long()
+                # "nearest-exact", not "nearest": the latter maps src = floor(dst * scale)
+                # with no half-pixel offset, which walks the label map about half a voxel
+                # toward higher indices relative to the intensities synthesised from it.
+                labels = F.interpolate(labels.float(), size=(D, H, W), mode="nearest-exact").long()
             lbl = labels[:, 0].reshape(B, N).clamp(min=0)
 
             unique_classes = lbl.unique()
@@ -603,8 +618,10 @@ class DifferentiableHistogram3D(nn.Module):
         self.max_value = float(value_range[1])
         self.eps = eps
 
-        bin_centers = torch.linspace(self.min_value, self.max_value, num_bins)
-        self.register_buffer("bin_centers", bin_centers.view(1, 1, num_bins, 1), persistent=False)
+        # No bin_centers buffer: `forward` derives every index it needs from
+        # min_value and bin_width arithmetically and never read it, so the buffer
+        # was dead state that still showed up in state_dict() and moved with
+        # .to(device) on every call.
         self.bin_width = (self.max_value - self.min_value) / max(num_bins - 1, 1)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
