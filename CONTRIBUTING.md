@@ -111,6 +111,16 @@ whole `kornia.utils.helpers` module. The `kornia-compat` CI job runs the suite
 against both ends of the supported range, so a break shows up here rather than
 in a user's training run.
 
+`nnunetv2` is pinned to `>=2.5`. 2.5 is the release that moved nnU-Net's
+augmentation pipeline to `batchgeneratorsv2`, which every trainer here imports,
+and that changed the `get_training_transforms` signature the trainers override.
+On 2.4.x nnU-Net calls that method with `order_resampling_data=` and
+`order_resampling_seg=`, which the override does not declare, so a run dies with
+a `TypeError` before the first batch.
+`test_trainers.py::TestTrainingTransformsMatchesNnUNet` compares the override
+against whichever nnU-Net is installed, so an unsupported one fails in the suite
+rather than an hour into a training run.
+
 `smauglab/transforms/gpu/contrast.py` imports the private
 `torchvision.transforms._functional_tensor`. It still exists as of torchvision
 0.28, but carries the same risk.
