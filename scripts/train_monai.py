@@ -37,6 +37,7 @@ from _common import (
     fetch_image_config,
     get_validation_image,
     parser2config,
+    report_missing,
     tuple2string,
     tuple_type_float,
     tuple_type_int,
@@ -76,7 +77,10 @@ def get_parser():
     )
     parser.add_argument("--gamma", type=float, default=0.1, help="Factor used to reduce the learning rate (default=0.1)")
     parser.add_argument(
-        "--channels", type=tuple_type_int, default=(32, 64, 128, 256), help="Channels if attunet selected (default=16,32,64,128,256)"
+        "--channels",
+        type=tuple_type_int,
+        default=(32, 64, 128, 256),
+        help="Channels if attunet selected (default=32,64,128,256). The last value names the run: attunet<last>.",
     )
     parser.add_argument("--patch-size", type=tuple_type_int, default=(64, 64, 64), help="Training patch size (default=(64, 64, 64)).")
     parser.add_argument(
@@ -87,7 +91,7 @@ def get_parser():
         "--weight-folder",
         type=str,
         default=os.path.abspath("weights/"),
-        help='Folder where the weights will be stored and loaded. Will be created if does not exist. (default="src/ply/weights/3DGAN")',
+        help='Folder where the weights will be stored and loaded. Will be created if does not exist. (default="./weights/").',
     )
     parser.add_argument("--start-weights", type=str, default="", help="Path to the model weights used to start the training.")
     return parser
@@ -141,6 +145,11 @@ def main():
         config_data=config_data,
         split="VALIDATION",
     )
+
+    # Both lists were captured and never looked at, so a data config pointing at
+    # paths that do not exist trained on whatever was left, silently.
+    report_missing(err_train, "TRAINING")
+    report_missing(err_val, "VALIDATION")
 
     # Load SmaugLab transform parameters 🐞
     configs_path = importlib.resources.files(configs)
@@ -249,7 +258,11 @@ def main():
             model.load_state_dict(torch.load(args.start_weights, map_location=torch.device(device))["weights"])
 
     # Path to the saved weights
-    weights_path = f"{weight_folder}/{json_name.replace('config_SegVert_', '').replace('.json', '.pth')}"
+    # json_name is f"config_{model}_pixdimRSP_{...}.json", so the old
+    # .replace("config_SegVert_", "") never matched anything -- a leftover from a
+    # renamed project. Dropping the "config_" prefix is what it was reaching for,
+    # and it stops the weights and the params file differing only by extension.
+    weights_path = f"{weight_folder}/{json_name.removeprefix('config_').replace('.json', '.pth')}"
 
     # Init criterion
     loss_func = DiceFocalLoss(sigmoid=True, smooth_dr=1e-4)
@@ -305,9 +318,21 @@ def main():
     wandb.finish()
 
 
+def _mean(values: list[float]) -> float:
+    """The mean of an epoch's per-batch losses.
+
+    Both loops used to return `loss.mean().item()`, the loop variable -- i.e. the
+    *last mini-batch's* loss, logged to wandb as the epoch loss, while the DSC
+    beside it was accumulated. It also raised UnboundLocalError on an empty
+    loader; nan says "no batches" without taking the run down.
+    """
+    return float(np.mean(values)) if values else float("nan")
+
+
 def validate(data_loader, model, loss_func, epoch, device):
     model.eval()
     dsc_list = [0]
+    loss_list: list[float] = []
     epoch_iterator = tqdm(data_loader, desc="Validation (loss=X.X) (DSC=X.X)", dynamic_ncols=True)
     with torch.no_grad():
         for step, batch in enumerate(epoch_iterator):
@@ -329,7 +354,9 @@ def validate(data_loader, model, loss_func, epoch, device):
             if dsc > 0:
                 dsc_list.append(dsc)
 
-            epoch_iterator.set_description(f"Validation (loss={loss.mean().item():2.5f}) (DSC={np.mean(dsc_list):2.5f})")
+            loss_list.append(loss.mean().item())
+
+            epoch_iterator.set_description(f"Validation (loss={np.mean(loss_list):2.5f}) (DSC={np.mean(dsc_list):2.5f})")
 
             # Display first image
             if step == 0:
@@ -340,12 +367,13 @@ def validate(data_loader, model, loss_func, epoch, device):
                 wandb.log({"validation_img/groud_truth": wandb.Image(target_img, caption=f"ground_truth_{epoch}")})
                 wandb.log({"validation_img/prediction": wandb.Image(pred_img, caption=f"prediction_{epoch}")})
 
-    return loss.mean().item(), np.mean(dsc_list)
+    return _mean(loss_list), np.mean(dsc_list)
 
 
 def train(data_loader, gpu_transforms, model, loss_func, optimizer, scaler, device):
     model.train()
     dsc_list = [0]
+    loss_list: list[float] = []
     epoch_iterator = tqdm(data_loader, desc="Training (loss=X.X) (DSC=X.X)", dynamic_ncols=True)
     for _step, batch in enumerate(epoch_iterator):
         # Load input and target
@@ -373,8 +401,10 @@ def train(data_loader, gpu_transforms, model, loss_func, optimizer, scaler, devi
         scaler.step(optimizer)
         scaler.update()
 
-        epoch_iterator.set_description(f"Training (loss={loss.mean().item():2.5f}) (DSC={np.mean(dsc_list):2.5f})")
-    return loss.mean().item(), np.mean(dsc_list)
+        loss_list.append(loss.mean().item())
+
+        epoch_iterator.set_description(f"Training (loss={np.mean(loss_list):2.5f}) (DSC={np.mean(dsc_list):2.5f})")
+    return _mean(loss_list), np.mean(dsc_list)
 
 
 if __name__ == "__main__":
