@@ -134,9 +134,12 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                     mode=config.pipeline_mode(),
                     options=config.pipeline_options("random_choose"),
                     source=config.source,
+                    order_source=config.order_source(),
                 ),
                 data_keys=["input", "mask"],
-                same_on_batch=True,
+                # See AugTransformsGPU: True forces the flag onto every child and
+                # spends each transform's `p` once for the whole batch.
+                same_on_batch=True if config.same_on_batch() else None,
             ).to(self.device)
 
         print(f"Using SmaugLab transforms from: {json_path}")
@@ -182,6 +185,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                 patch_size=patch_size,
                 rotation=rotation_for_DA,
                 source=config.source,
+                order_source=config.order_source(),
             )
         )
 
