@@ -219,7 +219,7 @@
             "keepdim": true,
             "p": 1.0,
             "p_batch": 1.0,
-            "retain_stats": false,
+            "retain_stats": true,
             "same_on_batch": false,
             "std_noise_range": [
                 0.1,
