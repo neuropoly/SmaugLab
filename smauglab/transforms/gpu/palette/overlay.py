@@ -66,7 +66,9 @@ class AnatomicalLabelOverlay(nn.Module):
         depth, height, width = shape
 
         if labels.shape[2:] != (depth, height, width):
-            labels = F.interpolate(labels.float(), size=(depth, height, width), mode="nearest").long()
+            # "nearest-exact" -- see the note in fromSeg.py: plain "nearest" is not
+            # half-pixel centred and shifts the label map off the intensities.
+            labels = F.interpolate(labels.float(), size=(depth, height, width), mode="nearest-exact").long()
         lbl = labels[:, 0].reshape(batch, n_voxels).clamp(min=0)
 
         classes = lbl.unique()
