@@ -90,8 +90,12 @@ class ShapeTransform(ImageOnlyTransform):
         starts = [max(0, c - ns // 2) for c, ns in zip(img_center, new_shape)]
         ends = [start + ns for start, ns in zip(starts, new_shape)]
 
-        # Crop using advanced slicing
-        slices = tuple(slice(start, end) for start, end in zip(starts, ends))
-        img_cropped = img[(slice(None), *slices)]  # Keep channel dim intact
-        seg_cropped = seg[(slice(None), *slices)]
+        # Crop using advanced slicing. The index is named rather than written inline
+        # as `img[(slice(None), *slices)]`: mypy reads a starred tuple *inside a
+        # subscript* as PEP 646 syntax and rejects it under python_version 3.10, which
+        # this package still supports. Out here the same literal is fine.
+        slices = [slice(start, end) for start, end in zip(starts, ends)]
+        index = (slice(None), *slices)  # Keep channel dim intact
+        img_cropped = img[index]
+        seg_cropped = seg[index]
         return img_cropped, seg_cropped

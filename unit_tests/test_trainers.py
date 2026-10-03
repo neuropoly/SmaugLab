@@ -216,6 +216,22 @@ class TestConstructorMatchesNnUNet(unittest.TestCase):
                 ours = set(inspect.signature(self._trainer(name).__init__).parameters)
                 self.assertEqual(upstream - ours, set(), f"{name} would reject arguments nnU-Net passes")
 
+    def test_get_training_transforms_declares_nothing_extra(self):
+        """The other direction: a parameter upstream does not have is never passed.
+
+        nnU-Net calls `get_training_transforms` by keyword and knows nothing about
+        anything else, so an extra parameter can only ever sit at its default --
+        it reads as configurable and is not. `nnUNetTrainerTest` declared a
+        `retain_stats` that neither body used.
+        """
+        from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+
+        upstream = set(inspect.signature(nnUNetTrainer.get_training_transforms).parameters)
+        for name in self.TRAINERS:
+            with self.subTest(trainer=name):
+                ours = set(inspect.signature(self._trainer(name).get_training_transforms).parameters)
+                self.assertEqual(ours - upstream, set(), f"{name} declares parameters nnU-Net never passes")
+
     def test_the_parameter_order_matches(self):
         """They are forwarded to `super().__init__`, and a caller may pass positionally."""
         from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
@@ -411,6 +427,32 @@ class TestTargetReachesTheDeviceEitherShape(unittest.TestCase):
         trainer.train_step({"data": torch.full((1, 1, 4, 4, 4), 0.5), "target": torch.zeros(1, 1, 4, 4, 4), "keys": ["case_a"]})
 
         self.assertIsInstance(trainer.seen[0], torch.Tensor)
+
+
+class TestTrainingTransformsMatchesNnUNet(unittest.TestCase):
+    """The same contract for `get_training_transforms`, which nnU-Net also calls.
+
+    `get_dataloaders` calls it by keyword, so a parameter upstream declares and the
+    override does not is a TypeError before the first batch. nnU-Net 2.4 passed
+    `order_resampling_data=` and `order_resampling_seg=`; 2.5 moved the pipeline to
+    batchgeneratorsv2 and dropped them, which is why `pyproject.toml` pins
+    `nnunetv2 >= 2.5`. Checking against the installed version makes an unsupported
+    one fail here rather than an hour into a run.
+    """
+
+    def test_every_upstream_parameter_is_accepted(self):
+        from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+
+        upstream = set(inspect.signature(nnUNetTrainer.get_training_transforms).parameters)
+        for name in TestConstructorMatchesNnUNet.TRAINERS:
+            with self.subTest(trainer=name):
+                trainer = TestConstructorMatchesNnUNet._trainer(name)
+                ours = set(inspect.signature(trainer.get_training_transforms).parameters)
+                self.assertEqual(
+                    upstream - ours,
+                    set(),
+                    f"{name}.get_training_transforms would reject arguments nnU-Net passes; this nnU-Net is older than the pinned >=2.5",
+                )
 
 
 if __name__ == "__main__":
