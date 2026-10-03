@@ -242,11 +242,7 @@ class SynthSegGenerator(nn.Module):
                 n_neutral = None  # plain flip (sub-labels carry no L/R structure)
                 randomise_bg = False  # background is now modelled by its clusters
 
-        # 1. random crop to output_shape (label space) ------------------------
-        if self.output_shape is not None and tuple(self.output_shape) != tuple(labels.shape[2:]):
-            labels = self._random_crop(labels, self.output_shape)
-
-        # 2. spatial deformation of the LABEL MAP (nearest) -------------------
+        # 1. spatial deformation of the LABEL MAP (nearest) -------------------
         affine = None
         if self.apply_affine and self._affine_active():
             affine = FN.sample_affine_matrices(
@@ -282,6 +278,20 @@ class SynthSegGenerator(nn.Module):
                 .round()
                 .long()
             )
+
+        # 2. random crop to output_shape (label space) ------------------------
+        #
+        # After the deformation, not before. `warp_volume` pads with zeros, so
+        # cropping first meant the warp pulled background in from outside the crop
+        # box; lab2im's RandomSpatialDeformation(output_shape=...) resamples the
+        # full label map onto the output grid and therefore pulls in real anatomy.
+        # This is also the order the module docstring states.
+        #
+        # No shipped config is affected: `output_shape` defaults to None and is not
+        # among RandomSynthSegGPU's accepted parameters, so the crop only runs for a
+        # caller constructing SynthSegGenerator directly.
+        if self.output_shape is not None and tuple(self.output_shape) != tuple(labels.shape[2:]):
+            labels = self._random_crop(labels, self.output_shape)
 
         # 3. left/right flipping (with optional label swap) -------------------
         if self.flipping and float(torch.rand((), device=device)) < 0.5:
