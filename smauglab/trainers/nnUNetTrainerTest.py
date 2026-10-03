@@ -1,4 +1,4 @@
-import importlib
+import importlib.resources
 from typing import Union
 
 import numpy as np
