@@ -413,5 +413,31 @@ class TestTargetReachesTheDeviceEitherShape(unittest.TestCase):
         self.assertIsInstance(trainer.seen[0], torch.Tensor)
 
 
+class TestTrainingTransformsMatchesNnUNet(unittest.TestCase):
+    """The same contract for `get_training_transforms`, which nnU-Net also calls.
+
+    `get_dataloaders` calls it by keyword, so a parameter upstream declares and the
+    override does not is a TypeError before the first batch. nnU-Net 2.4 passed
+    `order_resampling_data=` and `order_resampling_seg=`; 2.5 moved the pipeline to
+    batchgeneratorsv2 and dropped them, which is why `pyproject.toml` pins
+    `nnunetv2 >= 2.5`. Checking against the installed version makes an unsupported
+    one fail here rather than an hour into a run.
+    """
+
+    def test_every_upstream_parameter_is_accepted(self):
+        from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+
+        upstream = set(inspect.signature(nnUNetTrainer.get_training_transforms).parameters)
+        for name in TestConstructorMatchesNnUNet.TRAINERS:
+            with self.subTest(trainer=name):
+                trainer = TestConstructorMatchesNnUNet._trainer(name)
+                ours = set(inspect.signature(trainer.get_training_transforms).parameters)
+                self.assertEqual(
+                    upstream - ours,
+                    set(),
+                    f"{name}.get_training_transforms would reject arguments nnU-Net passes; this nnU-Net is older than the pinned >=2.5",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
