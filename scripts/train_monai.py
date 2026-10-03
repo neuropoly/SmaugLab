@@ -102,6 +102,16 @@ def main():
 
     ## Set seed
     seed = 42
+    # Recorded in the saved training config, not applied: the interpreter reads
+    # PYTHONHASHSEED at startup, long before main() runs, so assigning it here
+    # cannot affect this process. Export it before launching if hash
+    # randomisation matters.
+    #
+    # The dataloader workers need no seeding hook. torch's _worker_loop derives a
+    # distinct seed per worker from the loader's generator and applies it to
+    # `random`, torch and numpy, so MONAI's random transforms already differ
+    # between workers and are already reproducible -- see
+    # unit_tests/test_monai_worker_seeding.py.
     os.environ["PYTHONHASHSEED"] = str(seed)
     # Torch RNG
     torch.manual_seed(seed)
