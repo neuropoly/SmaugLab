@@ -13,7 +13,11 @@ from smauglab.transforms.kernels import gaussian_kernel3d, laplace_kernel, schar
 from smauglab.transforms.rng import shared_choice
 
 
-def _choose_region_mode(p_in: float, p_out: float, seg_mask: torch.Tensor | None) -> str:  # noqa: ARG001 -- seg_mask kept for signature symmetry with _apply_region_mode
+def _choose_region_mode(
+    p_in: float,
+    p_out: float,
+    seg_mask: torch.Tensor | None,  # noqa: ARG001
+) -> str:
     """Sample where to apply the transform: 'in', 'out', or 'all'.
 
     - p_in, p_out are probabilities in [0,1].
@@ -52,6 +56,21 @@ def _restore_stats(x: torch.Tensor, stats: tuple[torch.Tensor, torch.Tensor]) ->
     new_mean = x.mean(dim=reduce_dims).view(shape)
     new_std = x.std(dim=reduce_dims).view(shape)
     return (x - new_mean) / (new_std + eps) * orig_stds.view(shape) + orig_means.view(shape)
+
+
+def _mix_with_original(orig: torch.Tensor, x: torch.Tensor, mix_prob: float) -> torch.Tensor:
+    """Blend each sample back towards the original with probability `mix_prob`.
+
+    Per sample: an independent draw and an independent alpha for every element of
+    the batch, which is what "probability of blending the result back" means and
+    what the sibling transforms that write this inline already do.
+    """
+    if mix_prob <= 0.0:
+        return x
+    shape = [x.shape[0]] + [1] * (x.dim() - 1)
+    mix = torch.rand(x.shape[0], device=x.device).view(shape) < mix_prob
+    alpha = torch.rand(x.shape[0], device=x.device).view(shape)
+    return torch.where(mix, alpha * orig + (1 - alpha) * x, x)
 
 
 def _check_channel(transform: torch.nn.Module, channel: int, channels: int) -> None:
@@ -348,10 +367,15 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
 
                 x = torch.stack(out, dim=0)
 
-            # Mix with original based on mix_prob
-            if torch.rand(1).item() < self.mix_prob:
-                alpha = torch.rand(1, device=input.device)
-                x = alpha * orig + (1 - alpha) * x
+            # Mix with original based on mix_prob, per sample.
+            #
+            # This draw used to sit outside any loop, so one coin flip and one alpha
+            # decided the whole batch -- unlike RandomInverseGPU and
+            # RandomHistogramEqualizationGPU, which run the identical three lines
+            # inside their per-sample loop. `mix_prob` is documented as "probability
+            # of blending the result back with the original", which is a per-sample
+            # statement.
+            x = _mix_with_original(orig, x, self.mix_prob)
 
             if self.retain_stats:
                 x = _restore_stats(x, stats)
