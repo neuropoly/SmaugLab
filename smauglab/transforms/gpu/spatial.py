@@ -270,35 +270,36 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
         interp_down = resample
         interp_up = resample
 
-        # Process per-channel and per-batch element
-        out = input.clone()
+        # `scales` lives on the device, so each `float(...)` below used to block the
+        # host until everything queued had finished -- three times per sample. One
+        # `.tolist()` reads the whole [B, 3] draw back in a single transfer.
+        scale_rows = scales.tolist()
+        align = False if "linear" in interp_down else None
 
+        # Samples that drew the same target size resample together: one
+        # `F.interpolate` over a [k, C, D, H, W] slab instead of k of them. With
+        # `same_on_batch` the whole batch is a single group, and the loop that
+        # remains has one iteration.
+        groups: dict[tuple[int, int, int], list[int]] = {}
         for b in range(batch_size):
-            x = input[b]  # [C, D, H, W]
+            sx, sy, sz = scale_rows[b]
+            size = (max(1, round(sz * D)), max(1, round(sy * H)), max(1, round(sx * W)))
+            groups.setdefault(size, []).append(b)
 
-            sx, sy, sz = scales[b]
-            # compute downsampled size
-            down_D = max(1, round(float(sz) * D))
-            down_H = max(1, round(float(sy) * H))
-            down_W = max(1, round(float(sx) * W))
-
-            # downsample
-            x_down = F.interpolate(
-                x.unsqueeze(0),
-                size=(down_D, down_H, down_W),
-                mode=interp_down,
-                align_corners=False if "linear" in interp_down else None,
-            )
-
-            # upsample back to original resolution (keep as 4D tensor [1,1,D,H,W])
-            x_up = F.interpolate(
-                x_down,
-                size=(D, H, W),
-                mode=interp_up,
-                align_corners=False if "linear" in interp_up else None,
-            ).squeeze(0)  # [C, D, H, W]
-
-            out[b] = x_up
+        # `empty_like`, not `clone`: every row is written below.
+        out = torch.empty_like(input)
+        for size, members in groups.items():
+            # A one-member group is a view, not a gather: with a small batch most
+            # groups are singletons, and `index_select`/`index_copy_` would copy the
+            # sample in and out again for nothing.
+            if len(members) == 1:
+                b = members[0]
+                chunk = F.interpolate(input[b : b + 1], size=size, mode=interp_down, align_corners=align)
+                out[b : b + 1] = F.interpolate(chunk, size=(D, H, W), mode=interp_up, align_corners=align)
+                continue
+            index = torch.as_tensor(members, device=input.device)
+            chunk = F.interpolate(input.index_select(0, index), size=size, mode=interp_down, align_corners=align)
+            out.index_copy_(0, index, F.interpolate(chunk, size=(D, H, W), mode=interp_up, align_corners=align))
 
         return out
 
@@ -436,45 +437,38 @@ class RandomAcqTransformGPU(ImageOnlyTransform):
         interp_down = resample
         interp_up = resample
 
-        # Process per-channel and per-batch element
-        out = input.clone()
+        # One `.tolist()` instead of three device reads per sample, and one
+        # `F.interpolate` per distinct target size instead of one per (sample,
+        # channel) -- see the sibling in RandomLowResTransformGPU.
+        scale_rows = scales.tolist()
+        align = False if "linear" in interp_down else None
+        channels = list(self.apply_to_channel)
+
+        groups: dict[tuple[int, int, int], list[int]] = {}
         for b in range(batch_size):
-            # start from the original per-sample tensor so we only overwrite selected channels
-            canvas = input[b].clone()
+            sx, sy, sz = scale_rows[b]
+            size = (max(1, round(sz * D)), max(1, round(sy * H)), max(1, round(sx * W)))
+            groups.setdefault(size, []).append(b)
 
-            for c in self.apply_to_channel:
-                x = input[b, c]  # [D, H, W]
-
-                sx, sy, sz = scales[b]
-                # compute downsampled size
-                down_D = max(1, round(float(sz) * D))
-                down_H = max(1, round(float(sy) * H))
-                down_W = max(1, round(float(sx) * W))
-
-                # downsample
-                x_down = F.interpolate(
-                    x.unsqueeze(0).unsqueeze(0),
-                    size=(down_D, down_H, down_W),
-                    mode=interp_down,
-                    align_corners=False if "linear" in interp_down else None,
-                )
-
-                # upsample back to original resolution
-                x_up = (
-                    F.interpolate(
-                        x_down,
-                        size=(D, H, W),
-                        mode=interp_up,
-                        align_corners=False if "linear" in interp_up else None,
-                    )
-                    .squeeze(0)
-                    .squeeze(0)
-                )  # [D, H, W]
-
-                # place patch back into the canvas for the correct channel only
-                canvas[c] = x_up
-
-            out[b] = canvas
+        # Only the selected channels are rewritten, so the untouched ones have to be
+        # carried over -- hence a clone rather than an empty tensor.
+        out = input.clone()
+        for size, members in groups.items():
+            # A one-member group goes through views: with a small batch most groups
+            # are singletons, and gathering the sample in and scattering it back out
+            # costs more than the resampling it was meant to share.
+            if len(members) == 1:
+                b = members[0]
+                for c in channels:
+                    chunk = F.interpolate(input[b, c][None, None], size=size, mode=interp_down, align_corners=align)
+                    out[b, c] = F.interpolate(chunk, size=(D, H, W), mode=interp_up, align_corners=align)[0, 0]
+                continue
+            index = torch.as_tensor(members, device=input.device)
+            chunk = input.index_select(0, index).index_select(1, torch.as_tensor(channels, device=input.device))
+            chunk = F.interpolate(chunk, size=size, mode=interp_down, align_corners=align)
+            chunk = F.interpolate(chunk, size=(D, H, W), mode=interp_up, align_corners=align)
+            for position, c in enumerate(channels):
+                out[index, c] = chunk[:, position]
 
         return out
 
@@ -530,16 +524,22 @@ class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
         # generator (including its "at least one axis" guarantee) was dead code.
         flips = params.get("flip")
 
+        # `bool(flips[b, axis])` read one element of a device tensor back to the host
+        # at a time: three synchronisations per sample, for a transform whose actual
+        # work is a strided copy. One `.tolist()` brings the whole [B, 3] flag table
+        # over in a single transfer.
+        flip_rows = None if flips is None else flips.tolist()
+
         out = input.clone()
         # For each batch element, build list of spatial dims to flip. `input[b]` is
         # [C, D, H, W], so spatial axis i sits at dim 1 + i.
         for b in range(batch_size):
-            if flips is None:
+            if flip_rows is None:
                 # No sampled flags (a caller invoking apply_transform directly): fall
                 # back to flipping every configured axis.
                 flip_dims = [1 + axis for axis in range(3) if axis in self.flip_axis]
             else:
-                flip_dims = [1 + axis for axis in range(3) if axis in self.flip_axis and bool(flips[b, axis])]
+                flip_dims = [1 + axis for axis in range(3) if axis in self.flip_axis and flip_rows[b][axis]]
 
             if len(flip_dims) > 0:
                 out[b] = torch.flip(input[b], dims=tuple(flip_dims))
@@ -610,12 +610,17 @@ class FlipGenerator3D(RandomGeneratorBase):
         if len(self.flip_axis) == 0:
             return {"flip": flips}
         allowed = torch.as_tensor(self.flip_axis, device=flips.device, dtype=torch.long)
-        for b in range(batch_size):
-            if flips[b, allowed].sum() == 0:
-                # pick one allowed axis at random
-                choice = int(torch.randint(low=0, high=len(self.flip_axis), size=(1,)).item())
-                axis = int(self.flip_axis[choice])
-                flips[b, axis] = 1
+        # Which samples drew nothing, and the axis to rescue each with, decided for
+        # the whole batch at once. The loop this replaces read `flips[b, allowed].sum()`
+        # back to the host for every sample and then drew a separate scalar for the
+        # ones that needed it.
+        empty = flips.index_select(1, allowed).sum(dim=1) == 0
+        rescue = allowed[torch.randint(low=0, high=len(self.flip_axis), size=(batch_size,), device=flips.device)]
+        flips.scatter_(
+            1,
+            rescue.view(-1, 1),
+            torch.where(empty, torch.ones_like(empty, dtype=flips.dtype), flips.gather(1, rescue.view(-1, 1)).squeeze(1)).view(-1, 1),
+        )
 
         return {"flip": flips}
 
@@ -666,18 +671,24 @@ class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
     def compute_transformation(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any]) -> Tensor:
         return self.identity_matrix(input)
 
-    def _fill_value(self, volume: Tensor, flags: dict[str, Any]) -> float:
-        """What goes outside the kept box, for one batch element.
+    def _fill_values(self, batch: Tensor, flags: dict[str, Any]) -> Tensor:
+        """What goes outside the kept box, as a `[B, 1, 1, 1, 1]` per-sample value.
 
         A mask is padded with 0 -- background -- whatever `pad_value` says: a label
         number is not an intensity, and an argmax over a one-hot volume still has to
         resolve to the background channel out there. The mask pass identifies itself
         through `flags["data_keys"]`, which `MaskSequentialOpsCustom` sets before calling
         `transform_masks` (see gpu/base.py).
+
+        Per-sample and on the device: `float(volume.amin())` once per sample was a
+        host synchronisation per sample, for a number that never leaves the GPU.
         """
+        shape = (batch.shape[0], *([1] * (batch.dim() - 1)))
         if DataKey.MASK in (flags or {}).get("data_keys", ()):
-            return 0.0
-        return float(volume.amin()) if self.pad_value == "min" else float(self.pad_value)
+            return torch.zeros(shape, device=batch.device, dtype=batch.dtype)
+        if self.pad_value == "min":
+            return batch.amin(dim=tuple(range(1, batch.dim())), keepdim=True)
+        return torch.full(shape, float(self.pad_value), device=batch.device, dtype=batch.dtype)
 
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -694,53 +705,39 @@ class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
         crops = params["crop"]  # shape [B, 3]
         pos = params["pos"]  # shape [B, 3]
 
-        # Process per-channel and per-batch element
-        out = input.clone()
+        # One transfer for the whole batch's draw, then the identical box arithmetic
+        # in Python. It used to read six scalars off the device per sample -- each
+        # `float(...)` on a device tensor blocks the host until the queue drains --
+        # and the arithmetic is cheap enough that moving it onto the GPU costs more
+        # in kernel launches than the transfers it saves.
+        draws = torch.stack([crops, pos], dim=1).tolist()  # [B][2][3], each (x, y, z)
 
+        # The discarded region's fill value stays a device tensor -- see the class
+        # docstring for why it is not 0 -- so the `amin` behind it is one batched
+        # reduction rather than one host read per sample.
+        fills = self._fill_values(input, flags)
+
+        out = torch.empty_like(input)
         for b in range(batch_size):
-            x = input[b]  # [C, D, H, W]
+            (cx, cy, cz), (px, py, pz) = draws[b]
 
-            # determine crop fraction and crop size on the image
-            cx, cy, cz = crops[b]
             # interpret crop as fraction of upsampled size to keep
-            crop_D = max(1, round(float(cz) * D))
-            crop_H = max(1, round(float(cy) * H))
-            crop_W = max(1, round(float(cx) * W))
+            crop_D = max(1, round(cz * D))
+            crop_H = max(1, round(cy * H))
+            crop_W = max(1, round(cx * W))
 
-            # determine pos fraction of the image
-            px, py, pz = pos[b]
+            # top-left-front corner of the box centred on (pz, py, px), clamped inside
+            z1 = max(0, min(round(pz * D - crop_D / 2.0), max(0, D - crop_D)))
+            y1 = max(0, min(round(py * H - crop_H / 2.0), max(0, H - crop_H)))
+            x1 = max(0, min(round(px * W - crop_W / 2.0), max(0, W - crop_W)))
 
-            # center position
-            center_z = float(pz) * D
-            center_y = float(py) * H
-            center_x = float(px) * W
-
-            # choose top-left-front corner
-            start_z = round(center_z - crop_D / 2.0)
-            start_y = round(center_y - crop_H / 2.0)
-            start_x = round(center_x - crop_W / 2.0)
-
-            # clamp to valid limits
-            max_z = max(0, D - crop_D)
-            max_y = max(0, H - crop_H)
-            max_x = max(0, W - crop_W)
-
-            z1 = max(0, min(start_z, max_z))
-            y1 = max(0, min(start_y, max_y))
-            x1 = max(0, min(start_x, max_x))
-
-            z2 = z1 + crop_D
-            y2 = y1 + crop_H
-            x2 = x1 + crop_W
-
-            patch = x[:, z1:z2, y1:y2, x1:x2]
-
-            # Place the patch back where it came from, on a canvas of the discarded
-            # region's fill value -- see the class docstring for why that value is not 0.
-            canvas = torch.full((C, D, H, W), self._fill_value(x, flags), dtype=patch.dtype, device=patch.device)
-            canvas[:, z1:z2, y1:y2, x1:x2] = patch
-
-            out[b] = canvas
+            # Fill, then copy the kept box back over it. The old code built a separate
+            # per-sample canvas and copied that into an `input.clone()`, so the batch
+            # was written three times over.
+            out[b] = fills[b]
+            out[b][:, z1 : z1 + crop_D, y1 : y1 + crop_H, x1 : x1 + crop_W] = input[b][
+                :, z1 : z1 + crop_D, y1 : y1 + crop_H, x1 : x1 + crop_W
+            ]
 
         return out
 

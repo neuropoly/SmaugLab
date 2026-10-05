@@ -251,7 +251,14 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
 
     @staticmethod
     def _accumulate(lut_used: Tensor, per_class: bool, w_b: Tensor, il: Tensor, ih: Tensor, xf: Tensor, n_seg_c: int) -> Tensor:
-        """Class-weighted LUT interpolation ``Σ_c w_c · interp(LUT_c, x)`` → ``[D, H, W]``."""
+        """Class-weighted LUT interpolation ``Σ_c w_c · interp(LUT_c, x)`` → ``[D, H, W]``.
+
+        Left as a loop over classes on purpose. Reading every class at once --
+        `lut_all[:, il]` for a `[C, D, H, W]` gather, then one fused reduction --
+        moves the same number of bytes and was measured 3% *slower* on the shipped
+        four-class bank, because the fused expression needs `[C, D, H, W]`
+        temporaries where the loop needs single-volume ones.
+        """
         acc = torch.zeros_like(xf)
         for c in range(n_seg_c):
             lut_c = lut_used[c if per_class else 0, c]  # [L]
@@ -263,7 +270,10 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
             return True
         if self.zscore_io == "never":
             return False
-        return bool((x.min() < -1e-3) or (x.max() > 1.0 + 1e-3))
+        # One reduction and one host read: `x.min()` and `x.max()` were separate
+        # passes over the patch, and `or` on two device scalars synchronises twice.
+        low, high = torch.aminmax(x)
+        return bool((low < -1e-3) | (high > 1.0 + 1e-3))
 
     def _to_unit(self, x: Tensor) -> Tensor:
         """Map a (z-scored) image into the LUT's [0,1] domain via percentile scaling (clip),
@@ -271,8 +281,10 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         flat = x.reshape(-1).float()
         if flat.numel() > 1_000_000:  # cap for torch.quantile
             flat = flat[torch.linspace(0, flat.numel() - 1, 1_000_000, device=x.device).long()]
-        lo = torch.quantile(flat, self.pct / 100.0)
-        hi = torch.quantile(flat, 1.0 - self.pct / 100.0)
+        # Both cut points from one call, so the million values are sorted once
+        # instead of twice.
+        probabilities = torch.tensor([self.pct / 100.0, 1.0 - self.pct / 100.0], device=x.device, dtype=flat.dtype)
+        lo, hi = torch.quantile(flat, probabilities).unbind()
         return ((x - lo) / (hi - lo).clamp_min(1e-6)).clamp(0.0, 1.0)
 
     @torch.no_grad()

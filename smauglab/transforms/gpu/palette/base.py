@@ -19,6 +19,8 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
+from smauglab.transforms.gpu.fromSeg import segment_sum
+
 
 @dataclass(slots=True)
 class BlockContext:
@@ -71,8 +73,8 @@ def signed_alpha_affine_remap(
     device = image01.device
     alpha_lo, alpha_hi = alpha_magnitude_range
 
-    s_c = torch.zeros(n_regions, device=device).scatter_add_(0, region_ids, image01 * fg_mask)
-    n_c = torch.zeros(n_regions, device=device).scatter_add_(0, region_ids, fg_mask)
+    s_c = segment_sum(region_ids, image01 * fg_mask, n_regions)
+    n_c = segment_sum(region_ids, fg_mask, n_regions)
     mean_c = s_c / n_c.clamp(min=eps)
 
     mu_c = torch.rand(n_regions, device=device)

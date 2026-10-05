@@ -1,9 +1,8 @@
-from functools import partial
+import math
 
 import scipy.ndimage as ndi
 import torch
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
-from scipy.stats import norm
 
 from smauglab.registry import AugId, AugType, Backend, register
 
@@ -86,11 +85,18 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
         # Rank from the data, not hardcoded 3: scipy requires the structuring element
         # to match the input's rank, so a 2-D image raised
         # "structure rank must match input rank" here.
-        struct = ndi.iterate_structure(ndi.generate_binary_structure(l_mask_np.ndim, 1), 3)
-        l_mask_dilate_np = ndi.binary_dilation(l_mask_np, structure=struct)
+        #
+        # Three passes of the 6-connected element, not one pass of
+        # `iterate_structure(..., 3)`. They give bit-identical masks -- that is what
+        # iterating a structure means -- but the iterated element is a 7x7x7 stencil
+        # evaluated at every voxel, where three small passes are 3 x 7 taps: 9 ms
+        # against 45 ms for a 96^3 mask.
+        struct = ndi.generate_binary_structure(l_mask_np.ndim, 1)
+        l_mask_dilate_np = ndi.binary_dilation(l_mask_np, structure=struct, iterations=3)
 
-        # Convert back to PyTorch
-        l_mask_dilate = torch.tensor(l_mask_dilate_np, device=device)
+        # Convert back to PyTorch. `from_numpy` shares the buffer; `torch.tensor`
+        # copied it, and also warned about doing so.
+        l_mask_dilate = torch.from_numpy(l_mask_dilate_np).to(device)
 
         # Create mask of the dilated mask excluding the original mask
         l_mask_dilate_excl = l_mask_dilate & ~l_mask
@@ -107,12 +113,11 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
             torch.tensor([0.01], device=device),
         )
 
-        redist = partial(norm.pdf, loc=l_mean.cpu().numpy(), scale=redist_std.cpu().numpy())
-
+        sign = 2 * torch.rand(1, device=device) - 1
         if in_seg_bool:
-            to_add[l_mask] += torch.tensor(redist(img[l_mask].cpu().numpy()), device=device) * (2 * torch.rand(1, device=device) - 1)
+            to_add[l_mask] += _normal_pdf(img[l_mask], l_mean, redist_std) * sign
         else:
-            to_add += torch.tensor(redist(img.cpu().numpy()), device=device) * (2 * torch.rand(1, device=device) - 1)
+            to_add += _normal_pdf(img, l_mean, redist_std) * sign
 
     # Normalize to_add and apply it to the image.
     #
@@ -137,6 +142,17 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
         img = img * original_std + original_mean
 
     return img, seg
+
+
+def _normal_pdf(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+    """Gaussian density, in torch.
+
+    This was `scipy.stats.norm.pdf` reached through a `functools.partial`, with the
+    volume copied out to NumPy and the result copied back for every label. The
+    formula is the same one `scipy` evaluates; what goes away is the frozen
+    distribution's argument handling and two full-volume round trips per label.
+    """
+    return torch.exp(-0.5 * ((x - mean) / std) ** 2) / (std * math.sqrt(2.0 * math.pi))
 
 
 def combine_classes(seg, classes):
