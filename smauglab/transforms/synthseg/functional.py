@@ -48,6 +48,7 @@ __all__ = [
     "intensity_augmentation",
     "labels_to_image_gmm",
     "mimic_acquisition",
+    "random_merge_classes",
     "random_svf_field",
     "sample_affine_matrices",
     "sample_gmm_parameters",
@@ -169,7 +170,7 @@ def sample_gmm_parameters(
     prior_means=None,
     prior_stds=None,
     prior_distributions: str = "uniform",
-    generation_classes: Sequence[int] | None = None,
+    generation_classes: Sequence[int] | torch.Tensor | None = None,
     background_label_index: int | None = 0,
     randomise_background: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -182,7 +183,9 @@ def sample_gmm_parameters(
     ``[25, 225]`` / ``[5, 25]`` come from a stale docstring).
 
     ``generation_classes`` lets several labels share the same Gaussian (e.g. to
-    tie left/right homologues). When ``None`` every label is independent.
+    tie left/right homologues). When ``None`` every label is independent. A
+    ``(batch, n_labels)`` array ties different labels together in each sample,
+    which is what :func:`random_merge_classes` draws.
 
     Returns ``means, stds`` of shape ``(batch, n_labels, n_channels)``.
     """
@@ -190,8 +193,10 @@ def sample_gmm_parameters(
         classes = torch.arange(n_labels, device=device)
     else:
         classes = torch.as_tensor(generation_classes, device=device, dtype=torch.long)
-        if classes.numel() != n_labels:
+        if classes.dim() not in (1, 2) or classes.shape[-1] != n_labels:
             raise ValueError("generation_classes must have one entry per generation label.")
+        if classes.dim() == 2 and classes.shape[0] != batch:
+            raise ValueError("per-sample generation_classes must have one row per batch element.")
     n_classes = int(classes.max().item()) + 1
 
     means = torch.empty(batch, n_classes, n_channels, device=device)
@@ -201,8 +206,15 @@ def sample_gmm_parameters(
         stds[:, :, ch] = _draw_value(prior_stds, (batch, n_classes), prior_distributions, 15.0, 15.0, device, positive_only=True)
 
     # Scatter class parameters to per-label parameters.
-    means_lab = means[:, classes, :]
-    stds_lab = stds[:, classes, :]
+    if classes.dim() == 2:
+        # Per-sample classes: every row picks from its own draws, so gather rather
+        # than index -- `means[:, classes, :]` would broadcast one row over all.
+        index = classes.unsqueeze(-1).expand(-1, -1, n_channels)
+        means_lab = torch.gather(means, 1, index)
+        stds_lab = torch.gather(stds, 1, index)
+    else:
+        means_lab = means[:, classes, :]
+        stds_lab = stds[:, classes, :]
 
     # Background special-casing (build_model_inputs): per subject, 5% pure black,
     # 25% very dark/low-variance, 70% normal draw.
@@ -783,6 +795,57 @@ def em_subdivide_labels(
     gen_values = torch.unique(fine).long().tolist()
     out_values = [parents[g // mult] for g in gen_values]
     return fine, gen_values, out_values
+
+
+def random_merge_classes(
+    parent_labels: Sequence[int],
+    merge_prob: float,
+    batch: int = 1,
+    device: torch.device | None = None,
+) -> torch.Tensor:
+    """Randomly tie sibling EM subregions to a shared generation Gaussian.
+
+    :func:`em_subdivide_labels` gives every subregion its own Gaussian, so an EM
+    split is always visible in the synthetic image as an intensity boundary the
+    segmentation target does not have. Merging siblings back at generation time
+    makes each such boundary show up in only a fraction of the samples, so the
+    network can rely neither on it nor on its absence. This is an extension: the
+    paper gives every subregion its own Gaussian, i.e. ``merge_prob=0``.
+
+    Each subregion after the first of its parent joins one of that parent's
+    existing classes with probability ``merge_prob``, and otherwise opens a new
+    one. ``0`` leaves every subregion independent; ``1`` collapses each parent to
+    a single Gaussian, as if its label had never been split. Siblings only:
+    letting a foreground subregion share the background's Gaussian would hide a
+    structure the target still asks for.
+
+    A separate pattern is drawn per sample, matching the per-sample GMM draws.
+
+    Args:
+        parent_labels: the parent label of each generation label, in generation
+            order (``output_labels`` from :func:`em_subdivide_labels`).
+        merge_prob: per-subregion probability of joining a sibling's class.
+        batch: number of independent merge patterns to draw.
+        device: device for the draws and the returned tensor.
+
+    Returns:
+        ``(batch, len(parent_labels))`` class indices, contiguous from 0 in each
+        row, for :func:`sample_gmm_parameters`.
+    """
+    n_labels = len(parent_labels)
+    classes = torch.empty((batch, n_labels), dtype=torch.long, device=device)
+    for b in range(batch):
+        taken: dict[int, list[int]] = {}
+        n_classes = 0
+        for i, parent in enumerate(parent_labels):
+            siblings = taken.setdefault(int(parent), [])
+            if siblings and float(torch.rand((), device=device)) < merge_prob:
+                classes[b, i] = siblings[int(torch.randint(len(siblings), (1,), device=device))]
+            else:
+                classes[b, i] = n_classes
+                siblings.append(n_classes)
+                n_classes += 1
+    return classes
 
 
 # ---------------------------------------------------------------------------

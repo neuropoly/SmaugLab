@@ -88,7 +88,14 @@ class SynthSegGenerator(nn.Module):
         em_n_iters: EM iterations.
         em_max_fit_voxels: subsample size for fitting each EM (the full region is
             still assigned); ``0`` -> use all voxels.
-        em_same_on_batch: share the random background cluster count across the batch.
+        em_same_on_batch: share the random background cluster count and the
+            ``em_merge_prob`` merge pattern across the batch.
+        em_merge_prob: per-subregion probability that an EM subregion shares its
+            parent's Gaussian with a sibling instead of getting its own, drawn
+            afresh for every sample (see :func:`functional.random_merge_classes`).
+            ``0`` -> every subregion independent, which is what the paper does;
+            ``1`` -> one Gaussian per parent label. Only read when
+            ``em_label_completion=True``.
         apply_intensity_augmentation: toggle clip/normalise/gamma.
     """
 
@@ -131,6 +138,7 @@ class SynthSegGenerator(nn.Module):
         em_n_iters: int = 20,
         em_max_fit_voxels: int = 100000,
         em_same_on_batch: bool = False,
+        em_merge_prob: float = 0.5,
         apply_affine: bool = True,
         apply_nonlinear: bool = True,
         apply_bias_field: bool = True,
@@ -181,6 +189,7 @@ class SynthSegGenerator(nn.Module):
         self.em_n_iters = int(em_n_iters)
         self.em_max_fit_voxels = int(em_max_fit_voxels)
         self.em_same_on_batch = em_same_on_batch
+        self.em_merge_prob = float(em_merge_prob)
         self._warned_em = False
 
         self.apply_affine = apply_affine
@@ -212,7 +221,8 @@ class SynthSegGenerator(nn.Module):
         # Label bookkeeping (defaults from config; overridden by EM completion).
         gen_labels = self.generation_labels  # list[int] or None
         out_labels_cfg = self.output_labels  # list[int] or None
-        gen_classes = self.generation_classes  # list[int] or None
+        # list[int], or a (batch, n_labels) tensor once an EM merge has been drawn.
+        gen_classes: Sequence[int] | torch.Tensor | None = self.generation_classes
         n_neutral = self.n_neutral_labels
         randomise_bg = True
 
@@ -238,7 +248,15 @@ class SynthSegGenerator(nn.Module):
                     max_fit_voxels=self.em_max_fit_voxels,
                     same_on_batch=self.em_same_on_batch,
                 )
-                gen_classes = None  # each sub-label gets its own Gaussian
+                # Each sub-label gets its own Gaussian, except where the merge
+                # draw ties it to a sibling. Skipped entirely at 0 so the faithful
+                # path draws exactly the random numbers it did before.
+                merge_batch = 1 if self.em_same_on_batch else batch
+                gen_classes = (
+                    FN.random_merge_classes(out_labels_cfg, self.em_merge_prob, merge_batch, device).expand(batch, -1)
+                    if self.em_merge_prob > 0
+                    else None
+                )
                 n_neutral = None  # plain flip (sub-labels carry no L/R structure)
                 randomise_bg = False  # background is now modelled by its clusters
 

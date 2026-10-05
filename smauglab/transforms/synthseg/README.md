@@ -101,12 +101,37 @@ image** that is already available on-the-fly (the `data` / `input` tensor):
 - split the **background** label into a random `N ∈ em_background_clusters_range` subregions ([3, 10] in the paper);
 - give each subregion its own generation Gaussian (so the formerly single-Gaussian
   background becomes an intensity-coherent patchwork — realistic extra-cerebral / unlabelled tissue);
+- optionally **tie some siblings back to one Gaussian** at generation time
+  (`em_merge_prob`, see below);
 - **merge the subregions back** to their parent labels for the output segmentation,
   so the training target is unchanged.
 
 The EM fit per region is sub-sampled to `em_max_fit_voxels` voxels for speed (the
 full region is still assigned). Unlike the paper — which precomputes these maps
 offline — this runs on the fly from the real image, so no preprocessing is needed.
+
+#### Random merging of the subregions (`em_merge_prob`, default `0.5`)
+
+Giving every subregion its own Gaussian means an EM split is *always* visible in
+the synthetic image, as an intensity boundary the target does not have. With
+`em_merge_prob > 0`, each subregion after the first of its parent instead joins
+one of that parent's existing classes with that probability (a fresh pattern per
+sample, or one for the whole batch under `em_same_on_batch`, passed to the GMM
+as `generation_classes`):
+
+| `em_merge_prob` | effect |
+|---|---|
+| `0.0` | every subregion independent — what the paper describes |
+| `0.5` | each subregion keeps a Gaussian of its own in about half the samples |
+| `1.0` | one Gaussian per parent label, as if the label had never been split |
+
+So a boundary the segmentation does not ask for is there sometimes and gone
+other times, and the network can rely neither on it nor on its absence. Merging
+never crosses parent labels: letting a foreground subregion share the
+background's Gaussian would hide a structure the target still asks for.
+
+This is an addition, not part of SynthSeg — `transform_params_paper-synthseg.json`
+therefore pins it to `0.0`.
 
 ```python
 gen = SynthSegGenerator(em_label_completion=True).to("cuda")
@@ -184,7 +209,8 @@ harness that already constructs `AugTransformsGPU(json_path)` and calls
 
 ```jsonc
 { "SynthSeg": { "probability": 1.0, "n_channels": 1, "bias_field_std": 0.7,
-                "gamma_std": 0.5, "randomise_res": true, "em_label_completion": false } }
+                "gamma_std": 0.5, "randomise_res": true, "em_label_completion": false,
+                "em_merge_prob": 0.5 } }
 ```
 
 Because this goes through an `ImageOnlyTransform`, it is **intensity-only**: the

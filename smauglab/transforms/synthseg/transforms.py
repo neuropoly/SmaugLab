@@ -71,6 +71,7 @@ _GENERATOR_KEYS = {
     "em_n_iters",
     "em_max_fit_voxels",
     "em_same_on_batch",
+    "em_merge_prob",
     "apply_affine",
     "apply_nonlinear",
     "apply_bias_field",
