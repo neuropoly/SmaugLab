@@ -45,7 +45,7 @@ from torch.distributions import Dirichlet
 from torch.nn import functional as F
 
 from smauglab.registry import AugId, AugType, Backend, register
-from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.fromSeg import seg_region_masks
 from smauglab.transforms.kernels import gaussian_blur3d, random_bias_field3d
 
@@ -289,9 +289,9 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
 
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
-        if "seg" not in params:
+        seg = segmentation_from(params)
+        if seg is None:
             return input
-        seg = params["seg"]
         if seg.dim() != input.dim():  # accept [N, ...] integer seg → one-hot-ish
             if seg.dim() == input.dim() - 1:
                 seg = seg.unsqueeze(1)

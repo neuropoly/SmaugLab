@@ -14,7 +14,7 @@ import torch
 from torch import Tensor, nn
 
 from smauglab.transforms.build import PipelineMode
-from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.transforms import AugTransformsGPU
 
 
@@ -129,7 +129,7 @@ class RandomChooseXTransformsGPU(ImageOnlyTransform):
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
-        seg = params.get("seg")
+        seg = segmentation_from(params)
 
         if self.same_on_batch:
             return self._apply_mix(input, seg)

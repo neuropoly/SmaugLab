@@ -7,7 +7,7 @@ import torch
 from torch import Tensor, nn
 
 from smauglab.registry import AugId, AugType, Backend, register
-from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.fromSeg import _gaussian_blur_3d, collapse_onehot_to_index, voxel_coordinates
 from smauglab.transforms.gpu.palette.base import (
     BlockContext,
@@ -104,7 +104,7 @@ class PaletteSynthesisGPU(ImageOnlyTransform):
         flags: dict[str, Any],
         transform: Tensor | None = None,
     ) -> Tensor:
-        seg_raw: torch.Tensor | None = params.get("seg")
+        seg_raw: torch.Tensor | None = segmentation_from(params)
 
         labels: torch.Tensor | None = None
         if seg_raw is not None and seg_raw.ndim == 5 and seg_raw.shape[1] > 1:

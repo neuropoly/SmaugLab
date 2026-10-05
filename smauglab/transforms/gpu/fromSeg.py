@@ -8,7 +8,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from smauglab.registry import AugId, AugType, Backend, register
-from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.kernels import gaussian_blur3d
 from smauglab.transforms.rng import shared_choice
 
@@ -286,9 +286,9 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
         # the palette/domain-transfer transforms already clone; these did not, so
         # `batch["data"]` was destroyed under any caller holding a reference.
         input = input.clone()
-        if "seg" not in params:
+        seg = segmentation_from(params)
+        if seg is None:
             return input
-        seg = params["seg"]
         if seg.dim() != input.dim():
             # Allow seg [N, ...] by adding channel dim
             if seg.dim() == input.dim() - 1:
@@ -523,7 +523,7 @@ class RandomPaletteGPU(ImageOnlyTransform):
         # the palette/domain-transfer transforms already clone; these did not, so
         # `batch["data"]` was destroyed under any caller holding a reference.
         input = input.clone()
-        seg_raw: torch.Tensor | None = params.get("seg")
+        seg_raw: torch.Tensor | None = segmentation_from(params)
 
         labels: torch.Tensor | None = None
         if seg_raw is not None and seg_raw.ndim == 5 and seg_raw.shape[1] > 1:

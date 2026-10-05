@@ -29,7 +29,7 @@ import torch
 from torch import Tensor, nn
 
 from smauglab.registry import AugId, AugType, Backend, register
-from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.synthseg.generator import SynthSegGenerator
 
 # Keys understood from the JSON config / kwargs, forwarded to SynthSegGenerator.
@@ -129,7 +129,7 @@ class RandomSynthSegGPU(ImageOnlyTransform):
 
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
-        seg = params.get("seg")
+        seg = segmentation_from(params)
         if seg is None:
             return input
 
