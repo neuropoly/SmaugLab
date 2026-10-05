@@ -192,5 +192,12 @@ def _densify_region_ids(region_ids: torch.Tensor) -> tuple[torch.Tensor, int]:
     is sparse. `signed_alpha_affine_remap` indexes per-region tensors of length R
     with these, so a sparse id would index out of bounds.
     """
-    unique, inverse = torch.unique(region_ids, return_inverse=True)
-    return inverse.long(), int(unique.numel())
+    # A lookup table off a bincount, not `torch.unique(return_inverse=True)`: the ids
+    # are small non-negative integers, so counting the bins and numbering the
+    # non-empty ones gives the same ascending remap without radix-sorting two
+    # million voxels.
+    counts = torch.bincount(region_ids)
+    present = counts.nonzero().flatten()
+    lookup = torch.zeros(counts.numel(), dtype=torch.long, device=region_ids.device)
+    lookup[present] = torch.arange(present.numel(), device=region_ids.device)
+    return lookup[region_ids], int(present.numel())

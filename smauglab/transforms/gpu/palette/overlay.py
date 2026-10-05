@@ -6,6 +6,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from smauglab.transforms.gpu.fromSeg import foreground_classes
+
 #: A scalar blend, or a [lo, hi] range sampled per label per sample.
 BlendSpec = float | Sequence[float]
 
@@ -71,8 +73,7 @@ class AnatomicalLabelOverlay(nn.Module):
             labels = F.interpolate(labels.float(), size=(depth, height, width), mode="nearest-exact").long()
         lbl = labels[:, 0].reshape(batch, n_voxels).clamp(min=0)
 
-        classes = lbl.unique()
-        classes = classes[classes > 0]
+        classes = foreground_classes(lbl)
         if self.label_classes is not None:
             keep = torch.tensor(self.label_classes, device=device)
             classes = classes[torch.isin(classes, keep)]

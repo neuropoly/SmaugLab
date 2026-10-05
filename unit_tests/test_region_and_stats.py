@@ -182,10 +182,14 @@ class TestNonFiniteGuard(SmaugLabTestCase):
     and the loop assigns into `channel_data[b]` -- so by the time the non-finite guard
     at the bottom `continue`d, every value it meant to withhold was already in the
     batch, and the closing `input[:, c] = channel_data` was a no-op. With the clone the
-    guard does what it says. Reaching it needs the equalisation to *produce* a
-    non-finite value from finite input, which no input constructed here manages: a NaN
-    supplied by the caller raises out of `torch.histc` first. So these tests pin the
-    behaviour the clone must not disturb, and pass either way.
+    guard does what it says.
+
+    The guard is now also reachable. The equalisation used to call `torch.histc`,
+    which rejects a non-finite range before any of this runs, so a NaN handed in by
+    the caller came back as a RuntimeError out of the middle of a training step. The
+    batched version derives the bin edges itself, so a NaN reaches the guard and the
+    guard does what it is for: the channel is returned as it came in, with a warning
+    naming the transform.
     """
 
     def test_a_degenerate_constant_channel_stays_finite(self):
@@ -197,14 +201,18 @@ class TestNonFiniteGuard(SmaugLabTestCase):
 
         self.assertTrue(bool(torch.isfinite(out).all()), "a non-finite result reached the batch")
 
-    def test_a_non_finite_input_is_still_rejected_loudly(self):
-        """Documents why the guard cannot be exercised: histc rejects the range first."""
+    def test_a_non_finite_input_is_caught_by_the_guard(self):
+        """A NaN from the caller leaves the channel alone instead of raising."""
         transform = RandomHistogramEqualizationGPU(p=1.0, mix_prob=0.0)
         volume = torch.rand(1, 1, 8, 8, 8)
         volume[0, 0, 0, 0, 0] = float("nan")
+        reference = volume.clone()
 
-        with self.assertRaises(RuntimeError):
-            transform.apply_transform(volume, {}, {}, transform=None)
+        out = transform.apply_transform(volume, {}, {}, transform=None)
+
+        finite = torch.isfinite(reference)
+        self.assertTrue(torch.equal(out[finite], reference[finite]), "the guard rewrote a channel it rejected")
+        self.assertTrue(bool(torch.isnan(out[0, 0, 0, 0, 0])), "the caller's own NaN should still be there")
 
     def test_equalisation_still_changes_the_image(self):
         transform = RandomHistogramEqualizationGPU(p=1.0, mix_prob=0.0)

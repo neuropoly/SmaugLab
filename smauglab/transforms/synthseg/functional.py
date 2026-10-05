@@ -26,6 +26,7 @@ Spatial conventions
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Sequence
 from typing import Union
@@ -41,6 +42,7 @@ __all__ = [
     "bias_field",
     "blurring_sigma_for_downsampling",
     "convert_labels",
+    "distinct_values",
     "em_subdivide_labels",
     "flip_lr_with_swap",
     "gaussian_blur_3d",
@@ -219,15 +221,28 @@ def sample_gmm_parameters(
     # Background special-casing (build_model_inputs): per subject, 5% pure black,
     # 25% very dark/low-variance, 70% normal draw.
     if randomise_background and background_label_index is not None and 0 <= background_label_index < n_labels:
-        for b in range(batch):
-            r = float(torch.rand((), device=device))
-            if r > 0.95:
-                means_lab[b, background_label_index, :] = 0.0
-                stds_lab[b, background_label_index, :] = 0.0
-            elif r > 0.70:
-                means_lab[b, background_label_index, :] = torch.rand(n_channels, device=device) * 15.0
-                stds_lab[b, background_label_index, :] = torch.rand(n_channels, device=device) * 5.0
-            # else: keep the normal draw
+        # One draw per sample and two candidate parameter sets, selected with
+        # `torch.where`. The loop this replaces read `float(torch.rand(()))` back to
+        # the host once per sample, which stalls the whole queue; the branch
+        # probabilities and the per-sample independence are unchanged, but the dark
+        # draws are now made for every sample rather than only the ones that take
+        # that branch, so the stream differs from the previous release's.
+        draw = torch.rand(batch, 1, device=device)
+        dark_means = torch.rand(batch, n_channels, device=device) * 15.0
+        dark_stds = torch.rand(batch, n_channels, device=device) * 5.0
+        black = draw > 0.95
+        dark = (draw > 0.70) & ~black
+
+        background_means = torch.where(
+            black, torch.zeros_like(dark_means), torch.where(dark, dark_means, means_lab[:, background_label_index, :])
+        )
+        background_stds = torch.where(
+            black, torch.zeros_like(dark_stds), torch.where(dark, dark_stds, stds_lab[:, background_label_index, :])
+        )
+        means_lab = means_lab.clone()
+        stds_lab = stds_lab.clone()
+        means_lab[:, background_label_index, :] = background_means
+        stds_lab[:, background_label_index, :] = background_stds
 
     return means_lab, stds_lab
 
@@ -262,14 +277,15 @@ def labels_to_image_gmm(
     lut[label_values] = torch.arange(label_values.numel(), device=device)
     idx = lut[label_map.clamp(min=0, max=max_label)].squeeze(1)  # (B, D, H, W)
 
-    image = torch.empty((B, C, *spatial), device=device, dtype=dtype)
-    for b in range(B):
-        idx_b = idx[b]
-        for ch in range(C):
-            mean_map = means[b, :, ch][idx_b]
-            std_map = stds[b, :, ch][idx_b]
-            image[b, ch] = mean_map + std_map * torch.randn(spatial, device=device, dtype=dtype)
-    return image
+    # One gather and one noise draw for the whole batch. The nested loop this
+    # replaces indexed `means[b, :, ch][idx_b]` once per (sample, channel) and drew
+    # its noise volume separately, so a four-channel batch of two paid eight small
+    # `randn` launches and eight gathers for what is one of each.
+    flat_idx = idx.reshape(B, 1, -1).expand(B, C, -1)  # (B, C, N)
+    mean_map = torch.gather(means.transpose(1, 2), 2, flat_idx)  # (B, C, N)
+    std_map = torch.gather(stds.transpose(1, 2), 2, flat_idx)
+    noise = torch.randn((B, C, *spatial), device=device, dtype=dtype)
+    return (mean_map + std_map * noise.reshape(B, C, -1)).reshape(B, C, *spatial)
 
 
 # ---------------------------------------------------------------------------
@@ -355,8 +371,16 @@ def sample_affine_matrices(
     return affine
 
 
+@functools.lru_cache(maxsize=8)
 def _identity_grid(shape: tuple[int, int, int], device: torch.device) -> torch.Tensor:
-    """Voxel-coordinate identity grid in ``(i, j, k)`` order, shape ``(3, D, H, W)``."""
+    """Voxel-coordinate identity grid in ``(i, j, k)`` order, shape ``(3, D, H, W)``.
+
+    Cached: it depends only on the patch shape, and `_integrate_velocity` calls
+    `warp_volume` seven times per field, each of which rebuilt it -- 24 MB of
+    `meshgrid` and `stack` at 128^3, seven times over, for a constant. The returned
+    tensor is shared; callers must not write into it (none do -- `warp_volume`
+    expands and then reads).
+    """
     d, h, w = shape
     zs = torch.arange(d, device=device, dtype=torch.float32)
     ys = torch.arange(h, device=device, dtype=torch.float32)
@@ -643,41 +667,90 @@ def mimic_acquisition(
 # ---------------------------------------------------------------------------
 # EM label completion for sparse label maps  (SynthSeg paper, Sec. 5.4)
 # ---------------------------------------------------------------------------
+def _quadratic_log_likelihood_terms(means: torch.Tensor, var: torch.Tensor, weights: torch.Tensor, eps: float) -> torch.Tensor:
+    """The `(3, K)` coefficients of the per-component log-density as a quadratic in x.
+
+    ``log N(x | m, v) + log w`` expands to ``a x^2 + b x + c`` with
+    ``a = -1/(2v)``, ``b = m/v`` and ``c = log w - (log 2pi + log v)/2 - m^2/(2v)``.
+    Stacking those lets a whole `(n, K)` responsibility matrix come out of one
+    matrix multiply against ``[x^2, x, 1]``, instead of half a dozen elementwise
+    kernels each writing an `(n, K)` temporary.
+    """
+    inv_var = 1.0 / var
+    const = torch.log(weights.clamp_min(eps)) - 0.5 * (math.log(2.0 * math.pi) + torch.log(var)) - 0.5 * means * means * inv_var
+    return torch.stack([-0.5 * inv_var, means * inv_var, const])
+
+
+def distinct_values(volume: torch.Tensor) -> torch.Tensor:
+    """The distinct non-negative integer values in `volume`, ascending.
+
+    `torch.unique` radix-sorts the input; counting into bins and keeping the
+    non-empty ones answers the same question for small label alphabets in about
+    half the time on a 2 x 128^3 volume, and the two results are identical.
+    """
+    return torch.bincount(volume.reshape(-1).clamp_min(0)).nonzero().flatten()
+
+
+def _label_counts_per_sample(label_map: torch.Tensor) -> torch.Tensor:
+    """`(B, max_label + 1)` voxel counts per label, per sample."""
+    batch = label_map.shape[0]
+    flat = label_map.reshape(batch, -1).clamp_min(0)
+    n_bins = int(flat.max()) + 1
+    # One `bincount` over row-offset labels: a `scatter_add_` into a handful of bins
+    # has every thread fighting for the same addresses, where bincount accumulates
+    # in shared memory per block.
+    offset = flat + torch.arange(batch, device=flat.device).view(-1, 1) * n_bins
+    return torch.bincount(offset.reshape(-1), minlength=batch * n_bins).view(batch, n_bins)
+
+
 def _em_gmm_1d(x_fit: torch.Tensor, n_components: int, n_iters: int, eps: float) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
     """Fit a 1D Gaussian mixture by Expectation-Maximization.
 
     ``x_fit`` is a 1D tensor of intensities. Returns ``(means, vars, weights)``
     each of shape ``(K,)`` (``K = min(n_components, len(x_fit))``), or ``None`` if
     ``x_fit`` is empty. Responsibilities use a numerically-stable log-sum-exp.
+
+    Each iteration is two matrix multiplies and a softmax rather than a dozen
+    elementwise passes over an ``(n, K)`` array: the E-step log-densities are a
+    quadratic in x (see :func:`_quadratic_log_likelihood_terms`) and the M-step only
+    needs the responsibility-weighted sums of ``1``, ``x`` and ``x^2``, which is the
+    same design matrix transposed. With ``n_iters=20`` and up to ten components that
+    is the difference between ~240 kernel launches per fit and ~60.
+
+    ``x`` is centred on its own mean before the moments are accumulated, so the
+    ``E[x^2] - E[x]^2`` variance cannot lose its significant digits to cancellation
+    when a component is tight and far from zero. The means are shifted back at the
+    end.
     """
     n = x_fit.numel()
     if n == 0:
         return None
     k = max(1, min(int(n_components), n))
     device = x_fit.device
-    xmin, xmax = float(x_fit.min()), float(x_fit.max())
-    means = torch.linspace(xmin, xmax, k, device=device)
-    if xmax <= xmin:  # degenerate (constant region): spread the means slightly
-        means = means + torch.arange(k, device=device, dtype=means.dtype) * eps
+
+    # `float(x.min())` twice was two host synchronisations per fit, and
+    # `em_subdivide_labels` calls this once per label per sample.
+    x_min, x_max = x_fit.min(), x_fit.max()
+    step = (x_max - x_min) / max(k - 1, 1)
+    means = x_min + step * torch.arange(k, device=device, dtype=x_fit.dtype)
+    # Degenerate (constant region): spread the means slightly.
+    means = torch.where(x_max > x_min, means, x_min + torch.arange(k, device=device, dtype=x_fit.dtype) * eps)
     var = x_fit.var(unbiased=False).clamp_min(eps).repeat(k)
     weights = torch.full((k,), 1.0 / k, device=device)
 
-    x = x_fit.view(n, 1)
-    log2pi = math.log(2.0 * math.pi)
+    shift = x_fit.mean()
+    centred = (x_fit - shift).view(n, 1)
+    design = torch.cat([centred * centred, centred, torch.ones_like(centred)], dim=1)  # (n, 3)
+    means = means - shift
+
     for _ in range(int(n_iters)):
-        logp = (
-            torch.log(weights.clamp_min(eps)).view(1, k)
-            - 0.5 * (log2pi + torch.log(var).view(1, k))
-            - 0.5 * (x - means.view(1, k)) ** 2 / var.view(1, k)
-        )
-        logp = logp - torch.logsumexp(logp, dim=1, keepdim=True)
-        resp = logp.exp()  # (n, k)
-        nk = resp.sum(0).clamp_min(eps)  # (k,)
+        resp = torch.softmax(design @ _quadratic_log_likelihood_terms(means, var, weights, eps), dim=1)
+        moments = resp.transpose(0, 1) @ design  # (k, 3): sums of r*x^2, r*x, r
+        nk = moments[:, 2].clamp_min(eps)
         weights = nk / n
-        means = (resp * x).sum(0) / nk
-        var = (resp * (x - means.view(1, k)) ** 2).sum(0) / nk
-        var = var.clamp_min(eps)
-    return means, var, weights
+        means = moments[:, 1] / nk
+        var = (moments[:, 0] / nk - means * means).clamp_min(eps)
+    return means + shift, var, weights
 
 
 def _assign_gmm(
@@ -690,16 +763,15 @@ def _assign_gmm(
 ) -> torch.Tensor:
     """Hard-assign each value in ``x_full`` to its most likely mixture component."""
     n = x_full.numel()
-    k = means.numel()
     out = torch.empty(n, dtype=torch.long, device=x_full.device)
-    logw = torch.log(weights.clamp_min(eps)).view(1, k)
-    half_logvar = 0.5 * torch.log(var).view(1, k)
-    m = means.view(1, k)
-    v = var.view(1, k)
+    # Same quadratic form as the E-step: one matmul per chunk instead of the
+    # subtract / square / divide / subtract chain, each of which wrote its own
+    # (chunk, K) array out to memory.
+    terms = _quadratic_log_likelihood_terms(means, var, weights, eps)
     for s in range(0, n, chunk):
         xc = x_full[s : s + chunk].view(-1, 1)
-        logp = logw - half_logvar - 0.5 * (xc - m) ** 2 / v
-        out[s : s + chunk] = logp.argmax(dim=1)
+        design = torch.cat([xc * xc, xc, torch.ones_like(xc)], dim=1)
+        out[s : s + chunk] = (design @ terms).argmax(dim=1)
     return out
 
 
@@ -749,7 +821,14 @@ def em_subdivide_labels(
     B = image.shape[0]
     device = image.device
     ref = image[:, channel]  # (B, D, H, W)
-    parents = torch.unique(label_map).long().tolist()  # sorted, batch-wide
+    # Per-sample label histogram, in one pass. It answers three questions the loop
+    # below used to ask one at a time with a host synchronisation each: which labels
+    # exist batch-wide, which is the largest, and how many voxels each holds in each
+    # sample.
+    label_counts = _label_counts_per_sample(label_map)
+    totals = label_counts.sum(dim=0)
+    parents = totals.nonzero().flatten().tolist()  # sorted, batch-wide
+    counts_per_sample = label_counts.tolist()
     parent_to_idx = {p: i for i, p in enumerate(parents)}
     lo, hi = int(background_clusters_range[0]), int(background_clusters_range[1])
     mult = max(hi, int(n_foreground_clusters)) + 1  # collision-free encoding
@@ -759,7 +838,7 @@ def em_subdivide_labels(
     # fall back to the largest-area label so it still receives the richer
     # [min, max] background split rather than the 2-cluster foreground split.
     if background_label not in parents and len(parents) > 0:
-        background_label = int(torch.bincount(label_map.flatten().clamp_min(0)).argmax())
+        background_label = int(totals.argmax())
 
     bg_n_shared = int(torch.randint(lo, hi + 1, (1,), device=device)) if same_on_batch else None
 
@@ -769,10 +848,10 @@ def em_subdivide_labels(
         ref_b = ref[b]
         for p in parents:
             pi = parent_to_idx[p]
-            mask = lab_b == p
-            cnt = int(mask.sum())
+            cnt = int(counts_per_sample[b][p])
             if cnt == 0:
                 continue
+            mask = lab_b == p
             if p == background_label:
                 k = bg_n_shared if bg_n_shared is not None else int(torch.randint(lo, hi + 1, (1,), device=device))
             else:
@@ -792,7 +871,7 @@ def em_subdivide_labels(
                 assign = torch.zeros(cnt, dtype=torch.long, device=device) if fit is None else _assign_gmm(x, *fit, eps=eps)
             fine[b, 0][mask] = pi * mult + assign
 
-    gen_values = torch.unique(fine).long().tolist()
+    gen_values = distinct_values(fine).tolist()
     out_values = [parents[g // mult] for g in gen_values]
     return fine, gen_values, out_values
 
