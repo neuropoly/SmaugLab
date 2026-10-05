@@ -30,10 +30,6 @@ class TestRegistryIsPopulated(unittest.TestCase):
         self.assertGreaterEqual(len(registry.names(Backend.GPU)), 25)
         self.assertGreaterEqual(len(registry.names(Backend.CPU)), 20)
 
-    def test_no_monai_implementations_yet(self):
-        """Tracked, not built. If this starts failing, the matrix gained a real cell."""
-        self.assertEqual(registry.names(Backend.MONAI), [])
-
     def test_every_aug_id_is_used(self):
         """An unused AugId is a concept nothing implements -- almost always a typo."""
         used = {entry.aug_id for entry in registry.entries()}

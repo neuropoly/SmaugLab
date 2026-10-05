@@ -50,11 +50,16 @@ __all__ = [
 
 # `StrEnum` is 3.11+; pyproject promises `requires-python = ">=3.10"`.
 class Backend(str, Enum):
-    """Where an augmentation runs, which is also which config section it lives in."""
+    """Where an augmentation runs, which is also which config section it lives in.
+
+    Two members, because there are two transform APIs to implement against: kornia
+    modules on the GPU and batchgeneratorsv2 transforms on the CPU. MONAI training is
+    not a third one -- `scripts/train_monai.py` hands the collated batch to the GPU
+    pipeline on device, so it draws from `Backend.GPU`.
+    """
 
     GPU = "GPU"
     CPU = "CPU"
-    MONAI = "MONAI"
 
 
 class AugType(str, Enum):
@@ -77,13 +82,13 @@ class AugId(str, Enum):
     Config keys are class names and therefore backend-specific
     (`RandomGaussianNoiseGPU` vs batchgeneratorsv2's `GaussianNoiseTransform`), so
     a join key is needed to say "these are the same augmentation on two backends".
-    That is what makes `matrix()` -- the CPU/GPU/MONAI coverage table -- possible.
+    That is what makes `matrix()` -- the GPU/CPU coverage table -- possible.
 
     An enum rather than a free string on purpose: a typo'd `"gausian_noise"` would
     silently orphan a matrix row, whereas `AugId.GAUSIAN_NOISE` fails at import.
     The member list doubles as the authoritative inventory of concepts, which is
-    what "track which augmentations have a MONAI version" actually means -- the row
-    exists, and an empty cell is the record that no implementation does.
+    what makes a gap visible: every concept gets a matrix row, and an empty cell is the
+    record that this backend does not implement it.
     """
 
     # -- geometric
@@ -260,9 +265,6 @@ PIPELINE_ORDER: Mapping[Backend, tuple[str, ...]] = MappingProxyType(
             "MirrorTransform",
             "ZscoreNormalization",
         ),
-        # No MONAI augmentations are implemented yet; the empty tuple is the record of
-        # that, and is what `matrix()` renders as an empty column.
-        Backend.MONAI: (),
     }
 )
 
@@ -560,7 +562,7 @@ def matrix() -> dict[AugId, dict[Backend, AugEntry | None]]:
 
 
 def render_matrix(fmt: str = "md") -> str:
-    """The CPU/GPU/MONAI coverage table."""
+    """The GPU/CPU coverage table."""
     table = matrix()
     if fmt not in {"md", "table"}:
         raise ValueError(f"unknown format {fmt!r}; expected 'md' or 'table'")

@@ -1,5 +1,9 @@
 """
 This script trains a segmentation network using MONAI with augmentations done on the fly during training.
+
+The augmentations are SmaugLab's GPU pipeline: MONAI loads and preprocesses, then
+`AugTransformsGPU` runs on each collated batch on device. There is no MONAI-specific
+augmentation backend -- the GPU one is what a MONAI pipeline uses.
 """
 
 import argparse

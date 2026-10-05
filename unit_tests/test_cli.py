@@ -50,17 +50,17 @@ class TestList(unittest.TestCase):
 
 
 class TestMatrix(unittest.TestCase):
-    def test_markdown_shows_the_monai_column_as_empty(self):
+    def test_markdown_header_lists_the_backends(self):
         code, out = run("matrix", "--format", "md")
         self.assertEqual(code, 0)
-        self.assertIn("| Augmentation | Group | GPU | CPU | MONAI |", out)
+        self.assertEqual(out.splitlines()[0], "| Augmentation | Group | GPU | CPU |")
 
     def test_json_form_reports_missing_backends_as_null(self):
         _, out = run("matrix", "--format", "json")
         payload = json.loads(out)
         self.assertIsNone(payload["palette"]["CPU"])
         self.assertEqual(payload["palette"]["GPU"], "RandomPaletteGPU")
-        self.assertTrue(all(row["MONAI"] is None for row in payload.values()))
+        self.assertTrue(all(set(row) == {"GPU", "CPU"} for row in payload.values()), "a backend column appeared or vanished")
 
     def test_check_passes_on_a_clean_tree(self):
         code, _ = run("matrix", "--check")
