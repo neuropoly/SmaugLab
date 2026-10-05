@@ -1,4 +1,4 @@
-[![paper](https://img.shields.io/badge/Preprint-arXiv:2605.03098-orange)](https://papers.miccai.org/miccai-2026/paper/1360_paper.pdf)
+[![paper](https://img.shields.io/badge/Paper-miccai2026-orange)](https://papers.miccai.org/miccai-2026/paper/1360_paper.pdf)
 [![PyPI](https://img.shields.io/pypi/v/smauglab)](https://pypi.org/project/smauglab/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/smauglab)](https://pypi.org/project/smauglab/)
 [![tests](https://github.com/neuropoly/SmaugLab/actions/workflows/tests.yml/badge.svg)](https://github.com/neuropoly/SmaugLab/actions/workflows/tests.yml)
