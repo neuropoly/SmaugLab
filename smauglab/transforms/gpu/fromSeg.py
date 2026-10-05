@@ -106,13 +106,31 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
     Mirrors the CPU `RedistributeTransform` behavior using GPU-friendly ops.
     Works with inputs shaped [N, C, H, W] or [N, C, D, H, W].
+
+    `retain_stats` defaults to True, and wants to stay that way. The whole method
+    operates in a per-sample [0, 1] min-max space and adds a perturbation of up to
+    2.0 *in that space* -- twice the input's full dynamic range. With
+    `retain_stats=False` nothing maps the result back, so the output is
+    independent of the input's scale entirely: a z-scored patch, the same patch
+    scaled by 100, and anything else all come out in the same [0.5, 2.9] band with
+    mean 2.2. For a network fed z-scored patches that is finite, silent and badly
+    out of distribution -- the same defect the no-foreground branch below carries a
+    comment about.
+
+    Mapping back is not a fix on its own: the perturbation is defined in
+    normalised units, so rescaling it by the input range makes it far larger
+    (measured, mean 18.4 rather than 2.2). Bounding the amplitude in input units
+    would be a redesign of an augmentation inherited from totalspineseg, so this
+    only changes which setting you get by default. `transform_params_hybrid.json`
+    and `transform_params_hybrid_TAGE.json` ask for False explicitly and are
+    unaffected.
     """
 
     def __init__(
         self,
         in_seg: float = 0.2,
         apply_to_channel: Sequence[int] = (0,),
-        retain_stats: bool = False,
+        retain_stats: bool = True,
         same_on_batch: bool = False,
         p: float = 1.0,
         p_batch: float = 1.0,
@@ -130,6 +148,12 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
         # Expect segmentation provided in params: shape [N, 1, ...] or [N, C_seg, ...]
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         if "seg" not in params:
             return input
         seg = params["seg"]
@@ -363,6 +387,12 @@ class RandomPaletteGPU(ImageOnlyTransform):
         flags: dict[str, Any],
         transform: Tensor | None = None,
     ) -> Tensor:
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_raw: torch.Tensor | None = params.get("seg")
 
         labels: torch.Tensor | None = None
@@ -459,7 +489,10 @@ class RandomPaletteGPU(ImageOnlyTransform):
         # ── Step 2: per-anatomical-label affine remap (PALETTE) ───────────────
         if labels is not None:
             if labels.shape[2:] != (D, H, W):
-                labels = F.interpolate(labels.float(), size=(D, H, W), mode="nearest").long()
+                # "nearest-exact", not "nearest": the latter maps src = floor(dst * scale)
+                # with no half-pixel offset, which walks the label map about half a voxel
+                # toward higher indices relative to the intensities synthesised from it.
+                labels = F.interpolate(labels.float(), size=(D, H, W), mode="nearest-exact").long()
             lbl = labels[:, 0].reshape(B, N).clamp(min=0)
 
             unique_classes = lbl.unique()
@@ -603,8 +636,10 @@ class DifferentiableHistogram3D(nn.Module):
         self.max_value = float(value_range[1])
         self.eps = eps
 
-        bin_centers = torch.linspace(self.min_value, self.max_value, num_bins)
-        self.register_buffer("bin_centers", bin_centers.view(1, 1, num_bins, 1), persistent=False)
+        # No bin_centers buffer: `forward` derives every index it needs from
+        # min_value and bin_width arithmetically and never read it, so the buffer
+        # was dead state that still showed up in state_dict() and moved with
+        # .to(device) on every call.
         self.bin_width = (self.max_value - self.min_value) / max(num_bins - 1, 1)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:

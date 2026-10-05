@@ -34,7 +34,6 @@ class nnUNetTrainerTest(nnUNetTrainer):
         foreground_labels: Union[tuple[int, ...], list[int]] | None = None,
         regions: list[Union[list[int], tuple[int, ...], int]] | None = None,
         ignore_label: int | None = None,
-        retain_stats: bool = False,
     ) -> BasicTransform:
         transforms = []
 
@@ -101,7 +100,6 @@ class nnUNetTrainerTestGPU(nnUNetTrainer):
         foreground_labels: Union[tuple[int, ...], list[int]] | None = None,
         regions: list[Union[list[int], tuple[int, ...], int]] | None = None,
         ignore_label: int | None = None,
-        retain_stats: bool = False,
     ) -> BasicTransform:
         transforms = []
 

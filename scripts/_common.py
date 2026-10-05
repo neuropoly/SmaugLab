@@ -49,8 +49,11 @@ def fetch_image_config(config_data: dict, split: str = "TRAINING") -> tuple[list
     for i, di in enumerate(dict_list):
         input_img_path = os.path.join(config_data["DATASETS_PATH"], di["IMAGE"])
         input_seg_path = os.path.join(config_data["DATASETS_PATH"], di["LABEL"])
-        if not os.path.exists(input_img_path):
-            err.append([input_img_path, "path error"])
+        # Both paths, not just the image: a missing label used to pass this filter
+        # and fail much later inside a worker with an opaque nibabel error.
+        missing = [path for path in (input_img_path, input_seg_path) if not os.path.exists(path)]
+        if missing:
+            err.extend([path, "path error"] for path in missing)
         else:
             out_list.append({"image": os.path.abspath(input_img_path), "segmentation": os.path.abspath(input_seg_path)})
 
@@ -63,15 +66,34 @@ def fetch_image_config(config_data: dict, split: str = "TRAINING") -> tuple[list
     return out_list, err
 
 
+def report_missing(err: list, split: str, *, limit: int = 10) -> None:
+    """Say out loud which inputs were dropped.
+
+    `fetch_image_config` has always collected them; every caller threw the list
+    away, so a data config naming 500 subjects of which 400 were missing
+    augmented 100 of them and printed nothing at all.
+    """
+    if not err:
+        return
+    print(f"WARNING: {len(err)} {split} path(s) do not exist and were skipped:")
+    for path, reason in err[:limit]:
+        print(f"  {path} ({reason})")
+    if len(err) > limit:
+        print(f"  ... and {len(err) - limit} more")
+
+
 def parser2config(args, path_out: str) -> None:
     """Extract the parameters from an input parser to create a config json file.
 
     :param args: parser arguments
     :param path_out: path out of the config file
     """
-    # Check if path_out exists or create it
-    if not os.path.exists(os.path.dirname(path_out)):
-        os.makedirs(os.path.dirname(path_out))
+    # Check if path_out exists or create it.
+    #
+    # `or "."`: os.path.dirname("config.json") is "", and os.makedirs("") raises
+    # FileNotFoundError, so a bare filename could not be written at all.
+    # exist_ok also closes the race between the check and the create.
+    os.makedirs(os.path.dirname(path_out) or ".", exist_ok=True)
 
     # Serializing json
     json_object = json.dumps(vars(args), indent=4)

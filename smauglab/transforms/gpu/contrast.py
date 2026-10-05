@@ -1,6 +1,6 @@
 import math
 from collections.abc import Callable, Sequence
-from typing import Any, Protocol, Union
+from typing import Any, Protocol, Union, cast
 
 import torch
 import torchvision.transforms._functional_tensor as F_t
@@ -13,7 +13,11 @@ from smauglab.transforms.kernels import gaussian_kernel3d, laplace_kernel, schar
 from smauglab.transforms.rng import shared_choice
 
 
-def _choose_region_mode(p_in: float, p_out: float, seg_mask: torch.Tensor | None) -> str:  # noqa: ARG001 -- seg_mask kept for signature symmetry with _apply_region_mode
+def _choose_region_mode(
+    p_in: float,
+    p_out: float,
+    seg_mask: torch.Tensor | None,  # noqa: ARG001
+) -> str:
     """Sample where to apply the transform: 'in', 'out', or 'all'.
 
     - p_in, p_out are probabilities in [0,1].
@@ -52,6 +56,37 @@ def _restore_stats(x: torch.Tensor, stats: tuple[torch.Tensor, torch.Tensor]) ->
     new_mean = x.mean(dim=reduce_dims).view(shape)
     new_std = x.std(dim=reduce_dims).view(shape)
     return (x - new_mean) / (new_std + eps) * orig_stds.view(shape) + orig_means.view(shape)
+
+
+def _mix_with_original(orig: torch.Tensor, x: torch.Tensor, mix_prob: float) -> torch.Tensor:
+    """Blend each sample back towards the original with probability `mix_prob`.
+
+    Per sample: an independent draw and an independent alpha for every element of
+    the batch, which is what "probability of blending the result back" means and
+    what the sibling transforms that write this inline already do.
+    """
+    if mix_prob <= 0.0:
+        return x
+    shape = [x.shape[0]] + [1] * (x.dim() - 1)
+    mix = torch.rand(x.shape[0], device=x.device).view(shape) < mix_prob
+    alpha = torch.rand(x.shape[0], device=x.device).view(shape)
+    return torch.where(mix, alpha * orig + (1 - alpha) * x, x)
+
+
+def _check_channel(transform: torch.nn.Module, channel: int, channels: int) -> None:
+    """Reject an `apply_to_channel` entry the input does not have.
+
+    Two transforms used to `continue` past an out-of-range index. Every other one
+    indexes `input[:, c]` straight away and raises IndexError, so a config typo --
+    `apply_to_channel: [1]` on single-channel data is the easy one -- turned those
+    two into a silent no-op while the rest of the pipeline failed loudly. Failing
+    loudly is the useful half of that pair, and it names the config key.
+    """
+    if channel < 0 or channel >= channels:
+        raise IndexError(
+            f"{type(transform).__name__}: apply_to_channel {channel} is out of range for a "
+            f"{channels}-channel input. Channels are 0-based, so valid entries are 0..{channels - 1}."
+        )
 
 
 class _RegionSelecting(Protocol):
@@ -281,8 +316,15 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
             # choose random odd kernel size e.g. [1,3,5,7]
             k = int(shared_choice(self.kernel_sizes))  # define kernel_sizes in __init__
 
-            std = 1.0 / math.sqrt(k * k)
-            kernel = torch.randn((k, k, k), device=device) * std  # for 3D
+            # 1/sqrt(k**3), not 1/sqrt(k*k): the kernel has k**3 taps, so unit
+            # output variance needs per-tap variance 1/k**3. The 2-D formula left
+            # a gain of sqrt(k) -- measured output std 0.85 / 1.59 / 2.11 / 2.43
+            # for k = 1 / 3 / 5 / 7 on unit-variance input -- which made the
+            # augmentation's strength a function of the randomly drawn kernel
+            # size. Nothing corrected it downstream: RandomRandConvGPU defaults
+            # retain_stats to False.
+            std = 1.0 / math.sqrt(k**3)
+            kernel = torch.randn((k, k, k), device=device) * std
         else:
             raise NotImplementedError("Kernel type not implemented.")
         return kernel
@@ -290,6 +332,12 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
         # Initialize kernel
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         kernel = self.get_kernel(device=input.device)
 
         # Load segmentation
@@ -305,15 +353,41 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
 
             # The asserts below restate what get_kernel guarantees per kernel_type:
             # only Scharr yields a list, and only its branch iterates.
-            if self.kernel_type in ["Laplace", "GaussianBlur"]:
+            if self.kernel_type == "Laplace":
                 assert isinstance(kernel, Tensor)
                 x = apply_convolution(channel_data, kernel, dim=3)
+            elif self.kernel_type == "GaussianBlur":
+                # The sigma is drawn in get_kernel, so sharing the kernel shares the
+                # sigma. With same_on_batch off, every sample gets its own -- which
+                # is what the flag asks for and what it silently did not do.
+                if self.same_on_batch:
+                    assert isinstance(kernel, Tensor)
+                    x = apply_convolution(channel_data, kernel, dim=3)
+                else:
+                    x = torch.stack(
+                        [
+                            apply_convolution(channel_data[b : b + 1], cast(Tensor, self.get_kernel(device=input.device)), dim=3).squeeze(0)
+                            for b in range(channel_data.shape[0])
+                        ],
+                        dim=0,
+                    )
             elif self.kernel_type == "UnsharpMask":
                 # blur selected channel, compute mask and add scaled mask back Isharp​=I+α(I−G​∗I)
-                assert isinstance(kernel, Tensor)
-                blurred = apply_convolution(channel_data, kernel, dim=3)
+                if self.same_on_batch:
+                    assert isinstance(kernel, Tensor)
+                    blurred = apply_convolution(channel_data, kernel, dim=3)
+                    unsharp_amount = torch.rand(1, device=input.device) * self.unsharp_amount
+                else:
+                    blurred = torch.stack(
+                        [
+                            apply_convolution(channel_data[b : b + 1], cast(Tensor, self.get_kernel(device=input.device)), dim=3).squeeze(0)
+                            for b in range(channel_data.shape[0])
+                        ],
+                        dim=0,
+                    )
+                    amount_shape = [channel_data.shape[0]] + [1] * (channel_data.dim() - 1)
+                    unsharp_amount = torch.rand(channel_data.shape[0], device=input.device).view(amount_shape) * self.unsharp_amount
                 mask = channel_data - blurred
-                unsharp_amount = torch.rand(1, device=input.device) * self.unsharp_amount
                 x = channel_data + unsharp_amount * mask
             elif self.kernel_type == "Scharr":
                 tot_ = torch.zeros_like(channel_data, device=input.device)
@@ -324,22 +398,34 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
                         tot_ += apply_convolution(channel_data, k, dim=3)
                 x = tot_
             elif self.kernel_type == "RandConv":
-                # RandConv kernels are per-sample, per-call
-                out = []
-                for b in range(channel_data.shape[0]):
-                    kernel = self.get_kernel(device=input.device)
+                # One kernel for the batch under same_on_batch, a fresh one per
+                # sample otherwise. This used to draw per sample unconditionally,
+                # so `same_on_batch=True` -- which the sequential forces onto every
+                # child -- did nothing here while it held for every sibling.
+                if self.same_on_batch:
                     assert isinstance(kernel, Tensor)
+                    x = apply_convolution(channel_data, kernel, dim=3)
+                else:
+                    out = []
+                    for b in range(channel_data.shape[0]):
+                        per_sample = self.get_kernel(device=input.device)
+                        assert isinstance(per_sample, Tensor)
 
-                    conv = apply_convolution(channel_data[b : b + 1], kernel, dim=3).squeeze(0)
+                        conv = apply_convolution(channel_data[b : b + 1], per_sample, dim=3).squeeze(0)
 
-                    out.append(conv)
+                        out.append(conv)
 
-                x = torch.stack(out, dim=0)
+                    x = torch.stack(out, dim=0)
 
-            # Mix with original based on mix_prob
-            if torch.rand(1).item() < self.mix_prob:
-                alpha = torch.rand(1, device=input.device)
-                x = alpha * orig + (1 - alpha) * x
+            # Mix with original based on mix_prob, per sample.
+            #
+            # This draw used to sit outside any loop, so one coin flip and one alpha
+            # decided the whole batch -- unlike RandomInverseGPU and
+            # RandomHistogramEqualizationGPU, which run the identical three lines
+            # inside their per-sample loop. `mix_prob` is documented as "probability
+            # of blending the result back with the original", which is a per-sample
+            # statement.
+            x = _mix_with_original(orig, x, self.mix_prob)
 
             if self.retain_stats:
                 x = _restore_stats(x, stats)
@@ -639,6 +725,12 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
         # Generate Gaussian noise with the same shape as input
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
             if self.same_on_batch:
@@ -705,6 +797,12 @@ class RandomBrightnessGPU(ImageOnlyTransform):
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
 
         # Apply brightness adjustment
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # [N, ...spatial...]
@@ -777,6 +875,12 @@ class _RandomGammaBaseGPU(ImageOnlyTransform):
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
 
         # Apply gamma transform
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
             # [N, ...spatial...]
@@ -954,6 +1058,12 @@ class RandomContrastGPU(ImageOnlyTransform):
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
 
         # Apply brightness adjustment
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # [N, ...spatial...]
@@ -1032,6 +1142,12 @@ class _RandomFunctionBaseGPU(ImageOnlyTransform):
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
 
         # Apply function transform
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
             x = input[:, c]  # shape [N, ...spatial...]
@@ -1216,6 +1332,12 @@ class RandomInverseGPU(ImageOnlyTransform):
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
 
         # Inverse image
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
             for i in range(input.shape[0]):
@@ -1293,6 +1415,12 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
 
         # Apply histogram equalization transform
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
             # `.clone()`, not the bare `input[:, c]` view this used to take: the loop
@@ -1458,6 +1586,12 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
         transform: Tensor | None = None,
     ) -> Tensor:
         # input: (N, C, [D,] H, W)
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         if input.dim() not in (4, 5):
             raise ValueError("Expected 4D or 5D tensor (N,C,...) for RandomBiasFieldGPU")
         batch_size = input.shape[0]
@@ -1504,8 +1638,7 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
 
         # Apply to channels
         for c in self.apply_to_channel:
-            if c < 0 or c >= input.shape[1]:
-                continue  # skip invalid channel index
+            _check_channel(self, c, input.shape[1])
             channel = input[:, c]
             orig = channel.clone()
             if self.retain_stats:
@@ -1579,6 +1712,12 @@ class RandomClampGPU(ImageOnlyTransform):
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
 
         # Apply clamping
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # [N, ...spatial...]
@@ -1655,10 +1794,15 @@ class ZscoreNormalizationGPU(ImageOnlyTransform):
         transform: Tensor | None = None,
     ) -> Tensor:
         # input: (N, C, [D,] H, W)
+        # A clone, not the caller's tensor: this method writes channels back with
+        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
+        # through when every sample applies. Every transform in gpu/spatial.py and
+        # the palette/domain-transfer transforms already clone; these did not, so
+        # `batch["data"]` was destroyed under any caller holding a reference.
+        input = input.clone()
         seg_mask = params.get("seg")
         for c in self.apply_to_channel:
-            if c < 0 or c >= input.shape[1]:
-                continue  # skip invalid channel index
+            _check_channel(self, c, input.shape[1])
             channel = input[:, c]
             orig = channel.clone()
             reduce_dims = tuple(range(1, channel.dim()))
