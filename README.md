@@ -1,4 +1,4 @@
-[![arXiv](https://img.shields.io/badge/Preprint-arXiv:2605.03098-orange)](https://arxiv.org/abs/2605.03098)
+[![paper](https://img.shields.io/badge/Preprint-arXiv:2605.03098-orange)](https://papers.miccai.org/miccai-2026/paper/1360_paper.pdf)
 [![PyPI](https://img.shields.io/pypi/v/smauglab)](https://pypi.org/project/smauglab/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/smauglab)](https://pypi.org/project/smauglab/)
 [![tests](https://github.com/neuropoly/SmaugLab/actions/workflows/tests.yml/badge.svg)](https://github.com/neuropoly/SmaugLab/actions/workflows/tests.yml)
@@ -17,11 +17,15 @@ This repository investigates the influence of different data augmentation strate
 If you use SmaugLab, please make sure to cite the following paper:
 
 ```
-@article{molinier2026one,
-  title={One Sequence to Segment Them All: Efficient Data Augmentation for CT and MRI Cross-Domain 3D Spine Segmentation},
-  author={Molinier, Nathan and M{\"o}ller, Hendrik and Dagonneau, Thomas and Curto-Vilalta, Anna and Graf, Robert and Atad, Matan and Rueckert, Daniel and Kirschke, Jan S and Cohen-Adad, Julien},
-  journal={arXiv preprint arXiv:2605.03098},
-  year={2026}
+@InProceedings{moliniermoller_MICCAI2026_SmaugLab,
+        author = { Molinier, Nathan AND Möller, Hendrik AND Dagonneau, Thomas AND Curto-Vilalta, Anna AND Graf, Robert AND Atad, Matan AND Rueckert, Daniel AND Kirschke, Jan S. AND Cohen-Adad, Julien},
+        title = { { One Sequence to Segment Them All: Efficient Data Augmentation for CT and MRI Cross-Domain 3D Spine Segmentation } },
+        booktitle = {Medical Image Computing and Computer Assisted Intervention -- MICCAI 2026},
+        year = {2026},
+        publisher = {Springer Nature Switzerland},
+        volume = {LNCS 16881},
+        month = {September},
+        page = {pending}
 }
 ```
 
