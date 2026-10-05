@@ -75,7 +75,7 @@ class TestProblemsAreReportedTogether(unittest.TestCase):
         self.assertTrue(any("RandomFlipTransformGPU" in p for p in problems), problems)
 
     def test_a_renamed_parameter_is_pointed_at_its_replacement(self):
-        """`probability` -> `p` is the commonest migration mistake, and difflib
+        """`probability` -> `p` is the commonest mistake in an old config, and difflib
         cannot bridge it: the two strings score ~0.17."""
         problems = validate_section({"RandomFlipTransformGPU": {"probability": 0.5}}, Backend.GPU)
         self.assertTrue(any("'probability' -> p" in p for p in problems), problems)
