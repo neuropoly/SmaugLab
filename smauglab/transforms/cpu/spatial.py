@@ -1,5 +1,3 @@
-import random
-
 import torch
 import torchio as tio
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform, ImageOnlyTransform
@@ -25,7 +23,7 @@ SPATIAL_TRANSFORMS: dict[str, TransformFactory] = {
     group=AugType.GEO,
 )
 class SpatialCustomTransform(BasicTransform):
-    def __init__(self, flip=False, affine=False, elastic=False, anisotropy=False, random_pick=False):
+    def __init__(self, flip=False, affine=False, elastic=False, anisotropy=False, random_pick=False, second_channel_is_labels=True):
         """
         Apply all selected spatial transformation (flip, affine, elastic and anisotropy) to the image if they are enabled (set to True).
         If `random_pick` is True, randomly select and apply ONE of the enabled transformation.
@@ -38,6 +36,9 @@ class SpatialCustomTransform(BasicTransform):
         self.elastic = elastic
         self.anisotropy = anisotropy
         self.random_pick = random_pick
+        # Channel count alone cannot tell an image+labels pair from a
+        # two-modality image; see apply_tio.
+        self.second_channel_is_labels = second_channel_is_labels
 
     def get_parameters(self, **data_dict) -> dict:
         return select({name: getattr(self, name) for name in SPATIAL_TRANSFORMS}, self.random_pick)
@@ -48,7 +49,7 @@ class SpatialCustomTransform(BasicTransform):
         return data_dict
 
     def _apply_to_image(self, img: torch.Tensor, seg: torch.Tensor, **params) -> tuple[torch.Tensor, torch.Tensor]:
-        return apply_enabled(SPATIAL_TRANSFORMS, img, seg, params)
+        return apply_enabled(SPATIAL_TRANSFORMS, img, seg, params, second_channel_is_labels=self.second_channel_is_labels)
 
 
 ### Shape transform
@@ -81,7 +82,16 @@ class ShapeTransform(ImageOnlyTransform):
     def _apply_to_image(self, img: torch.Tensor, seg: torch.Tensor, **params) -> tuple[torch.Tensor, torch.Tensor]:
         # Compute random shape
         img_shape = img.shape[1:]
-        new_shape = [random.randint(params["shape_min"], s) if i not in params["ignore_axes"] else s for i, s in enumerate(img_shape)]
+        # torch, not random.randint: `torch.manual_seed` does not reach Python's
+        # `random`, so a seeded training run was not reproducible here -- which is
+        # exactly what smauglab.transforms.rng exists to fix, and the
+        # batchgeneratorsv2 RandomTransform wrapping this one already draws from
+        # torch. `shape_min` is clamped so a config larger than an axis crops to
+        # the axis instead of raising.
+        new_shape = [
+            s if i in params["ignore_axes"] else int(torch.randint(min(params["shape_min"], s), s + 1, (1,)).item())
+            for i, s in enumerate(img_shape)
+        ]
 
         # Find image center
         img_center = [s // 2 for s in img_shape]
@@ -90,8 +100,12 @@ class ShapeTransform(ImageOnlyTransform):
         starts = [max(0, c - ns // 2) for c, ns in zip(img_center, new_shape)]
         ends = [start + ns for start, ns in zip(starts, new_shape)]
 
-        # Crop using advanced slicing
-        slices = tuple(slice(start, end) for start, end in zip(starts, ends))
-        img_cropped = img[(slice(None), *slices)]  # Keep channel dim intact
-        seg_cropped = seg[(slice(None), *slices)]
+        # Crop using advanced slicing. The index is named rather than written inline
+        # as `img[(slice(None), *slices)]`: mypy reads a starred tuple *inside a
+        # subscript* as PEP 646 syntax and rejects it under python_version 3.10, which
+        # this package still supports. Out here the same literal is fine.
+        slices = [slice(start, end) for start, end in zip(starts, ends)]
+        index = (slice(None), *slices)  # Keep channel dim intact
+        img_cropped = img[index]
+        seg_cropped = seg[index]
         return img_cropped, seg_cropped

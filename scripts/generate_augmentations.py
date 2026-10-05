@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from tqdm.contrib.concurrent import process_map
 
-from _common import fetch_image_config
+from _common import fetch_image_config, report_missing
 from smauglab.transforms.cpu.transforms import AugTransforms
 from smauglab.utils.image import Image, resample_nib, zeros_like
 
@@ -132,10 +132,11 @@ def augment_mp(
     with open(str(data_json_path)) as f:
         data_config = json.load(f)
 
-    data_list, _ = fetch_image_config(
+    data_list, err = fetch_image_config(
         config_data=data_config,
         split="TRAINING",
     )
+    report_missing(err, "TRAINING")
 
     # Init transforms
     if not transforms_json_path.is_file():
