@@ -160,7 +160,7 @@ class InvalidConfigError(RegistryError, ValueError):
 # Renamed *parameters*, for diagnostics only -- consulted when building an error
 # message, NEVER when loading a config. difflib cannot bridge these on its own:
 # "probability" vs "p" scores ~0.17, well under any usable cutoff, so without this
-# table the single most common migration mistake would get no suggestion at all.
+# table the commonest mistake in an old config would get no suggestion at all.
 # A test asserts that no key here resolves through `get()`, which is what keeps it
 # from becoming a back-compat path.
 #
