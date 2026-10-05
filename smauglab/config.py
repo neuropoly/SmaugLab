@@ -16,8 +16,7 @@ once rather than one per run.
 A flat document with no section is rejected: it used to be interpreted as "GPU or
 CPU, whichever the keys look like", and the two namespaces overlapped enough that
 `GaussianBlurTransform` meant different transforms depending on which builder read
-it. See `migration/` in the repository to bring an old file forward -- `MIGRATE_HINT`
-below is the single source of truth for that pointer, and the error messages quote it.
+it. `SECTION_HINT` below is what the errors tell the author to do about it.
 """
 
 from __future__ import annotations
@@ -99,9 +98,9 @@ RESERVED_SECTIONS = ("pipeline",)
 #: Keys the `pipeline` section may hold.
 PIPELINE_KEYS = ("mode", "order", "random_choose", "same_on_batch")
 
-#: How to bring a pre-registry config forward. The migrator is a one-time tool kept
-#: in the repository rather than shipped in the wheel, so this points at the repo.
-MIGRATE_HINT = "see migration/ in the SmaugLab repository to bring an old config forward."
+#: What to do about a config that has no backend section. Quoted by both errors that
+#: can report it, so the two cannot drift apart.
+SECTION_HINT = "move the augmentation blocks into a 'GPU' or 'CPU' section, and spell each key as its class name."
 
 
 class SmaugConfig:
@@ -192,11 +191,11 @@ class SmaugConfig:
             problems.append(
                 f"unknown top-level key {key!r}. Expected one of "
                 f"{', '.join(sorted(known_sections))}, or a '_'-prefixed comment. "
-                f"A flat config without a backend section is no longer accepted -- {MIGRATE_HINT}"
+                f"A flat config without a backend section is no longer accepted -- {SECTION_HINT}"
             )
 
         if not any(b.value in self.payload for b in Backend):
-            problems.append(f"no GPU or CPU section; this looks like a pre-registry config. {MIGRATE_HINT}")
+            problems.append(f"no GPU or CPU section; this looks like a pre-registry config. {SECTION_HINT}")
 
         problems.extend(self._pipeline_problems())
 
