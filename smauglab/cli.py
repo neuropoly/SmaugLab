@@ -11,9 +11,6 @@ they cannot go out of date:
     smauglab template --backend gpu   a config naming everything, at defaults
     smauglab hash config.json         content-addressed config identity
 
-Bringing a pre-registry config forward is a one-time job and is not a subcommand: the
-migrator lives in `migration/` in the repository, not in the wheel.
-
 `hash` is the only one that does not need the registry; the rest import torch and
 kornia to populate it, which takes a few seconds on first use.
 """
