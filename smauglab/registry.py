@@ -20,6 +20,7 @@ import contextlib
 import difflib
 import importlib
 import inspect
+import warnings
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -360,6 +361,21 @@ def _named_params(cls: type) -> dict[str, inspect.Parameter]:
     return {name: p for name, p in signature.parameters.items() if p.kind not in skip}
 
 
+def _definition_site(cls: type) -> tuple[str, int] | None:
+    """The file and line of the class's `class` statement, or None if it has none.
+
+    Two entries that resolve to the *same* site are one class statement executed
+    twice -- one file reached under two module names -- rather than two classes
+    competing for a name; no two class statements can share a line. Classes built by
+    `type(name, bases, ns)` have no site at all, so they are never mistaken for each
+    other.
+    """
+    try:
+        return inspect.getfile(cls), inspect.getsourcelines(cls)[1]
+    except (TypeError, OSError):  # no source: builtins, C extensions, type() calls
+        return None
+
+
 # backend -> name -> entry. Insertion order is irrelevant; `entries()` sorts by PIPELINE_ORDER.
 _REGISTRY: dict[Backend, dict[str, AugEntry]] = {backend: {} for backend in Backend}
 # Held in a dict rather than a bare module global so `load_all` can flip it without
@@ -374,11 +390,41 @@ def register_entry(entry: AugEntry) -> AugEntry:
 
     The call form exists for third-party classes that cannot be decorated -- the
     batchgeneratorsv2 transforms the CPU pipeline composes directly.
+
+    Two names colliding is a bug and raises. Re-registering a class that is already
+    there is not: it means one file was executed twice, which leaves the table
+    unambiguous, so the first entry is kept and a warning says why.
     """
     backend_entries = _REGISTRY[entry.backend]
 
     clash = backend_entries.get(entry.name)
     if clash is not None:
+        if entry.cls is clash.cls:
+            return clash
+        site = _definition_site(entry.cls)
+        if site is not None and site == _definition_site(clash.cls):
+            # One `class` statement, reached twice because its file is in sys.modules
+            # under two names. Running a module that the package's own __init__
+            # imports does exactly that -- `python -m smauglab.transforms.synthseg
+            # .transforms` imports the package (registering) and then runpy executes
+            # the same file again as __main__ -- which used to make the module's smoke
+            # test unrunnable. Python warns about the situation on its own account
+            # ("may result in unpredictable behaviour"); this is the registry's half.
+            #
+            # The first entry wins, so lookups keep returning the class every importer
+            # holds a reference to. It warns rather than passing quietly because the
+            # second copy is a genuinely different object: `isinstance` between the two
+            # is False, which is the trap the duplicate module sets.
+            warnings.warn(
+                f"{entry.backend.value} augmentation {entry.name!r} was registered twice from "
+                f"{site[0]}, as {clash.cls.__module__!r} and {entry.cls.__module__!r}; keeping the "
+                "first. That file is in sys.modules under two names, so its classes exist twice over "
+                "and isinstance between the copies is False. Import the module instead of running it "
+                "as a script if that matters.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return clash
         raise RegistryError(f"{entry.backend.value} augmentation {entry.name!r} is already registered (as {clash.cls.__module__}).")
 
     if _state["check_position"] and entry.name not in PIPELINE_ORDER[entry.backend]:

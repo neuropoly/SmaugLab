@@ -12,8 +12,16 @@ it needs and tears it down again.
 
 from __future__ import annotations
 
+import importlib.util
 import inspect
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
+
+import pytest
 
 from smauglab import registry
 from smauglab.registry import (
@@ -125,6 +133,116 @@ class TestRegistration(RegistryTestCase):
 
         registry.register(aug_id=AugId.SYNTHSEG, backend=Backend.GPU, group=AugType.TA, forwards_to=target)(RandomForwardingGPU)
         self.assertIn("n_labels", registry.accepted_params(registry.get("RandomForwardingGPU")))
+
+
+#: A registering module, written to a temp file so it can be executed twice.
+REGISTERING_MODULE = '''from smauglab.registry import AugId, AugType, Backend, register
+
+
+@register(aug_id=AugId.SCHARR, backend=Backend.GPU, group=AugType.TA)
+class RandomTwiceGPU:
+    """A class statement that some tests execute more than once."""
+
+    def __init__(self, p: float = 1.0):
+        pass
+'''
+
+
+class TestOneClassStatementReachedTwice(RegistryTestCase):
+    """A file in sys.modules under two names registers its classes twice.
+
+    `python -m smauglab.transforms.synthseg.transforms` is the case that matters: the
+    package's `__init__` imports that module, then runpy executes the same file again
+    as `__main__`. Both copies run `@register`, and the second used to be fatal, so
+    the module's own smoke test could not run. Forgiving it has to stay narrow --
+    two *different* classes claiming one name is still a bug worth refusing.
+    """
+
+    def load(self, path: Path, name: str):
+        """Import a file under a chosen module name, as runpy effectively does."""
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        # inspect.getsourcelines reaches the source through sys.modules, so the entry
+        # has to exist before the decorators run.
+        sys.modules[name] = module
+        self.addCleanup(sys.modules.pop, name, None)
+        spec.loader.exec_module(module)
+        return module
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def write(self, filename: str) -> Path:
+        path = self.tmp / filename
+        path.write_text(REGISTERING_MODULE)
+        return path
+
+    def test_the_same_file_under_two_names_keeps_the_first_class(self):
+        module = self.write("once.py")
+        first = self.load(module, "probe_first")
+
+        with self.assertWarns(RuntimeWarning) as caught:
+            second = self.load(module, "probe_second")
+
+        self.assertIsNot(first.RandomTwiceGPU, second.RandomTwiceGPU, "two executions, two class objects")
+        self.assertIs(
+            registry.get("RandomTwiceGPU", Backend.GPU).cls,
+            first.RandomTwiceGPU,
+            "the entry every importer already holds must survive",
+        )
+        self.assertIn("registered twice", str(caught.warning))
+        self.assertIn("probe_second", str(caught.warning))
+
+    def test_an_identical_class_statement_in_another_file_still_clashes(self):
+        """The discriminator is the definition site, not the name.
+
+        Both classes here have real source and the same `__qualname__`, so a check on
+        the name alone would wave this through -- and it is the genuine collision the
+        guard exists for.
+        """
+        self.load(self.write("here.py"), "probe_here")
+
+        with self.assertRaises(RegistryError) as caught:
+            self.load(self.write("there.py"), "probe_there")
+        self.assertIn("already registered", str(caught.exception))
+
+    def test_registering_the_identical_class_object_twice_is_a_no_op(self):
+        cls = make_transform("RandomThingGPU", p=1.0)
+        decorate = registry.register(aug_id=AugId.SCHARR, backend=Backend.GPU, group=AugType.TA)
+
+        decorate(cls)
+        decorate(cls)
+
+        self.assertIs(registry.get("RandomThingGPU", Backend.GPU).cls, cls)
+
+
+# Marked at class level, which is the form pytest honours on unittest.TestCase
+# subclasses -- same reason as TestWheelContents in test_packaging.py.
+@pytest.mark.slow
+class TestSmokeTestsAreRunnable(unittest.TestCase):
+    """The commands `smauglab/transforms/synthseg/README.md` advertises must work.
+
+    A subprocess, because the failure was `python -m` loading a module twice, which
+    cannot be reproduced in a process that has already imported it. Slow: it pays for
+    a fresh torch and kornia import, about six seconds.
+    """
+
+    MODULES = ("smauglab.transforms.synthseg.generator", "smauglab.transforms.synthseg.transforms")
+
+    def test_the_synthseg_modules_run_as_scripts(self):
+        for module in self.MODULES:
+            with self.subTest(module=module):
+                result = subprocess.run(
+                    [sys.executable, "-W", "ignore", "-m", module],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    cwd=Path(__file__).resolve().parent.parent,
+                )
+                self.assertEqual(result.returncode, 0, f"{module} exited {result.returncode}:\n{result.stderr[-2000:]}")
+                self.assertIn("OK", result.stdout)
 
 
 class TestLookup(RegistryTestCase):
