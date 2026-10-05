@@ -14,8 +14,10 @@ from smauglab.transforms.rng import shared_choice
 
 
 def _choose_region_mode(
-    p_in: float, p_out: float, seg_mask: torch.Tensor | None
-) -> str:  # noqa: ARG001 -- seg_mask kept for signature symmetry with _apply_region_mode
+    p_in: float,
+    p_out: float,
+    seg_mask: torch.Tensor | None,  # noqa: ARG001
+) -> str:
     """Sample where to apply the transform: 'in', 'out', or 'all'.
 
     - p_in, p_out are probabilities in [0,1].
