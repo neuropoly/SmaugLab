@@ -13,7 +13,13 @@ it needs and tears it down again.
 from __future__ import annotations
 
 import inspect
+import re
+import subprocess
+import sys
 import unittest
+from pathlib import Path
+
+import pytest
 
 from smauglab import registry
 from smauglab.registry import (
@@ -125,6 +131,71 @@ class TestRegistration(RegistryTestCase):
 
         registry.register(aug_id=AugId.SYNTHSEG, backend=Backend.GPU, group=AugType.TA, forwards_to=target)(RandomForwardingGPU)
         self.assertIn("n_labels", registry.accepted_params(registry.get("RandomForwardingGPU")))
+
+
+# Marked at class level, which is the form pytest honours on unittest.TestCase
+# subclasses -- same reason as TestWheelContents in test_packaging.py.
+@pytest.mark.slow
+class TestPackagesWithARegisteringModuleRunAsPackages(unittest.TestCase):
+    """A registering module cannot be the target of `python -m`, so its package is.
+
+    `__init__.py` imports the module, so `python -m <that module>` puts its file in
+    `sys.modules` twice -- under its own name and as `__main__` -- and executes it
+    twice. `@register` then fires for a class that is already registered, and
+    `register_entry` rejects it. The smoke test in
+    `smauglab/transforms/synthseg/transforms.py` was unreachable for that reason until
+    it moved behind `smauglab/transforms/synthseg/__main__.py`.
+
+    Subprocesses, because neither half can be reproduced in a process that has already
+    imported the module. Slow: each pays for a fresh torch and kornia import.
+    """
+
+    PACKAGE = "smauglab.transforms.synthseg"
+    REPO = Path(__file__).resolve().parent.parent
+
+    def run_module(self, target: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-W", "ignore", "-m", target],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=self.REPO,
+        )
+
+    def test_the_package_runs_both_smoke_tests(self):
+        """What `smauglab/transforms/synthseg/README.md` tells people to run."""
+        result = self.run_module(self.PACKAGE)
+
+        self.assertEqual(result.returncode, 0, f"exited {result.returncode}:\n{result.stderr[-2000:]}")
+        for expected in ("--- generator", "--- transforms", "OK"):
+            self.assertIn(expected, result.stdout)
+
+    def test_the_registering_module_is_not_runnable_on_its_own(self):
+        """The reason `__main__.py` exists, pinned so the README stays true.
+
+        If this ever passes, `python -m ...transforms` has become a working
+        invocation and the README's explanation of why to run the package is stale.
+        """
+        result = self.run_module(f"{self.PACKAGE}.transforms")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already registered", result.stderr)
+
+    def test_no_module_is_left_with_its_own_main_block(self):
+        """A `__main__` block here would be unreachable or unreliable, so there are none.
+
+        Anything under a package whose `__init__` imports it has the duplicate-module
+        problem, whether or not it registers -- for a non-registering module it is
+        silent rather than fatal, which is worse.
+        """
+        package_dir = self.REPO / Path(*self.PACKAGE.split("."))
+        # A top-level statement, not any mention of one: both modules explain in a
+        # docstring why they do not have the block.
+        has_block = re.compile(r'^if __name__ == "__main__":', re.MULTILINE)
+        offenders = [
+            path.name for path in sorted(package_dir.glob("*.py")) if path.name != "__main__.py" and has_block.search(path.read_text())
+        ]
+        self.assertEqual(offenders, [], f"move these smoke tests into {self.PACKAGE}.__main__: {offenders}")
 
 
 class TestLookup(RegistryTestCase):

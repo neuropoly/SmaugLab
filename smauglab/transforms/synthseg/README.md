@@ -219,9 +219,15 @@ full pipeline with a deformed label map.
 
 ## Smoke test
 
-Both modules are runnable and self-contained (no data files, CPU-friendly):
+Both modules are checked by one self-contained run (no data files, CPU-friendly):
 
 ```bash
-python -m smauglab.transforms.synthseg.generator
-python -m smauglab.transforms.synthseg.transforms
+python -m smauglab.transforms.synthseg
 ```
+
+The **package**, not the modules. `python -m smauglab.transforms.synthseg.transforms`
+puts that file in `sys.modules` twice — once under its own name, because `__init__.py`
+imports it, and once as `__main__` — and so executes it twice. Python warns about that
+on its own account, and the augmentation registry rejects it outright, because
+`@register` fires for a class that is already there. Running the package imports each
+module exactly once.
