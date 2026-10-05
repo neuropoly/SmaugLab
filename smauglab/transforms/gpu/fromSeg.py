@@ -541,35 +541,6 @@ class RandomPaletteGPU(ImageOnlyTransform):
         return out
 
 
-def _minmax_norm(x: torch.Tensor, eps: float = 1e-8) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Per-sample min-max normalise to [0, 1]. Returns (normed, min, max)."""
-    B = x.shape[0]
-    x_flat = x.view(B, -1)
-    vmin = x_flat.min(dim=1).values.view(B, 1, 1, 1, 1)
-    vmax = x_flat.max(dim=1).values.view(B, 1, 1, 1, 1)
-    return (x - vmin) / (vmax - vmin + eps), vmin, vmax
-
-
-def _minmax_denorm(x_norm: torch.Tensor, vmin: torch.Tensor, vmax: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
-    return x_norm * (vmax - vmin + eps) + vmin
-
-
-def _zscore_renorm(x: torch.Tensor, bg_threshold: float = 1e-6) -> torch.Tensor:
-    """Per-sample foreground-masked z-score. Mirrors nnUNet's use_mask_for_norm=True.
-
-    Background voxels (abs ≈ 0, zeroed by nnUNet masking) stay at 0.
-    Eliminates the train/inference distribution mismatch that would occur
-    because nnUNet always z-scores at inference time.
-    """
-    fg = x.abs() > bg_threshold
-    fg_f = fg.float()
-    n = fg_f.sum(dim=(2, 3, 4), keepdim=True).clamp(min=1)
-    mean = (x * fg_f).sum(dim=(2, 3, 4), keepdim=True) / n
-    var = ((x - mean).pow(2) * fg_f).sum(dim=(2, 3, 4), keepdim=True) / n
-    std = var.sqrt().clamp(min=1e-8)
-    return torch.where(fg, (x - mean) / std, torch.zeros_like(x))
-
-
 def seg_region_masks(seg: torch.Tensor, max_regions: int | None = None) -> torch.Tensor:
     """Per-region binary masks, from either segmentation layout.
 

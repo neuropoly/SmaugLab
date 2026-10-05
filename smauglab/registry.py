@@ -35,7 +35,6 @@ __all__ = [
     "InvalidConfigError",
     "RegistryError",
     "UnknownAugmentationError",
-    "UnknownParameterError",
     "accepted_params",
     "entries",
     "get",
@@ -139,10 +138,6 @@ class UnknownAugmentationError(RegistryError, KeyError):
 
     def __str__(self) -> str:  # KeyError.__str__ would repr() the message
         return self.args[0] if self.args else ""
-
-
-class UnknownParameterError(RegistryError, TypeError):
-    """A config passed a parameter the augmentation's constructor does not accept."""
 
 
 class InvalidConfigError(RegistryError, ValueError):

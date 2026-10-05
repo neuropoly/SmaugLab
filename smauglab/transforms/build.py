@@ -60,7 +60,7 @@ def build_transforms(
     reorders a pipeline the moment someone tidies a config. `OrderSource.CONFIG` asks
     for key order explicitly -- see `pipeline.order` in smauglab/config.py.
     """
-    problems = validate_section(section, backend, source=source)
+    problems = validate_section(section, backend)
     if problems:
         raise InvalidConfigError(source, problems)
 

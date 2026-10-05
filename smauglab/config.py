@@ -68,7 +68,7 @@ class OrderSource(str, Enum):
 NON_AUGMENTATION_KEYS = ("_",)
 
 
-def validate_section(section: dict, backend: Backend, *, source: str = "<config>") -> list[str]:
+def validate_section(section: dict, backend: Backend) -> list[str]:
     """Return every problem in one backend's section. Empty means it will build."""
     problems: list[str] = []
     for name, params in section.items():
@@ -88,7 +88,6 @@ def validate_section(section: dict, backend: Backend, *, source: str = "<config>
         missing = registry.required_params(entry) - set(params) - set(entry.context_params)
         if missing:
             problems.append(f"{name}: missing required parameter(s) {', '.join(sorted(missing))}")
-    _ = source
     return problems
 
 
@@ -206,7 +205,7 @@ class SmaugConfig:
             if not isinstance(section, dict):
                 problems.append(f"{backend.value}: expected an object of augmentation blocks")
                 continue
-            problems.extend(f"{backend.value}.{p}" for p in validate_section(section, backend, source=self.source))
+            problems.extend(f"{backend.value}.{p}" for p in validate_section(section, backend))
 
         if problems:
             raise InvalidConfigError(self.source, problems)
@@ -300,76 +299,6 @@ def file_hash(path: str | Path, algo: str = "sha256") -> str:
     return digest.hexdigest()
 
 
-def registered_names(backend: Backend) -> list[str]:
-    """Convenience re-export so callers need not import the registry directly."""
-    return registry.names(backend)
-
-
-# --- config manipulation ----------------------------------------------------------
-#
-# Upstreamed from segtransferaug/utils/smauglab_config.py, which drove the sweep
-# scripts. Three module-level absolute paths went away (the packaged config is
-# resolved through importlib.resources now), and the hardcoded AUG2GROUP table
-# became the registry's `group` field, so a new augmentation no longer has to be
-# added to a dict in a different repository before the sweeps can see it.
-
-
-def default_config_path() -> Path:
-    """The packaged default GPU config."""
-    import importlib.resources
-
-    from smauglab import configs
-
-    return Path(str(importlib.resources.files(configs))) / "transform_params_gpu.json"
-
-
-def load_json(path: str | Path) -> dict:
-    return json.loads(Path(path).read_text())
-
-
-def transform_names(payload: dict, backend: Backend = Backend.GPU) -> list[str]:
-    """The augmentations a config actually names."""
-    return [k for k in payload.get(backend.value, {}) if not k.startswith("_")]
-
-
-def single_transform_config(name: str, payload: dict, backend: Backend = Backend.GPU) -> dict:
-    """A copy of the config with only one augmentation left enabled."""
-    registry.get(name, backend)  # raises with a suggestion if the name is wrong
-    out = copy.deepcopy(payload)
-    section = out.get(backend.value, {})
-    out[backend.value] = {k: v for k, v in section.items() if k == name or k.startswith("_")}
-    return out
-
-
-def drop_zero_probability(payload: dict, backend: Backend = Backend.GPU) -> dict:
-    """Remove augmentations that would never fire, so the config says what it does."""
-    out = copy.deepcopy(payload)
-    section = out.get(backend.value, {})
-    out[backend.value] = {k: v for k, v in section.items() if k.startswith("_") or v.get("p", 1.0) != 0}
-    return out
-
-
-def filter_by_group(payload: dict, group, backend: Backend = Backend.GPU) -> dict:
-    """Keep only the augmentations in one GEO/GE/TA group."""
-    keep = set(registry.names(backend, group=group))
-    out = copy.deepcopy(payload)
-    section = out.get(backend.value, {})
-    out[backend.value] = {k: v for k, v in section.items() if k in keep or k.startswith("_")}
-    return out
-
-
-def set_probabilities(payload: dict, p: float, group=None, backend: Backend = Backend.GPU) -> dict:
-    """Set `p` on every augmentation, or only on one group."""
-    targets = set(registry.names(backend, group=group)) if group is not None else None
-    out = copy.deepcopy(payload)
-    for name, block in out.get(backend.value, {}).items():
-        if name.startswith("_") or not isinstance(block, dict):
-            continue
-        if targets is None or name in targets:
-            block["p"] = p
-    return out
-
-
 def write_temp_config(payload: dict, directory: str | Path | None = None) -> str:
     """Materialise a config so it can be handed to a subprocess by path.
 
@@ -383,17 +312,3 @@ def write_temp_config(payload: dict, directory: str | Path | None = None) -> str
     path = target_dir / f"transform_params_{config_hash(payload)[:8]}.json"
     path.write_text(json.dumps(payload, indent=4) + "\n")
     return str(path)
-
-
-def remove_temp_configs(directory: str | Path | None = None) -> int:
-    """Delete configs written by `write_temp_config`. Returns how many went."""
-    import tempfile
-
-    target_dir = Path(directory) if directory else Path(tempfile.gettempdir()) / "smauglab_configs"
-    if not target_dir.is_dir():
-        return 0
-    removed = 0
-    for path in target_dir.glob("transform_params_*.json"):
-        path.unlink()
-        removed += 1
-    return removed
