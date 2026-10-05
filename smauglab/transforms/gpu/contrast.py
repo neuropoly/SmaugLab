@@ -9,7 +9,7 @@ from torch import Tensor
 from torch.nn import functional as F
 
 from smauglab.registry import AugId, AugType, Backend, register
-from smauglab.transforms.gpu.base import ImageOnlyTransform
+from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.kernels import depthwise_conv3d, gaussian_kernel3d, laplace_kernel, scharr_kernels, stacked_scharr_kernels
 from smauglab.transforms.rng import shared_choice
 
@@ -362,7 +362,7 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
         kernel = self.get_kernel(device=input.device)
 
         # Load segmentation
-        seg_mask = params.get("seg")
+        seg_mask = segmentation_from(params)
 
         # Apply convolution
         for c in self.apply_to_channel:
@@ -776,7 +776,7 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
         # the palette/domain-transfer transforms already clone; these did not, so
         # `batch["data"]` was destroyed under any caller holding a reference.
         input = input.clone()
-        seg_mask = params.get("seg")
+        seg_mask = segmentation_from(params)
         for c in self.apply_to_channel:
             if self.same_on_batch:
                 std = torch.rand(1, device=input.device, dtype=input.dtype) * self.std
@@ -849,7 +849,7 @@ class RandomBrightnessGPU(ImageOnlyTransform):
         # the palette/domain-transfer transforms already clone; these did not, so
         # `batch["data"]` was destroyed under any caller holding a reference.
         input = input.clone()
-        seg_mask = params.get("seg")
+        seg_mask = segmentation_from(params)
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # [N, ...spatial...]
             orig = channel_data.clone()
@@ -925,7 +925,7 @@ class _RandomGammaBaseGPU(ImageOnlyTransform):
         # the palette/domain-transfer transforms already clone; these did not, so
         # `batch["data"]` was destroyed under any caller holding a reference.
         input = input.clone()
-        seg_mask = params.get("seg")
+        seg_mask = segmentation_from(params)
         for c in self.apply_to_channel:
             # [N, ...spatial...]
             channel_data = -input[:, c] if self.invert_image else input[:, c]
@@ -1108,7 +1108,7 @@ class RandomContrastGPU(ImageOnlyTransform):
         # the palette/domain-transfer transforms already clone; these did not, so
         # `batch["data"]` was destroyed under any caller holding a reference.
         input = input.clone()
-        seg_mask = params.get("seg")
+        seg_mask = segmentation_from(params)
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # [N, ...spatial...]
             orig = channel_data.clone()
@@ -1188,7 +1188,7 @@ class _RandomFunctionBaseGPU(ImageOnlyTransform):
         # the palette/domain-transfer transforms already clone; these did not, so
         # `batch["data"]` was destroyed under any caller holding a reference.
         input = input.clone()
-        seg_mask = params.get("seg")
+        seg_mask = segmentation_from(params)
         for c in self.apply_to_channel:
             x = input[:, c]  # shape [N, ...spatial...]
             orig = x.clone()
@@ -1378,7 +1378,7 @@ class RandomInverseGPU(ImageOnlyTransform):
         # the palette/domain-transfer transforms already clone; these did not, so
         # `batch["data"]` was destroyed under any caller holding a reference.
         input = input.clone()
-        seg_mask = params.get("seg")
+        seg_mask = segmentation_from(params)
         for c in self.apply_to_channel:
             # The per-sample reductions -- max, and the two retain_stats passes -- are
             # the expensive part and they are independent across samples, so they run
@@ -1474,7 +1474,7 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         # the palette/domain-transfer transforms already clone; these did not, so
         # `batch["data"]` was destroyed under any caller holding a reference.
         input = input.clone()
-        seg_mask = params.get("seg")
+        seg_mask = segmentation_from(params)
         for c in self.apply_to_channel:
             # `.clone()`, not the bare `input[:, c]` view this used to take: the loop
             # below assigns into `channel_data[b]`, which through a view writes straight
@@ -1722,7 +1722,7 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
         dtype = input.dtype
 
         coeffs = self._sample_coeffs(batch_size, device, dtype, dim)  # (n_coeffs, B)
-        seg_mask = params.get("seg")
+        seg_mask = segmentation_from(params)
 
         # Evaluate the polynomial as a separable contraction rather than a term loop.
         #
@@ -1863,7 +1863,7 @@ class RandomClampGPU(ImageOnlyTransform):
         # the palette/domain-transfer transforms already clone; these did not, so
         # `batch["data"]` was destroyed under any caller holding a reference.
         input = input.clone()
-        seg_mask = params.get("seg")
+        seg_mask = segmentation_from(params)
         for c in self.apply_to_channel:
             channel_data = input[:, c]  # [N, ...spatial...]
             orig = channel_data.clone()
@@ -1943,7 +1943,7 @@ class ZscoreNormalizationGPU(ImageOnlyTransform):
         # the palette/domain-transfer transforms already clone; these did not, so
         # `batch["data"]` was destroyed under any caller holding a reference.
         input = input.clone()
-        seg_mask = params.get("seg")
+        seg_mask = segmentation_from(params)
         for c in self.apply_to_channel:
             _check_channel(self, c, input.shape[1])
             channel = input[:, c]

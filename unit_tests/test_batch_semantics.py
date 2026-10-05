@@ -6,8 +6,8 @@ kornia's `_AugmentationBase.transform_inputs` calls
 
 when `0 < to_apply.sum() < B` -- the image is sliced down to the rows that drew
 below `p`, but `params` is handed over untouched. `AugmentationSequentialOpsCustom`
-injects the segmentation into exactly those `params`, so a consumer reading
-`params["seg"]` used to get a B-row mask alongside a B'-row image.
+injects the segmentation into exactly those `params`, so a consumer reading it
+used to get a B-row mask alongside a B'-row image.
 
 That is a shape error for anything that broadcasts (`RandomBrightnessGPU` with
 `in_seg`), and something worse for anything that loops `for b in range(N)` with
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import torch
 
-from smauglab.transforms.gpu.base import AugmentationSequentialCustom
+from smauglab.transforms.gpu.base import AugmentationSequentialCustom, SegmentationRef, segmentation_from
 from smauglab.transforms.gpu.contrast import RandomBrightnessGPU
 from unit_tests.helpers import SmaugLabTestCase
 
@@ -66,8 +66,8 @@ class TestPartialBatchSelection(SmaugLabTestCase):
         Checking the *output* cannot separate the two cases: the transforms that
         loop over the batch also touch voxels outside the segmentation for
         unrelated reasons. So record what `apply_transform` was actually handed
-        and compare it to the rows kornia selected -- row `i` of `params["seg"]`
-        must be the segmentation of the `i`-th selected sample, not of the `i`-th
+        and compare it to the rows kornia selected -- row `i` of the injected
+        segmentation must be that of the `i`-th selected sample, not of the `i`-th
         sample of the full batch.
         """
         image, seg = torch.rand(*SHAPE), batched_seg()
@@ -75,7 +75,7 @@ class TestPartialBatchSelection(SmaugLabTestCase):
 
         class SpyBrightness(RandomBrightnessGPU):
             def apply_transform(self, input, params, flags, transform=None):
-                seen.append((input.shape[0], params["seg"].detach().clone()))
+                seen.append((input.shape[0], segmentation_from(params).detach().clone()))
                 return super().apply_transform(input, params, flags, transform)
 
         torch.manual_seed(0)
@@ -94,6 +94,38 @@ class TestPartialBatchSelection(SmaugLabTestCase):
                     bool(torch.equal(injected[i], seg[b])),
                     f"row {i} of the injected seg is not sample {b}'s segmentation",
                 )
+
+    def test_the_pipeline_injects_a_reference_not_a_copy(self):
+        """What the params dict actually holds, which is the point of the class.
+
+        kornia deep-copies the params for every data key of every module, and
+        `deepcopy_dict` copies anything that is a `Tensor`. A `SegmentationRef`
+        is not one, so the volume survives the round trip by identity.
+        """
+        image, seg = torch.rand(*SHAPE), batched_seg()
+        seen: list[object] = []
+
+        class SpyBrightness(RandomBrightnessGPU):
+            def apply_transform(self, input, params, flags, transform=None):
+                seen.append(params["seg"])
+                return super().apply_transform(input, params, flags, transform)
+
+        torch.manual_seed(0)
+        pipeline = self._pipeline(SpyBrightness(p=1.0, in_seg=1.0, same_on_batch=False))
+        pipeline(image.clone(), seg.clone())
+
+        self.assertTrue(seen, "apply_transform was never called")
+        self.assertIsInstance(seen[0], SegmentationRef)
+        # p=1.0 selects every row, so no slicing is needed and the very tensor the
+        # caller handed in comes back out.
+        self.assertIs(segmentation_from({"seg": seen[0]}), seen[0]._mask)
+
+    def test_the_accessor_still_takes_a_plain_tensor(self):
+        """A direct `apply_transform(..., {"seg": tensor})` call is a supported caller."""
+        seg = batched_seg()
+        self.assertIs(segmentation_from({"seg": seg}), seg)
+        self.assertIsNone(segmentation_from({}))
+        self.assertIsNone(segmentation_from(None))
 
 
 class TestSameOnBatchIsConfigurable(SmaugLabTestCase):
