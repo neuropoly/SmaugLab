@@ -221,8 +221,14 @@ class SynthSegTransformsGPU(nn.Module):
         return onehot
 
 
-if __name__ == "__main__":
-    # Smoke test mirroring the generator's, exercising both wrappers.
+def smoke_test() -> None:
+    """Check on a synthetic label map, mirroring the generator's and exercising both wrappers.
+
+    Run through the package: `python -m smauglab.transforms.synthseg`. It cannot be an
+    `if __name__ == "__main__"` block -- `python -m smauglab.transforms.synthseg.transforms`
+    executes this file a second time under the name `__main__`, so `@register` fires
+    twice and the duplicate-name guard rejects the second. See `__main__.py`.
+    """
     torch.manual_seed(0)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -246,4 +252,3 @@ if __name__ == "__main__":
     out = t.apply_transform(img.clone().to(device), {"seg": labels.to(device)}, {})
     print("imageonly", tuple(out.shape), "range", (round(float(out.min()), 3), round(float(out.max()), 3)))
     assert out.shape == img.shape and not torch.isnan(out).any()
-    print("OK")
