@@ -171,7 +171,11 @@ traced back to the file that produced it.
 | shipped config | config hash | paper setup |
 | --- | --- | --- |
 | `smauglab/configs/transform_params_one-sequence-to-segment-them-all.json` | `c69b9872` | Ours |
-| `smauglab/configs/transform_params_paper-synthseg.json` | `0d5d802f` | SynthSeg |
+| `smauglab/configs/transform_params_paper-synthseg.json` | `580beb13` | SynthSeg |
+
+The SynthSeg config hashed to `0d5d802f` until `em_merge_prob: 0.0` was added to it;
+the two files generate identically, so a run folder named `...-c-0d5d802f` is the same
+setup.
 
 Despite the name, "SynthSeg" is not "Ours plus SynthSeg": it is Ours with all six
 transfer augmentations (`RandomScharrGPU`, `RandomUnsharpMaskGPU`, `RandomRandConvGPU`,

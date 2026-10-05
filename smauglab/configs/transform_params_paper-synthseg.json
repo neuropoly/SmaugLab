@@ -69,7 +69,8 @@
             "em_background_label": 0,
             "em_n_iters": 20,
             "em_max_fit_voxels": 100000,
-            "em_same_on_batch": false
+            "em_same_on_batch": false,
+            "em_merge_prob": 0.0
         },
         "RandomInverseGPU": {
             "retain_stats": true,
