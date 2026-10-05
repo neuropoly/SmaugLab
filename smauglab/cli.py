@@ -53,8 +53,10 @@ def readme_with_matrix(text: str) -> str:
         return f"{head}{matrix_block()}{tail}"
     section = (
         "\n## Available augmentations\n\n"
-        "Which augmentations exist, and which backends implement each one. An empty cell\n"
-        "means no implementation on that backend yet. Regenerate with `smauglab matrix --write`.\n\n" + matrix_block() + "\n"
+        "Which augmentations exist, and which of the two backends implements each one. An empty\n"
+        "cell means no implementation on that backend yet. MONAI training draws from the GPU\n"
+        'column -- see "Run Monai training with SmaugLab augmentations" above. Regenerate with\n'
+        "`smauglab matrix --write`.\n\n" + matrix_block() + "\n"
     )
     return text.rstrip("\n") + "\n" + section
 
@@ -229,7 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("list", help="registered augmentations, in pipeline order")
-    p.add_argument("--backend", choices=["gpu", "cpu", "monai"])
+    p.add_argument("--backend", choices=["gpu", "cpu"])
     p.add_argument("--group", choices=["geo", "ge", "ta"])
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_list)

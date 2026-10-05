@@ -306,12 +306,11 @@ class TestMatrix(RegistryTestCase):
         row = registry.matrix()[AugId.SCHARR]
         self.assertEqual(row[Backend.GPU].name, "RandomScharrGPU")
         self.assertEqual(row[Backend.CPU].name, "ScharrConvTransform")
-        self.assertIsNone(row[Backend.MONAI], "no MONAI implementations exist yet")
 
     def test_markdown_render_marks_the_gap(self):
         registry.register(aug_id=AugId.SCHARR, backend=Backend.GPU, group=AugType.TA)(make_transform("RandomScharrGPU", p=1.0))
         rendered = registry.render_matrix("md")
-        self.assertIn("| scharr | TA | `RandomScharrGPU` | — | — |", rendered)
+        self.assertIn("| scharr | TA | `RandomScharrGPU` | — |", rendered.splitlines())
 
     def test_unknown_format_is_rejected(self):
         with self.assertRaises(ValueError):
