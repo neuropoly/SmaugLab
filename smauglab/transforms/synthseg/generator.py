@@ -395,8 +395,15 @@ class SynthSegGenerator(nn.Module):
         return arr
 
 
-if __name__ == "__main__":
-    # Minimal self-contained smoke test on a synthetic label map (CPU-friendly).
+def smoke_test() -> None:
+    """Minimal self-contained check on a synthetic label map (CPU-friendly).
+
+    Run through the package: `python -m smauglab.transforms.synthseg`. Not an
+    `if __name__ == "__main__"` block, because `python -m` on a module that this
+    package's `__init__` already imports executes the file a second time under the
+    name `__main__` -- which Python warns about and which breaks outright for the
+    registering module next door. See `__main__.py`.
+    """
     torch.manual_seed(0)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -419,4 +426,3 @@ if __name__ == "__main__":
     assert image.shape[0] == B and image.shape[1] == 1
     assert out_labels.shape[2:] == image.shape[2:]
     assert not torch.isnan(image).any(), "NaNs in generated image"
-    print("OK")

@@ -20,7 +20,6 @@ REPO = Path(__file__).resolve().parent.parent
 # A *tracked* config. Most of smauglab/configs is gitignored (per-experiment
 # sweeps), so naming one of those makes the test pass locally and fail in CI.
 DEFAULT_GPU = REPO / "smauglab" / "configs" / "transform_params_gpu.json"
-LEGACY = REPO / "unit_tests" / "fixtures" / "legacy_configs" / "configs" / "transform_params_gpu.json"
 
 
 def run(*argv: str) -> tuple[int, str]:
@@ -106,10 +105,17 @@ class TestValidate(unittest.TestCase):
         self.assertIn("RandomScharrGPU", out)
         self.assertIn("'probability' -> p", out)
 
-    def test_a_legacy_config_is_rejected_and_points_at_migrate(self):
-        code, out = run("validate", str(LEGACY))
+    def test_a_flat_config_is_rejected_and_says_what_to_do(self):
+        """Pre-registry configs were flat; the two namespaces overlapped, so a key
+        alone cannot say which builder it was meant for."""
+        payload = {"ScharrTransform": {"p": 0.1}, "GaussianBlurTransform": {"p": 0.2}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flat.json"
+            path.write_text(json.dumps(payload))
+            code, out = run("validate", str(path))
         self.assertEqual(code, 1)
-        self.assertIn("migration/", out)
+        self.assertIn("no GPU or CPU section", out)
+        self.assertIn("'GPU' or 'CPU' section", out)
 
 
 class TestTemplateAndHash(unittest.TestCase):

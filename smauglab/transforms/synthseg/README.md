@@ -126,16 +126,30 @@ image, label = gen(sparse_label_map, image=real_image)   # real_image drives the
 device, and call `transforms(data, target) → (image, target)`. The `data` tensor
 is ignored; `target` is the label map.
 
+The driver reads **its own** schema: `SynthSegGenerator` parameters, either flat or
+under a `"SynthSeg"` key, plus an optional top-level `"probability"`. That is not the
+sectioned `GPU`/`CPU` schema `AugTransformsGPU` takes — see section 3 for that one.
+
 ```python
-import importlib, torch
-import smauglab.configs as configs
+import json, torch
+from pathlib import Path
 from smauglab.transforms.synthseg import SynthSegTransformsGPU
 
-cfg = importlib.resources.files(configs) / "synthseg_params.json"
-synth = SynthSegTransformsGPU(json_path=str(cfg)).to("cuda")
+Path("synthseg_params.json").write_text(json.dumps({
+    "SynthSeg": {"probability": 1.0, "n_channels": 1, "bias_field_std": 0.7,
+                 "gamma_std": 0.5, "randomise_res": True, "em_label_completion": False}
+}))
+synth = SynthSegTransformsGPU(json_path="synthseg_params.json").to("cuda")
 
 # data: (B, 1, D, H, W) image (ignored), target: (B, 1, D, H, W) label map
 image, label = synth(data, target)   # image is fully synthetic, label is deformed/aligned
+```
+
+`SynthSegGenerator`'s defaults are already the paper's values, so the faithful setup
+needs no file at all; `params=` overrides whichever ones you want to change:
+
+```python
+synth = SynthSegTransformsGPU(params={"probability": 1.0, "bias_field_std": 0.7}).to("cuda")
 ```
 
 Or directly with the module API:
@@ -175,30 +189,45 @@ image, seg = aug(image, seg)
 > if you need it back on the GPU. The full-pipeline `SynthSegTransformsGPU` driver
 > (section 1) does **not** go through kornia's sequential and is unaffected.
 
-### 3. Via a `SynthSeg` key in an `AugTransformsGPU` config
+### 3. By naming `RandomSynthSegGPU` in an `AugTransformsGPU` config
 
-`AugTransformsGPU` recognises a top-level `"SynthSeg"` config block and appends a
-`RandomSynthSegGPU` built from it (mapping `"probability"` → `p`). This lets any
-harness that already constructs `AugTransformsGPU(json_path)` and calls
-`augmentor(img, seg)` use SynthSeg with no code changes:
+`RandomSynthSegGPU` is a registered augmentation, so naming it in the `GPU` section
+is all it takes. Any harness that already constructs `AugTransformsGPU(json_path)`
+and calls `augmentor(img, seg)` then gets SynthSeg with no code changes:
 
 ```jsonc
-{ "SynthSeg": { "probability": 1.0, "n_channels": 1, "bias_field_std": 0.7,
-                "gamma_std": 0.5, "randomise_res": true, "em_label_completion": false } }
+{ "GPU": { "RandomSynthSegGPU": { "p": 1.0, "n_channels": 1, "bias_field_std": 0.7,
+                                  "gamma_std": 0.5, "randomise_res": true,
+                                  "em_label_completion": false } } }
 ```
 
+The key is the class name and the probability parameter is `p`. A top-level
+`"SynthSeg"` block with a `"probability"` inside it was the pre-registry spelling and
+is rejected now, with both problems reported at once. `smauglab show RandomSynthSegGPU`
+lists what the block accepts; the shipped `transform_params_paper-synthseg.json` is
+this setup in full, alongside the rest of the paper's pipeline.
+
 Because this goes through an `ImageOnlyTransform`, it is **intensity-only**: the
-image is synthesised and the segmentation is returned unchanged. The spatial keys
-in the block (`flipping`, `scaling_bounds`, `rotation_bounds`, `nonlin_std`, ...)
-are therefore inert in this path — add an `AffineTransform`/`FlipTransform` block
-(which run *before* SynthSeg) for geometry, or use `SynthSegTransformsGPU`
-(section 1) for the full pipeline with a deformed label map.
+image is synthesised and the segmentation is returned unchanged. The transform forces
+`apply_affine=False`, `apply_nonlinear=False`, `flipping=False` and
+`output_shape=None` on the generator, so the spatial keys behave differently from
+section 1 — `scaling_bounds`, `rotation_bounds` and `nonlin_std` are accepted but
+inert, while `flipping` and `output_shape` are rejected rather than silently
+overridden. For geometry, add a `RandomAffineGPU`/`RandomFlipTransformGPU` block
+(which run *before* SynthSeg), or use `SynthSegTransformsGPU` (section 1) for the
+full pipeline with a deformed label map.
 
 ## Smoke test
 
-Both modules are runnable and self-contained (no data files, CPU-friendly):
+Both modules are checked by one self-contained run (no data files, CPU-friendly):
 
 ```bash
-python -m smauglab.transforms.synthseg.generator
-python -m smauglab.transforms.synthseg.transforms
+python -m smauglab.transforms.synthseg
 ```
+
+The **package**, not the modules. `python -m smauglab.transforms.synthseg.transforms`
+puts that file in `sys.modules` twice — once under its own name, because `__init__.py`
+imports it, and once as `__main__` — and so executes it twice. Python warns about that
+on its own account, and the augmentation registry rejects it outright, because
+`@register` fires for a class that is already there. Running the package imports each
+module exactly once.

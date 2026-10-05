@@ -162,6 +162,23 @@ Scripts developped in this repository use JSON files to specify image and segmen
 
 To track parameters used during data augmentation, JSON files are also used: see this [example](https://github.com/neuropoly/SmaugLab/blob/16653a84e031c40e25a72e946c2724494606b21c/smauglab/configs/transform_params.json)
 
+### Paper configs
+
+Two shipped configs are the setups behind the paper's tables. `smauglab hash <config>`
+prints the identity below, which is how a run folder named `...-c-<config_hash>` is
+traced back to the file that produced it.
+
+| shipped config | config hash | paper setup |
+| --- | --- | --- |
+| `smauglab/configs/transform_params_one-sequence-to-segment-them-all.json` | `c69b9872` | Ours |
+| `smauglab/configs/transform_params_paper-synthseg.json` | `0d5d802f` | SynthSeg |
+
+Despite the name, "SynthSeg" is not "Ours plus SynthSeg": it is Ours with all six
+transfer augmentations (`RandomScharrGPU`, `RandomUnsharpMaskGPU`, `RandomRandConvGPU`,
+`RandomRedistributeSegGPU`, `RandomInverseGPU`, `RandomHistogramEqualizationGPU`) at
+`p=0` and `RandomSynthSegGPU` at `p=1.0` in their place. The general-enhancement half is
+identical between the two.
+
 
 ## Citation
 
