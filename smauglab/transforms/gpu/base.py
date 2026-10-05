@@ -3,7 +3,7 @@ import copy
 import functools
 import warnings
 from collections.abc import Sequence
-from typing import Any, Union
+from typing import Any, Protocol, Union
 
 import kornia.augmentation as K
 import torch
@@ -460,7 +460,21 @@ def _batch_shape_tensor(batch_shape: tuple[int, ...]) -> Tensor:
     return torch.tensor(batch_shape, dtype=torch.long)
 
 
-def _leaf_parameters(module: Module, batch_shape: torch.Size) -> Any:
+class DrawsParameters(Protocol):
+    """What `_leaf_parameters` needs off the module it is handed.
+
+    A Protocol rather than `Module`, for the same reason `_RegionSelecting` in
+    gpu/contrast.py is one: `forward_parameters` is not declared on `nn.Module`,
+    so the attribute resolves through `Module.__getattr__`, which is typed as
+    returning `Tensor | Module` -- and a `Tensor` is not callable. Naming the one
+    method here is both what makes the call type-check and a statement of the
+    helper's actual requirement.
+    """
+
+    def forward_parameters(self, batch_shape: torch.Size) -> Any: ...
+
+
+def _leaf_parameters(module: DrawsParameters, batch_shape: torch.Size) -> Any:
     """`forward_parameters` for one leaf, with the constant parts lifted out.
 
     kornia's `__batch_prob_generator__` allocates a one-element tensor, sums it,
