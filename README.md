@@ -232,6 +232,7 @@ column -- see "Run Monai training with SmaugLab augmentations" above. Regenerate
 | laplace | TA | `RandomLaplaceGPU` | `LaplaceConvTransform` |
 | unsharp_mask | TA | `RandomUnsharpMaskGPU` | — |
 | rand_conv | TA | `RandomRandConvGPU` | — |
+| gin | TA | `RandomGINGPU` | — |
 | bias_field | TA | `RandomBiasFieldGPU` | — |
 | inverse | TA | `RandomInverseGPU` | — |
 | histogram_equal | TA | `RandomHistogramEqualizationGPU` | `HistogramEqualTransform` |
