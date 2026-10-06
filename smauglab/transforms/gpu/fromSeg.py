@@ -98,15 +98,13 @@ def _voronoi_region_ids(
     N = lbl_l.shape[0]
     rid = torch.zeros(N, dtype=torch.long, device=device)
 
-    # Everything the loop needs off the GPU, in two reads instead of three per
-    # cluster. Each `.item()` inside the loop drained the queue, and with up to six
-    # clusters per sample and two samples per batch that was the dominant cost of
-    # the whole transform on a 128^3 patch.
+    # Everything the loop needs off the GPU, in two reads instead of three per cluster:
+    # each `.item()` inside the loop drained the queue, and with up to six clusters per
+    # sample that dominated the whole transform's cost on a 128^3 patch.
     #
-    # Drawing the decisions up front consumes a fixed two uniforms per cluster where
-    # the scalar version drew the second one only when the first said "subdivide",
-    # so a seeded run no longer reproduces the previous release's region maps. The
-    # draws are the same independent uniforms either way.
+    # Drawing up front consumes a fixed two uniforms per cluster where the scalar version
+    # drew the second only when the first said "subdivide", so a seeded run no longer
+    # reproduces the previous release's region maps. Same independent uniforms either way.
     counts = torch.bincount(lbl_l[fg > 0], minlength=C)[:C].tolist()
     decisions = torch.rand(C, 2, device=device).tolist()
 
@@ -138,11 +136,10 @@ def _voronoi_region_ids(
         rid[member] = offset + torch.argmin(d, dim=1)
         offset += S
     # At least one region, always. Every cluster can be skipped above -- a constant image
-    # has no foreground at all, so `n_fg` is zero for all of them -- and `offset` then
-    # stays at 0 while `rid` is a valid all-zero id map. The caller sizes its scatter
-    # target with this count, so returning 0 means scattering index 0 into a zero-length
-    # tensor: a RuntimeError on CPU and a device-side assert on CUDA, which does not just
-    # fail the batch, it poisons the context and ends the run.
+    # has no foreground -- leaving `offset` at 0 while `rid` is a valid all-zero id map.
+    # The caller sizes its scatter target with this count, so returning 0 scatters index 0
+    # into a zero-length tensor: a RuntimeError on CPU and a device-side assert on CUDA,
+    # which poisons the context and ends the run rather than merely failing the batch.
     return rid, max(offset, 1)
 
 
@@ -280,11 +277,9 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
         # Expect segmentation provided in params: shape [N, 1, ...] or [N, C_seg, ...]
-        # A clone, not the caller's tensor: this method writes channels back with
-        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
-        # through when every sample applies. Every transform in gpu/spatial.py and
-        # the palette/domain-transfer transforms already clone; these did not, so
-        # `batch["data"]` was destroyed under any caller holding a reference.
+        # A clone, not the caller's tensor: this writes channels back with
+        # `input[:, c] = ...` and kornia passes the caller's own tensor through when
+        # every sample applies, which destroyed `batch["data"]` for any caller holding it.
         input = input.clone()
         seg = segmentation_from(params)
         if seg is None:
@@ -326,12 +321,11 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
             denom = (img_max - img_min).clamp_min(1e-6)
             x_batch = (img_batch - img_min) / denom
 
-            # Everything the per-sample loop needs to read back to Python, read once.
-            # These were three `.item()` calls inside the loop -- the empty-mask test,
-            # the redistribution mode and the dilation count -- and each one stalls the
-            # host until the queue drains. Drawing the two random ones for the whole
-            # batch up front gives each sample its own independent draw exactly as
-            # before, but no longer in the interleaved order the loop produced, so a
+            # Everything the per-sample loop reads back to Python, read once: the
+            # empty-mask test, the redistribution mode and the dilation count were three
+            # `.item()` calls inside the loop, each stalling the host until the queue
+            # drains. Drawing the two random ones for the batch up front keeps each
+            # sample's draw independent but not in the loop's interleaved order, so a
             # seeded run differs from the previous release's.
             has_foreground = (seg.reshape(N, -1) > 0).any(dim=1).tolist()
             in_seg_draws = (torch.rand(N, device=input.device) <= self.in_seg).tolist()
@@ -342,15 +336,13 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
             # Iterate per sample (seg can differ in shape or labels per sample)
             for b in range(N):
                 x = x_batch[b]
-                # No regions to redistribute between, so leave the sample exactly as it
-                # came in. `x_batch` is the [0,1] min-max normalisation this transform
-                # works in, and writing *that* back -- which is what this did -- turns a
-                # z-scored air patch at about [-2.7, -2.67] into [0, 1] and then skips
-                # the `retain_stats` restore below that would have undone it. It is not a
-                # rare shape: nnU-Net leaves some samples of every batch unconstrained,
-                # and a few cases are effectively unlabelled, so this fires on real
-                # anatomy and produces a perfectly finite, badly out-of-distribution
-                # patch that no NaN guard can see.
+                # No regions to redistribute between, so leave the sample as it came in.
+                # `x_batch` is the [0,1] min-max normalisation this transform works in,
+                # and writing that back turns a z-scored air patch at about [-2.7, -2.67]
+                # into [0, 1], then skips the `retain_stats` restore that would have undone
+                # it. nnU-Net leaves some samples of every batch unconstrained and a few
+                # cases are effectively unlabelled, so this fires on real anatomy and
+                # produces a finite, badly out-of-distribution patch no NaN guard can see.
                 if not has_foreground[b]:
                     input[b, c] = img_batch[b]
                     continue
@@ -376,10 +368,9 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                 mask_flat = masks.view(R, -1)
                 dil_flat = dilated_excl.view(R, -1)
 
-                # Count, mean and variance per region, as one [R, S] x [S, 3] matrix
-                # multiply each. Spelled out, that was six passes over an [R, S]
-                # array and two [R, S] temporaries -- 32 MB apiece for four regions
-                # of a 128^3 patch -- to produce six numbers per region.
+                # Count, mean and variance per region as one [R, S] x [S, 3] matmul each.
+                # Spelled out that was six passes over an [R, S] array and two 32 MB
+                # temporaries (four regions of a 128^3 patch) for six numbers per region.
                 design = torch.stack([torch.ones_like(x_flat[0]), x_flat[0], x_flat[0] * x_flat[0]], dim=1)  # (S, 3)
                 counts, means, stds = _region_moments(mask_flat, design)
                 dil_counts, dil_means, dil_stds = _region_moments(dil_flat, design)
@@ -393,15 +384,12 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                     torch.full((R,), 0.01, device=input.device, dtype=input.dtype),
                 )
 
-                # Build additive term.
-                #
-                # Accumulated in place rather than stacked: the global branch used to
-                # build a list of R full-volume tensors and `torch.stack` them before
-                # summing, which is an extra R-volume allocation and an extra pass over
-                # it. The in-region branch indexed each region out with a boolean mask,
-                # and a boolean index is a `nonzero` -- a host synchronisation per
-                # region, on top of the gather. Multiplying by the mask writes the same
-                # values at the same voxels, because the regions are summed either way.
+                # Accumulated in place rather than stacked: the global branch built a list
+                # of R full-volume tensors and stacked them before summing, an extra
+                # R-volume allocation and pass. The in-region branch indexed each region
+                # out with a boolean mask, and a boolean index is a `nonzero` -- a host
+                # synchronisation per region. Multiplying by the mask writes the same values
+                # at the same voxels, because the regions are summed either way.
                 #
                 # The `counts[r] == 0` guards both branches carried could not fire:
                 # `counts` is `clamp_min(1)`.
@@ -490,10 +478,9 @@ class RandomPaletteGPU(ImageOnlyTransform):
         p: float = 1.0,
         p_batch: float = 1.0,
         same_on_batch: bool = False,
-        # Note the default is False, not the True its siblings use. This class
-        # previously forwarded **kwargs straight to super(), so keepdim fell through
-        # to kornia's own default -- and nothing ever passed it. Spelling that out
-        # rather than "fixing" it keeps the transform behaving exactly as before.
+        # The default is False, not the True its siblings use: this class forwarded
+        # **kwargs straight to super(), so keepdim fell through to kornia's own default and
+        # nothing ever passed it. Spelled out rather than "fixed", to keep behaviour.
         keepdim: bool = False,
     ) -> None:
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
@@ -517,11 +504,7 @@ class RandomPaletteGPU(ImageOnlyTransform):
         flags: dict[str, Any],
         transform: Tensor | None = None,
     ) -> Tensor:
-        # A clone, not the caller's tensor: this method writes channels back with
-        # `input[:, c] = ...`, and kornia hands the caller's own tensor straight
-        # through when every sample applies. Every transform in gpu/spatial.py and
-        # the palette/domain-transfer transforms already clone; these did not, so
-        # `batch["data"]` was destroyed under any caller holding a reference.
+        # Clone: kornia passes the caller's tensor through; this writes channels back.
         input = input.clone()
         seg_raw: torch.Tensor | None = segmentation_from(params)
 
@@ -758,10 +741,9 @@ class DifferentiableHistogram3D(nn.Module):
         self.max_value = float(value_range[1])
         self.eps = eps
 
-        # No bin_centers buffer: `forward` derives every index it needs from
-        # min_value and bin_width arithmetically and never read it, so the buffer
-        # was dead state that still showed up in state_dict() and moved with
-        # .to(device) on every call.
+        # No bin_centers buffer: `forward` derives every index from min_value and
+        # bin_width arithmetically and never read it, so it was dead state that still
+        # showed up in state_dict() and moved with .to(device) on every call.
         self.bin_width = (self.max_value - self.min_value) / max(num_bins - 1, 1)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:

@@ -9,14 +9,14 @@ A config is a JSON document with reserved top-level sections:
       "pipeline": { "random_choose": { ... } }
     }
 
-A key is a class name, exactly, and a parameter is a constructor argument, exactly.
-Both are checked against the registry, and every problem in a file is reported at
-once rather than one per run.
+A key is a class name, exactly, and a parameter is a constructor argument, exactly. Both are
+checked against the registry, and every problem in a file is reported at once rather than
+one per run.
 
-A flat document with no section is rejected: it used to be interpreted as "GPU or
-CPU, whichever the keys look like", and the two namespaces overlapped enough that
-`GaussianBlurTransform` meant different transforms depending on which builder read
-it. `SECTION_HINT` below is what the errors tell the author to do about it.
+A flat document with no section is rejected: it was interpreted as "GPU or CPU, whichever
+the keys look like", and the two namespaces overlapped enough that `GaussianBlurTransform`
+meant different transforms depending on which builder read it. `SECTION_HINT` below is what
+the errors tell the author to do about it.
 """
 
 from __future__ import annotations
@@ -307,11 +307,11 @@ def registered_names(backend: Backend) -> list[str]:
 
 # --- config manipulation ----------------------------------------------------------
 #
-# Upstreamed from segtransferaug/utils/smauglab_config.py, which drove the sweep
-# scripts. Three module-level absolute paths went away (the packaged config is
-# resolved through importlib.resources now), and the hardcoded AUG2GROUP table
-# became the registry's `group` field, so a new augmentation no longer has to be
-# added to a dict in a different repository before the sweeps can see it.
+# Upstreamed from segtransferaug/utils/smauglab_config.py, which drove the sweep scripts.
+# Three module-level absolute paths went away (the packaged config is resolved through
+# importlib.resources now), and the hardcoded AUG2GROUP table became the registry's
+# `group` field, so a new augmentation no longer has to be added to a dict in another
+# repository first.
 
 
 def default_config_path() -> Path:
