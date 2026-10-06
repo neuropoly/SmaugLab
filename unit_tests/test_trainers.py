@@ -284,6 +284,9 @@ class TestNonFiniteLossGuard(unittest.TestCase):
         trainer.num_iterations_per_epoch = 250
         trainer._nan_steps_this_epoch = 0
         trainer._nan_steps_total = 0
+        # `on_train_epoch_end` reports both guards; `__init__` sets all four counters.
+        trainer._scale_floor_hits_this_epoch = 0
+        trainer._scale_floor_hits_total = 0
         trainer._get_deep_supervision_scales = lambda: None
         # An instance attribute shadowing the bound method: capturing the log this way
         # needs no output folder and no open file handle.
@@ -453,6 +456,141 @@ class TestTrainingTransformsMatchesNnUNet(unittest.TestCase):
                     set(),
                     f"{name}.get_training_transforms would reject arguments nnU-Net passes; this nnU-Net is older than the pinned >=2.5",
                 )
+
+
+class TestGradScaleFloor(unittest.TestCase):
+    """The AMP gradient scale must not be able to ratchet to zero.
+
+    `GradScaler` halves the scale on every non-finite step and only doubles it back
+    after 2000 consecutive clean ones, so a bad-batch rate above 1-in-2000 drives it
+    down with no floor underneath. At zero the run is dead: `scale(loss)` is 0, the
+    gradients are 0, `unscale_` multiplies by `1/0` and every gradient becomes NaN
+    from then on, for clean batches too.
+
+    The scaler is driven directly here rather than through `train_step`: the ratchet
+    is a property of the scaler and the step count, and reproducing it end to end
+    would need ~166 real forward passes.
+    """
+
+    FLOOR_GUARD = "smauglab.trainers.nnUNetTrainerDAExt"
+
+    def _scaler_trainer(self):
+        """A trainer stub carrying only what `_guard_grad_scale` touches."""
+        import torch
+
+        from smauglab.trainers.nnUNetTrainerDAExt import nnUNetTrainerDAExtGPU
+
+        trainer = nnUNetTrainerDAExtGPU.__new__(nnUNetTrainerDAExtGPU)
+        # "cpu" so the suite stays CPU-only; the scaler halves on non-finite
+        # gradients there exactly as it does on cuda.
+        trainer.grad_scaler = torch.amp.GradScaler("cpu", enabled=True)
+        trainer.current_epoch = 0
+        trainer.num_iterations_per_epoch = 250
+        trainer._scale_floor_hits_this_epoch = 0
+        trainer._scale_floor_hits_total = 0
+        trainer.logged = []
+        trainer.print_to_log_file = lambda *args, **_kwargs: trainer.logged.append(" ".join(str(a) for a in args))
+        return trainer
+
+    @staticmethod
+    def _bad_step(trainer, net, opt):
+        """One step whose loss is infinite, so the scaler backs the scale off."""
+        import torch
+
+        opt.zero_grad(set_to_none=True)
+        loss = net(torch.randn(8, 4)).sum() * float("inf")
+        trainer.grad_scaler.scale(loss).backward()
+        trainer.grad_scaler.unscale_(opt)
+        trainer.grad_scaler.step(opt)
+        trainer.grad_scaler.update()
+
+    def test_an_unguarded_scaler_reaches_zero_and_stays_there(self):
+        """The bug this guards against, pinned so the premise cannot rot."""
+        import torch
+
+        trainer = self._scaler_trainer()
+        net = torch.nn.Linear(4, 4)
+        opt = torch.optim.SGD(net.parameters(), lr=0.1)
+
+        for _ in range(200):
+            self._bad_step(trainer, net, opt)  # no _guard_grad_scale call
+
+        self.assertEqual(trainer.grad_scaler.get_scale(), 0.0, "the premise changed: torch now floors the scale itself")
+
+    def test_the_floor_holds_under_a_run_of_non_finite_steps(self):
+        import torch
+
+        from smauglab.trainers.nnUNetTrainerDAExt import MIN_GRAD_SCALE
+
+        trainer = self._scaler_trainer()
+        net = torch.nn.Linear(4, 4)
+        opt = torch.optim.SGD(net.parameters(), lr=0.1)
+
+        for _ in range(200):
+            self._bad_step(trainer, net, opt)
+            trainer._guard_grad_scale()
+
+        self.assertEqual(trainer.grad_scaler.get_scale(), MIN_GRAD_SCALE)
+        self.assertTrue(bool(torch.isfinite(net.weight).all()), "a non-finite weight survived a skipped step")
+        self.assertGreater(trainer._scale_floor_hits_total, 0)
+
+    def test_the_scale_recovers_once_the_batches_are_clean(self):
+        """A floor that merely stopped the fall would still leave the run crippled."""
+        import torch
+
+        from smauglab.trainers.nnUNetTrainerDAExt import MIN_GRAD_SCALE
+
+        trainer = self._scaler_trainer()
+        net = torch.nn.Linear(4, 4)
+        opt = torch.optim.SGD(net.parameters(), lr=0.1)
+
+        for _ in range(200):
+            self._bad_step(trainer, net, opt)
+            trainer._guard_grad_scale()
+        self.assertEqual(trainer.grad_scaler.get_scale(), MIN_GRAD_SCALE)
+
+        # growth_interval consecutive clean steps is what torch asks for before it
+        # doubles; one more than that so the doubling has actually landed.
+        for _ in range(trainer.grad_scaler.get_growth_interval() + 1):
+            opt.zero_grad(set_to_none=True)
+            loss = net(torch.randn(8, 4)).sum()
+            trainer.grad_scaler.scale(loss).backward()
+            trainer.grad_scaler.unscale_(opt)
+            trainer.grad_scaler.step(opt)
+            trainer.grad_scaler.update()
+            trainer._guard_grad_scale()
+
+        self.assertGreater(trainer.grad_scaler.get_scale(), MIN_GRAD_SCALE)
+        self.assertTrue(bool(torch.isfinite(net.weight).all()))
+
+    def test_a_healthy_scale_is_left_alone_and_logs_nothing(self):
+        trainer = self._scaler_trainer()
+        before = trainer.grad_scaler.get_scale()
+
+        trainer._guard_grad_scale()
+
+        self.assertEqual(trainer.grad_scaler.get_scale(), before)
+        self.assertEqual(trainer._scale_floor_hits_total, 0)
+        self.assertEqual(trainer.logged, [])
+
+    def test_the_reset_is_logged_but_not_once_per_batch(self):
+        """250 identical lines an epoch is how a warning worth reading gets ignored."""
+        import torch
+
+        from smauglab.trainers.nnUNetTrainerDAExt import NAN_REPORTS_PER_EPOCH
+
+        trainer = self._scaler_trainer()
+        net = torch.nn.Linear(4, 4)
+        opt = torch.optim.SGD(net.parameters(), lr=0.1)
+
+        for _ in range(60):
+            self._bad_step(trainer, net, opt)
+            trainer._guard_grad_scale()
+
+        self.assertGreater(trainer._scale_floor_hits_total, NAN_REPORTS_PER_EPOCH)
+        self.assertEqual(len(trainer.logged), NAN_REPORTS_PER_EPOCH + 1)
+        self.assertIn("AMP gradient scale fell below", trainer.logged[0])
+        self.assertIn("suppressed this epoch", trainer.logged[-1])
 
 
 if __name__ == "__main__":
