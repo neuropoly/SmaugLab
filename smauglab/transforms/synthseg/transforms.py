@@ -2,21 +2,19 @@
 
 Two entry points are provided:
 
-* :class:`RandomSynthSegGPU` -- an :class:`ImageOnlyTransform` that *replaces*
-  the image with a GMM-synthesised one derived from ``params['seg']``. It is
-  intensity-only (no internal spatial deformation), so it composes with SmaugLab's
-  existing geometric transforms (``RandomAffineGPU``, ``RandomFlipTransformGPU``,
-  ...) inside an :class:`AugmentationSequentialCustom`: place those *before* it so
-  the mask is deformed first and SynthSeg generates from the deformed labels,
-  keeping image and label aligned. Drop it into a ``transform_params_gpu.json``
-  pipeline like any other transform.
+* :class:`RandomSynthSegGPU` -- an :class:`ImageOnlyTransform` that *replaces* the image
+  with a GMM-synthesised one derived from ``params['seg']``. It is intensity-only (no
+  internal spatial deformation), so it composes with SmaugLab's geometric transforms
+  (``RandomAffineGPU``, ``RandomFlipTransformGPU``, ...) inside an
+  :class:`AugmentationSequentialCustom`: place those *before* it, so the mask is deformed
+  first and SynthSeg generates from the deformed labels, keeping image and label aligned.
+  Drop it into a ``transform_params_gpu.json`` pipeline like any other transform.
 
 * :class:`SynthSegTransformsGPU` -- a config-driven top-level module mirroring
-  :class:`smauglab.transforms.gpu.transforms.AugTransformsGPU`. It runs the *full*
-  SynthSeg pipeline (spatial deform + flip + GMM + bias + intensity + resolution)
-  and returns ``(image, label)`` from ``forward(data, target)`` -- the calling
-  convention used by the nnUNet trainer and ``train_monai.py``. This is the
-  faithful end-to-end SynthSeg generator.
+  :class:`smauglab.transforms.gpu.transforms.AugTransformsGPU`. It runs the *full* SynthSeg
+  pipeline (spatial deform + flip + GMM + bias + intensity + resolution) and returns
+  ``(image, label)`` from ``forward(data, target)``, the calling convention the nnUNet
+  trainer and ``train_monai.py`` use. This is the faithful end-to-end SynthSeg generator.
 """
 
 from __future__ import annotations
@@ -183,11 +181,10 @@ class SynthSegTransformsGPU(nn.Module):
 
     @torch.no_grad()
     def forward(self, data: Tensor, target: Tensor):
-        # Per sample, not per batch. One draw for the whole batch made `probability`
-        # mean "this fraction of batches is entirely synthetic", so at 0.5 the
-        # network saw all-synthetic and all-real batches rather than a mix of both
-        # in each -- a different training signal, and out of step with the
-        # per-sample convention every other transform here follows.
+        # Per sample, not per batch. One draw for the whole batch made `probability` mean
+        # "this fraction of batches is entirely synthetic", so at 0.5 the network saw
+        # all-synthetic and all-real batches rather than a mix in each -- a different
+        # training signal, and out of step with the per-sample convention here.
         keep = torch.rand(data.shape[0], device=data.device) < self.probability
         if not bool(keep.any()):
             return data, target

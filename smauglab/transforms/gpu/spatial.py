@@ -246,22 +246,20 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
         scales = params["scale"]  # shape [B, 3]
 
         # Only MaskSequentialOpsCustom injects "data_keys" (see gpu/base.py), so a bare
-        # `flags["data_keys"]` raised KeyError for every other caller -- calling this
-        # transform standalone, or from inside RandomChooseXTransformsGPU, which passes
-        # the transform's own `flags`. Defaulting to IMAGE is what those callers mean.
+        # `flags["data_keys"]` raised KeyError for every other caller: a standalone call,
+        # or RandomChooseXTransformsGPU, which passes the transform's own `flags`.
         data_keys = flags.get("data_keys") or [DataKey.INPUT]
         if data_keys[0] in (DataKey.INPUT, DataKey.IMAGE):
             resample = "trilinear"
         elif data_keys[0] is DataKey.MASK:
             # `apply_transform_mask` no longer routes a mask here, so this branch is
-            # reachable only by a direct call. It stays correct anyway, and the mode is
-            # "nearest-exact", not "nearest": torch's "nearest" is not half-pixel centred
-            # (src = floor(dst * scale)), and the down and the up step each drop ~0.5
-            # voxels, so the composed map is out[i] = in[i - 1] almost regardless of the
-            # scale factor. That measured a mean edge displacement of +1.16 voxels (sd
-            # 0.44) over the shipped 0.5-1.0 range while the trilinear image path did not
-            # move at all -- a label-to-image misregistration, which is what the "the
-            # foreground grew" symptom above actually was. "nearest-exact" measures -0.06.
+            # reachable only by a direct call. The mode is "nearest-exact", not "nearest":
+            # torch's "nearest" is not half-pixel centred (src = floor(dst * scale)) and
+            # the down and the up step each drop ~0.5 voxels, so the composed map is
+            # out[i] = in[i - 1] almost regardless of the scale factor. That measured a
+            # mean edge displacement of +1.16 voxels (sd 0.44) over the shipped 0.5-1.0
+            # range against -0.06 for "nearest-exact", while the trilinear image path did
+            # not move -- the label-to-image misregistration behind "the foreground grew".
             resample = "nearest-exact"
         else:
             raise ValueError(f"Unsupported data key {data_keys[0]} for RandomLowResTransformGPU. Expected IMAGE or MASK.")
@@ -270,16 +268,14 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
         interp_down = resample
         interp_up = resample
 
-        # `scales` lives on the device, so each `float(...)` below used to block the
-        # host until everything queued had finished -- three times per sample. One
-        # `.tolist()` reads the whole [B, 3] draw back in a single transfer.
+        # `scales` lives on the device, so each `float(...)` below blocked the host until
+        # the queue drained, three times per sample. One `.tolist()` reads [B, 3] in one go.
         scale_rows = scales.tolist()
         align = False if "linear" in interp_down else None
 
-        # Samples that drew the same target size resample together: one
-        # `F.interpolate` over a [k, C, D, H, W] slab instead of k of them. With
-        # `same_on_batch` the whole batch is a single group, and the loop that
-        # remains has one iteration.
+        # Samples that drew the same target size resample together: one `F.interpolate`
+        # over a [k, C, D, H, W] slab instead of k of them. With `same_on_batch` the whole
+        # batch is a single group and the loop that remains has one iteration.
         groups: dict[tuple[int, int, int], list[int]] = {}
         for b in range(batch_size):
             sx, sy, sz = scale_rows[b]
@@ -289,9 +285,8 @@ class RandomLowResTransformGPU(RigidAffineAugmentationBase3D):
         # `empty_like`, not `clone`: every row is written below.
         out = torch.empty_like(input)
         for size, members in groups.items():
-            # A one-member group is a view, not a gather: with a small batch most
-            # groups are singletons, and `index_select`/`index_copy_` would copy the
-            # sample in and out again for nothing.
+            # A one-member group is a view, not a gather: with a small batch most groups are
+            # singletons, and `index_select`/`index_copy_` would copy in and out for nothing.
             if len(members) == 1:
                 b = members[0]
                 chunk = F.interpolate(input[b : b + 1], size=size, mode=interp_down, align_corners=align)
@@ -412,9 +407,8 @@ class RandomAcqTransformGPU(ImageOnlyTransform):
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.flags = {"resample": "trilinear"}
         self.apply_to_channel = apply_to_channel
-        # one_dim is fixed rather than exposed: this class *is* the single-axis case,
-        # and RandomLowResTransformGPU is the isotropic one. Leaving it configurable
-        # meant two config keys could each produce either behaviour.
+        # one_dim is fixed rather than exposed: this class *is* the single-axis case and
+        # RandomLowResTransformGPU the isotropic one. Configurable, either key could do both.
         self._param_generator = ScaleGenerator3D(scale=scale, one_dim=True)
 
     @torch.no_grad()
@@ -437,9 +431,8 @@ class RandomAcqTransformGPU(ImageOnlyTransform):
         interp_down = resample
         interp_up = resample
 
-        # One `.tolist()` instead of three device reads per sample, and one
-        # `F.interpolate` per distinct target size instead of one per (sample,
-        # channel) -- see the sibling in RandomLowResTransformGPU.
+        # One `.tolist()` instead of three device reads per sample, and one `F.interpolate`
+        # per distinct target size -- see the sibling in RandomLowResTransformGPU.
         scale_rows = scales.tolist()
         align = False if "linear" in interp_down else None
         channels = list(self.apply_to_channel)
@@ -454,9 +447,7 @@ class RandomAcqTransformGPU(ImageOnlyTransform):
         # carried over -- hence a clone rather than an empty tensor.
         out = input.clone()
         for size, members in groups.items():
-            # A one-member group goes through views: with a small batch most groups
-            # are singletons, and gathering the sample in and scattering it back out
-            # costs more than the resampling it was meant to share.
+            # A one-member group goes through views, as in RandomLowResTransformGPU above.
             if len(members) == 1:
                 b = members[0]
                 for c in channels:
@@ -516,18 +507,15 @@ class RandomFlipTransformGPU(RigidAffineAugmentationBase3D):
 
         batch_size, C, D, H, W = input.shape
 
-        # params["flip"] is [B, 3] of 0/1 flags over (z, y, x), produced by
-        # FlipGenerator3D. Reading it is what makes this transform random: the loop
-        # below used to recompute the same `flip_axis`-derived list for every b and
-        # ignore the sampled flags entirely, so every call flipped all configured axes
-        # identically -- three seeded calls gave byte-identical output, and the
-        # generator (including its "at least one axis" guarantee) was dead code.
+        # params["flip"] is [B, 3] of 0/1 flags over (z, y, x) from FlipGenerator3D.
+        # Reading it is what makes this transform random: the loop below recomputed the
+        # same `flip_axis`-derived list for every b and ignored the sampled flags, so every
+        # call flipped all configured axes identically -- three seeded calls gave
+        # byte-identical output, and the generator's "at least one axis" guarantee was dead.
         flips = params.get("flip")
 
-        # `bool(flips[b, axis])` read one element of a device tensor back to the host
-        # at a time: three synchronisations per sample, for a transform whose actual
-        # work is a strided copy. One `.tolist()` brings the whole [B, 3] flag table
-        # over in a single transfer.
+        # `bool(flips[b, axis])` read one device element at a time, three synchronisations
+        # per sample. One `.tolist()` brings the whole [B, 3] flag table over at once.
         flip_rows = None if flips is None else flips.tolist()
 
         out = input.clone()
@@ -600,20 +588,17 @@ class FlipGenerator3D(RandomGeneratorBase):
         flips = torch.stack(samples, dim=1).to(device=_device, dtype=_dtype)
         flips = (flips > 0.5).to(torch.int8)
 
-        # Ensure at least one *allowed* axis is flipped per batch element.
-        #
-        # The zero-test has to look at self.flip_axis, not at all three columns.
-        # `flips` is sampled over every axis but `apply_transform` only acts on the
-        # allowed ones, so a 1 drawn on a disallowed axis used to satisfy the test
-        # while nothing was actually flipped. With the default flip_axis=(0,) that
-        # made RandomFlipTransformGPU(p=1.0) a no-op on 35% of draws.
+        # At least one *allowed* axis flipped per batch element. The zero-test has to look
+        # at self.flip_axis, not at all three columns: `flips` is sampled over every axis
+        # but `apply_transform` only acts on the allowed ones, so a 1 drawn on a disallowed
+        # axis satisfied the test while nothing was flipped. With the default flip_axis=(0,)
+        # that made RandomFlipTransformGPU(p=1.0) a no-op on 35% of draws.
         if len(self.flip_axis) == 0:
             return {"flip": flips}
         allowed = torch.as_tensor(self.flip_axis, device=flips.device, dtype=torch.long)
-        # Which samples drew nothing, and the axis to rescue each with, decided for
-        # the whole batch at once. The loop this replaces read `flips[b, allowed].sum()`
-        # back to the host for every sample and then drew a separate scalar for the
-        # ones that needed it.
+        # Which samples drew nothing, and the rescue axis for each, decided for the whole
+        # batch at once. The loop this replaces read `flips[b, allowed].sum()` back to the
+        # host per sample, then drew a separate scalar for the ones that needed it.
         empty = flips.index_select(1, allowed).sum(dim=1) == 0
         rescue = allowed[torch.randint(low=0, high=len(self.flip_axis), size=(batch_size,), device=flips.device)]
         flips.scatter_(
@@ -705,16 +690,14 @@ class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
         crops = params["crop"]  # shape [B, 3]
         pos = params["pos"]  # shape [B, 3]
 
-        # One transfer for the whole batch's draw, then the identical box arithmetic
-        # in Python. It used to read six scalars off the device per sample -- each
-        # `float(...)` on a device tensor blocks the host until the queue drains --
-        # and the arithmetic is cheap enough that moving it onto the GPU costs more
-        # in kernel launches than the transfers it saves.
+        # One transfer for the whole batch's draw, then the identical box arithmetic in
+        # Python. This read six scalars off the device per sample -- each `float(...)` on a
+        # device tensor blocks the host until the queue drains -- and the arithmetic is
+        # cheap enough that moving it onto the GPU costs more in launches than it saves.
         draws = torch.stack([crops, pos], dim=1).tolist()  # [B][2][3], each (x, y, z)
 
-        # The discarded region's fill value stays a device tensor -- see the class
-        # docstring for why it is not 0 -- so the `amin` behind it is one batched
-        # reduction rather than one host read per sample.
+        # The discarded region's fill value stays a device tensor -- the class docstring says
+        # why it is not 0 -- so the `amin` behind it is one batched reduction, not a host read.
         fills = self._fill_values(input, flags)
 
         out = torch.empty_like(input)
@@ -731,9 +714,8 @@ class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
             y1 = max(0, min(round(py * H - crop_H / 2.0), max(0, H - crop_H)))
             x1 = max(0, min(round(px * W - crop_W / 2.0), max(0, W - crop_W)))
 
-            # Fill, then copy the kept box back over it. The old code built a separate
-            # per-sample canvas and copied that into an `input.clone()`, so the batch
-            # was written three times over.
+            # Fill, then copy the kept box back over it. The old code built a per-sample
+            # canvas and copied that into an `input.clone()`, writing the batch three times.
             out[b] = fills[b]
             out[b][:, z1 : z1 + crop_D, y1 : y1 + crop_H, x1 : x1 + crop_W] = input[b][
                 :, z1 : z1 + crop_D, y1 : y1 + crop_H, x1 : x1 + crop_W
@@ -796,15 +778,13 @@ class CropGenerator3D(RandomGeneratorBase):
         pos = torch.stack([posx, posy, posz], dim=1)
 
         if self.one_dim:
-            # One axis for both: `make_samplers` drew a separate `dim` for crop and for
-            # pos, so the crop could be taken along one axis while the position that
-            # placed it was randomised along another.
+            # One axis for both: `make_samplers` drew a separate `dim` for crop and for pos,
+            # so the crop could be taken along one axis and placed along another.
             keep = _choose_axis(batch_size, crop.device, same_on_batch)
-            # A crop fraction of 1.0 keeps the whole axis. The *position*, though, is
-            # the crop centre as a fraction of the axis, so its neutral value is 0.5
-            # (centred) -- the previous code copied the crop's 1.0 onto it, which put
-            # the box centre on the far edge and left the crop flush against it after
-            # clamping.
+            # A crop fraction of 1.0 keeps the whole axis, but the *position* is the crop
+            # centre as a fraction of the axis, so its neutral value is 0.5. Copying the
+            # crop's 1.0 onto it put the box centre on the far edge and left the crop
+            # flush against it after clamping.
             crop = _keep_one_axis(crop, keep, 1.0)
             pos = _keep_one_axis(pos, keep, 0.5)
 

@@ -56,10 +56,9 @@ DEFAULT_SEG_LABELS = (12, 13, 14, 15, 16)
 
 # --- small array helpers ----------------------------------------------------------
 #
-# `normalize` here is min-max, and is the one the GPU demos carried (identically, in
-# two files). It is deliberately NOT the percentile-based `normalize` that used to sit
-# in smauglab/utils/utils.py -- three functions shared that name and computed two
-# different things.
+# `normalize` here is min-max, the one the GPU demos carried. It is deliberately NOT the
+# percentile-based `normalize` that sat in smauglab/utils/utils.py -- three functions
+# shared that name and computed two different things.
 
 
 def normalize_minmax(arr: np.ndarray) -> np.ndarray:

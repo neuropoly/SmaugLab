@@ -1,25 +1,22 @@
 """Pull batches exactly as `nnUNetTrainerDAExtGPU` sees them, and re-apply a
 substituted GPU config to them.
 
-Every other way of looking at a SmaugLab augmentation builds the augmentor by hand
-and feeds it a volume loaded from disk. That answers "what does this transform do to
-an image", which is not the same question as "what does the network get". The
-differences are not cosmetic: nnU-Net samples patches out of the *preprocessed*
-store with foreground oversampling, runs its own `SpatialTransform` first, and --
-this is the one that bites -- hands the GPU pipeline a **single-channel integer
-label map**, not the one-hot mask the standalone scripts pass.
+Building the augmentor by hand and feeding it a volume from disk answers "what does this
+transform do to an image", not "what does the network get". The differences are not
+cosmetic: nnU-Net samples patches out of the *preprocessed* store with foreground
+oversampling, runs its own `SpatialTransform` first, and -- the one that bites -- hands the
+GPU pipeline a **single-channel integer label map**, not the one-hot mask the standalone
+scripts pass.
 
-That last one changes behaviour. `RandomRedistributeSegGPU` takes its region count
-from the mask's channel count (`masks = seg_b.bool(); R = masks.shape[0]`), and
-`RandomSynthSegGPU` normalises per-class weights across channels. With one channel
-both collapse to a single foreground region. Whether that is desirable is a separate
-argument; it is what training does, so it is what this module reproduces.
+That last one changes behaviour: `RandomRedistributeSegGPU` takes its region count from the
+mask's channel count (`masks = seg_b.bool(); R = masks.shape[0]`) and `RandomSynthSegGPU`
+normalises per-class weights across channels, so with one channel both collapse to a single
+foreground region. Whether that is desirable is a separate argument; it is what training
+does, so it is what this module reproduces.
 
-So: mirror the trainer rather than re-deriving it. The CPU pipeline comes from the
-real `get_dataloaders()`, the GPU pipeline from the real `__init__`, and the
-application from the real `train_step`.
-
-Nothing here is Dataset014-specific; the driver supplies the paths.
+So the trainer is mirrored rather than re-derived: the CPU pipeline comes from the real
+`get_dataloaders()`, the GPU pipeline from the real `__init__`, the application from the
+real `train_step`. Nothing here is Dataset014-specific; the driver supplies the paths.
 """
 
 from __future__ import annotations

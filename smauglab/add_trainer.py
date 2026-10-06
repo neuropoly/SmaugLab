@@ -7,11 +7,10 @@ from smauglab import trainers
 
 #: Module to copy -> the trainer classes it provides.
 #:
-#: The choice is a *module* name, but `nnUNetv2_train -tr` wants a *class* name, and
-#: the two differ: nnUNetTrainerDAExt.py holds nnUNetTrainerDAExtGPU, and
-#: nnUNetTrainerTest.py holds two classes. Following the old help text and passing
-#: the same string to nnU-Net got "trainer class not found", so the help says which
-#: class each module provides.
+#: The choice is a *module* name but `nnUNetv2_train -tr` wants a *class* name, and the two
+#: differ: nnUNetTrainerDAExt.py holds nnUNetTrainerDAExtGPU, and nnUNetTrainerTest.py
+#: holds two classes. Passing the module name straight to nnU-Net got "trainer class not
+#: found", so the help text says which class each module provides.
 TRAINER_CLASSES = {
     "nnUNetTrainerDAExt": ("nnUNetTrainerDAExtGPU",),
     "nnUNetTrainerTest": ("nnUNetTrainerTest", "nnUNetTrainerTestGPU"),
@@ -50,12 +49,11 @@ def add_trainer(trainer_name: str, overwrite: bool = False):
     # module importable, without the extra.
     import nnunetv2
 
-    # Find trainer path.
     # importlib.resources returns a Traversable, which only promises open()/read_bytes()
-    # -- not .exists(), and not something shutil.copy accepts. Copying *into* the
-    # installed nnunetv2 package needs a real directory on disk regardless (nnU-Net
-    # cannot run from a zipped install), so resolve both ends to concrete paths here.
-    # Same idiom as unit_tests/helpers.py.
+    # -- not .exists(), and not something shutil.copy accepts. Copying *into* the installed
+    # nnunetv2 package needs a real directory on disk anyway (nnU-Net cannot run from a
+    # zipped install), so both ends are resolved to concrete paths. Same idiom as
+    # unit_tests/helpers.py.
     trainers_path = Path(str(importlib.resources.files(trainers)))
     if trainer_name not in TRAINER_CLASSES:
         raise ValueError(f"Trainer {trainer_name} not recognized. Choices are: {', '.join(sorted(TRAINER_CLASSES))}.")

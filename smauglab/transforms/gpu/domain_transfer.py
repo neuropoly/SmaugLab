@@ -1,37 +1,37 @@
-"""
-RandomDomainTransferGPU — domain-randomization augmentation.
+"""RandomDomainTransferGPU — domain-randomization augmentation.
 
 Re-renders an image as a *different dataset/sequence* (e.g. a CT slice made to look like
-spinegan-inphase MRI) using a precomputed per-class intensity-transfer LUT bank, so a segmentation
-model sees its training data spanning many sequence appearances and becomes sequence-invariant.
+spinegan-inphase MRI) using a precomputed per-class intensity-transfer LUT bank, so a
+segmentation model sees its training data spanning many sequence appearances and becomes
+sequence-invariant.
 
 With probability ``p`` (handled by the kornia base), each image is mapped from its known
-``source_label`` cluster to a RANDOMLY chosen target cluster via class-wise 1-D LUTs gathered on the
-GPU and blended by Gaussian-softened one-hot class weights (so class boundaries stay smooth).
-The segmentation/anatomy is left unchanged — only intensities move.
+``source_label`` cluster to a RANDOMLY chosen target cluster via class-wise 1-D LUTs gathered
+on the GPU and blended by Gaussian-softened one-hot class weights, so class boundaries stay
+smooth. The segmentation/anatomy is left unchanged — only intensities move.
 
-The LUT bank (built offline by embeddaug/analysis/playground/build_transfer_bank.py) encodes the
-best transfer per (source→target) pair: exact paired E[t|s] where the sequences are co-registered,
-else mass-order GMM (captures e.g. CT-bright bone → MR-dark) on bone/disc + monotonic marginal
-elsewhere. Background is transferred too.
+The LUT bank (built offline by embeddaug/analysis/playground/build_transfer_bank.py) encodes
+the best transfer per (source→target) pair: exact paired E[t|s] where the sequences are
+co-registered, else mass-order GMM (which captures e.g. CT-bright bone → MR-dark) on
+bone/disc and monotonic marginal elsewhere. Background is transferred too.
 
-Extra variability knobs (all default to the original single-target behaviour, so existing
-configs are unchanged):
-  * ``any_source`` — domain-randomisation mode: ignore the input's nominal ``source_label`` and
-    draw from EVERY ``(X→Y)`` transfer in the bank (e.g. apply a ``t2w→fat`` curve to a CT). The
-    input is percentile-normalised to ``[0,1]`` first, so any LUT is a valid bounded remap; this
-    multiplies the appearance variety (~S·(T-1) curves instead of T) at the cost of realism.
+Extra variability knobs, all defaulting to the original single-target behaviour, so existing
+configs are unchanged:
+  * ``any_source`` — domain-randomisation mode: ignore the input's nominal ``source_label``
+    and draw from EVERY ``(X→Y)`` transfer in the bank (e.g. apply a ``t2w→fat`` curve to a
+    CT). The input is percentile-normalised to ``[0,1]`` first, so any LUT is a valid bounded
+    remap; this gives ~S·(T-1) curves instead of T, at the cost of realism.
   * ``blend_targets`` / ``blend_concentration`` — mix this many target LUTs per draw with
     random Dirichlet weights, turning the handful of discrete targets into a *continuum* of
-    intermediate appearances (so no two augmentations repeat). Keep this small (2–3): blending
-    across *all* targets regresses each LUT toward the mean and actually *reduces* spread.
+    intermediate appearances. Keep it small (2–3): blending across *all* targets regresses
+    each LUT toward the mean and actually *reduces* spread.
   * ``p_class_mix`` — probability that each anatomical class independently draws its own
     target/blend (chimeric domains, e.g. CT-like background with T2-like bone).
-  * ``bias_field_std`` / ``bias_scale`` — smooth multiplicative bias field on the output; this
-    is the strongest contributor to per-sample appearance spread.
+  * ``bias_field_std`` / ``bias_scale`` — smooth multiplicative bias field on the output, the
+    strongest contributor to per-sample appearance spread.
   * ``p_spatial_mix`` / ``spatial_mix_scale`` / ``spatial_mix_gain`` — blend two independent
-    domain transfers across space via a smooth random field, so different regions of one patch
-    look like different target sequences (a spatial effect that survives the z-score restore).
+    domain transfers across space via a smooth random field, so different regions of one
+    patch look like different target sequences (an effect that survives the z-score restore).
 """
 
 import math
@@ -49,12 +49,11 @@ from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.fromSeg import seg_region_masks
 from smauglab.transforms.kernels import gaussian_blur3d, random_bias_field3d
 
-# Default transfer LUT bank (built by embeddaug/analysis/playground/build_transfer_bank.py).
 # The transfer LUT bank is a multi-hundred-MB artefact built offline by
-# embeddaug/analysis/playground/build_transfer_bank.py, so it is not shipped in the
-# wheel. Point this env var at it; there is deliberately no baked-in default, because
-# the previous one was an absolute path into a single machine's NAS home directory and
-# silently made this transform unusable for everyone else.
+# embeddaug/analysis/playground/build_transfer_bank.py, so it is not shipped in the wheel.
+# Point this env var at it; there is deliberately no baked-in default, because the previous
+# one was an absolute path into a single machine's NAS home directory and silently made
+# this transform unusable for everyone else.
 BANK_PATH_ENV_VAR = "SMAUGLAB_DOMAIN_BANK"
 
 
@@ -308,11 +307,10 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         lut_bank = self.lut_bank
         assert isinstance(lut_bank, Tensor)
         lut_bank = lut_bank.to(input.device)
-        # One binary mask per class, whichever layout the caller used. A one-hot mask
-        # is sliced to the bank's class count exactly as before; a single-channel
-        # label map -- what nnU-Net's trainer passes -- is expanded to its first NC
-        # label values instead of being blurred as raw integers, which produced a
-        # weight field that normalised to 1 everywhere and so applied one global LUT.
+        # One binary mask per class, whichever layout the caller used. A one-hot mask is
+        # sliced to the bank's class count; a single-channel label map -- what nnU-Net's
+        # trainer passes -- is expanded to its first NC label values rather than blurred as
+        # raw integers, which normalised to 1 everywhere and so applied one global LUT.
         class_masks = seg_region_masks(seg, max_regions=NC).float()
         n_seg_c = class_masks.shape[1]
 
@@ -336,9 +334,9 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
                 ih = (il + 1).clamp(0, L - 1)
                 xf = xq - il.float()
 
-                # randomly chosen target LUT(s), optionally blended across targets and/or
-                # hybridised per class (see _sample_blended_luts). With p_spatial_mix, two
-                # independent domain transfers are blended across space by a smooth field, so
+                # randomly chosen target LUT(s), optionally blended across targets or
+                # hybridised per class (see _sample_blended_luts). With p_spatial_mix two
+                # independent transfers are blended across space by a smooth field, so
                 # different regions look like different target sequences.
                 spatial = (self.p_spatial_mix > 0.0) and (float(torch.rand((), device=input.device)) < self.p_spatial_mix)
                 if spatial:

@@ -111,15 +111,13 @@ def main():
     ## Set seed
     seed = 42
     # Recorded in the saved training config, not applied: the interpreter reads
-    # PYTHONHASHSEED at startup, long before main() runs, so assigning it here
-    # cannot affect this process. Export it before launching if hash
-    # randomisation matters.
+    # PYTHONHASHSEED at startup, long before main() runs, so assigning it here cannot
+    # affect this process. Export it before launching if hash randomisation matters.
     #
-    # The dataloader workers need no seeding hook. torch's _worker_loop derives a
-    # distinct seed per worker from the loader's generator and applies it to
-    # `random`, torch and numpy, so MONAI's random transforms already differ
-    # between workers and are already reproducible -- see
-    # unit_tests/test_monai_worker_seeding.py.
+    # The dataloader workers need no seeding hook: torch's _worker_loop derives a distinct
+    # seed per worker from the loader's generator and applies it to `random`, torch and
+    # numpy, so MONAI's random transforms already differ between workers and are already
+    # reproducible -- see unit_tests/test_monai_worker_seeding.py.
     os.environ["PYTHONHASHSEED"] = str(seed)
     # Torch RNG
     torch.manual_seed(seed)
@@ -271,11 +269,9 @@ def main():
             # Load model weights
             model.load_state_dict(torch.load(args.start_weights, map_location=torch.device(device))["weights"])
 
-    # Path to the saved weights
-    # json_name is f"config_{model}_pixdimRSP_{...}.json", so the old
-    # .replace("config_SegVert_", "") never matched anything -- a leftover from a
-    # renamed project. Dropping the "config_" prefix is what it was reaching for,
-    # and it stops the weights and the params file differing only by extension.
+    # Path to the saved weights. json_name is f"config_{model}_pixdimRSP_{...}.json", so
+    # dropping the "config_" prefix is what the old .replace("config_SegVert_", "") was
+    # reaching for; it stops the weights and the params file differing only by extension.
     weights_path = f"{weight_folder}/{json_name.removeprefix('config_').replace('.json', '.pth')}"
 
     # Init criterion
