@@ -1,23 +1,16 @@
 """Smoke test for the SynthSeg modules: `python -m smauglab.transforms.synthseg`.
 
-The smoke tests used to be `if __name__ == "__main__"` blocks inside `generator.py`
-and `transforms.py`, run as `python -m smauglab.transforms.synthseg.generator` and
-`... .transforms`. The second of those had not worked since the registry landed:
+The package, not a module inside it. `__init__.py` imports both `generator` and
+`transforms`, so `python -m` on either one puts its file in `sys.modules` twice -- once
+under its own name, once as `__main__` -- and executes it twice. CPython warns about that
+on its own ("found in sys.modules ... may result in unpredictable behaviour"); for the
+registering module it is fatal, because `@register` fires again:
 
     RegistryError: GPU augmentation 'RandomSynthSegGPU' is already registered
                    (as smauglab.transforms.synthseg.transforms)
 
-`__init__.py` imports both modules, so `python -m` on either one puts its file in
-`sys.modules` twice -- once under its own name, once as `__main__` -- and executes it
-twice. Python warns about this by itself ("found in sys.modules ... may result in
-unpredictable behaviour"); for the registering module it is fatal, because `@register`
-fires a second time and the duplicate-name guard rejects it.
-
-Running the *package* loads each module exactly once: runpy imports
-`smauglab.transforms.synthseg`, then executes this file, whose imports are already
-satisfied from `sys.modules`. So there is one copy of every class, the registry sees
-one registration, and the smoke tests exercise the same objects importers get --
-rather than near-identical duplicates that `isinstance` would disagree about.
+Running the package loads each module exactly once, so the registry sees one registration
+and the smoke tests exercise the same objects importers get.
 """
 
 from __future__ import annotations

@@ -1,19 +1,18 @@
 """The SmaugLab nnU-Net trainer.
 
-One class, because the config already says everything the three previous trainers
-encoded between them. `nnUNetTrainerDAExt` built the CPU pipeline, `...GPU` built the
-GPU one plus nnU-Net's SpatialTransform, and `...Hybrid` built both -- but a config is
-sectioned into "CPU" and "GPU", so which sections are populated decides that on its
-own:
+One class, because the config already says everything the three previous trainers encoded
+between them. `nnUNetTrainerDAExt` built the CPU pipeline, `...GPU` built the GPU one plus
+nnU-Net's SpatialTransform, and `...Hybrid` built both -- but a config is sectioned into
+"CPU" and "GPU", so which sections are populated decides that on its own:
 
     transform_params.json         CPU: 19  GPU: 0   -> CPU-only, as ...DAExt did
     transform_params_gpu.json     CPU: 1   GPU: 26  -> GPU-only, as ...DAExtGPU did
     transform_params_hybrid.json  CPU: 19  GPU: 24  -> both, as ...DAExtHybrid did
 
-The class keeps the name `nnUNetTrainerDAExtGPU` whatever the config contains. That is
+The class keeps the name `nnUNetTrainerDAExtGPU` whatever the config contains, and that is
 not cosmetic: nnU-Net writes the trainer class name into every checkpoint
-(`checkpoint['trainer_name']`) and resolves the class from it at inference, so
-renaming it would make several hundred trained models unloadable.
+(`checkpoint['trainer_name']`) and resolves the class from it at inference, so renaming it
+would make several hundred trained models unloadable.
 """
 
 import filecmp
@@ -155,9 +154,8 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         _record_config(json_path, os.path.join(self.output_folder, "transform_params_used_for_training.json"))
 
         # A non-finite loss is otherwise invisible: `GradScaler` skips the step without a
-        # word, so the run simply stops learning and the only symptom is `train_loss nan`
-        # in the epoch line -- `np.mean` carrying one bad batch through the whole mean --
-        # which names neither the batch nor the cause. See `_report_nonfinite_loss`.
+        # word, so the run stops learning and the only symptom is `train_loss nan` in the
+        # epoch line, naming neither the batch nor the cause. See `_report_nonfinite_loss`.
         self._nan_steps_this_epoch = 0
         self._nan_steps_total = 0
         self._scale_floor_hits_this_epoch = 0
@@ -197,9 +195,8 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         )
 
         # Deep supervision has to come after whatever last deformed the mask. With GPU
-        # augmentations that is train_step, so the downsampling happens there; without
-        # them nothing touches the mask after this point and it belongs here, which is
-        # where nnU-Net puts it. Passing None is how the tail is told to skip it.
+        # augmentations that is train_step; without them nothing touches the mask after
+        # this point, so it belongs here, where nnU-Net puts it. None tells the tail to skip.
         transforms.extend(
             nnunet_tail_transforms(
                 use_mask_for_norm=use_mask_for_norm,
@@ -259,28 +256,23 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         data = data.to(self.device, non_blocking=True)
         # A tensor with GPU augmentations, a list without them. `get_training_transforms`
         # hands the dataloader `deep_supervision_scales=None` when the config has a GPU
-        # section, because the mask is still going to be augmented below and the
-        # downsampling has to happen after that -- so the dataloader returns one
-        # full-resolution mask. A CPU-only config has nothing touching the mask after the
-        # dataloader, so the downsampling stays there and `target` arrives as the list of
-        # deep-supervision levels. Assuming the tensor raised AttributeError on the very
-        # first batch of every CPU-only run; upstream `validation_step` has always
-        # branched here, which is why only training was affected.
+        # section, because the mask is still to be augmented below and the downsampling has
+        # to follow that, so the dataloader returns one full-resolution mask. A CPU-only
+        # config keeps the downsampling in the dataloader, so `target` arrives as the list
+        # of levels. Assuming the tensor raised AttributeError on the first batch of every
+        # CPU-only run; upstream `validation_step` has always branched here.
         if isinstance(target, list):
             target = [i.to(self.device, non_blocking=True) for i in target]
         else:
             target = target.to(self.device, non_blocking=True)
 
         self.optimizer.zero_grad(set_to_none=True)
-        # Autocast can be annoying
-        # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
-        # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
-        # So autocast will only be active if we have a cuda device.
+        # Autocast only on CUDA: on cpu it is very slow, and mps complains that it is not
+        # implemented even with `enabled=False`. Rationale verbatim in nnUNetTrainer.train_step.
         with autocast(self.device.type, enabled=True) if self.device.type == "cuda" else dummy_context():
-            # Apply GPU augmentations to full-resolution data/target, then build the
-            # deep-supervision targets from the *augmented* mask. A CPU-only config
-            # builds no GPU pipeline; nothing has touched the mask since the
-            # dataloader, which already produced those targets.
+            # GPU augmentations run on the full-resolution data/target, then the
+            # deep-supervision targets are built from the *augmented* mask. A CPU-only
+            # config builds no GPU pipeline and the dataloader already produced them.
             if self.transforms is not None:
                 data, target = self.transforms(data, target)
 
@@ -312,10 +304,9 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             if bool(torch.isfinite(l)):
                 self.optimizer.step()
 
-        # One host transfer, shared by the guard and the return value: nnU-Net pays for
-        # it here anyway, so a healthy step costs one `isfinite` on a scalar and nothing
-        # else. Checking straight after `self.loss(...)` instead would force a device
-        # sync between forward and backward on all 250 steps of every epoch.
+        # One host transfer, shared by the guard and the return value; nnU-Net pays for it
+        # here anyway, so a healthy step costs one `isfinite` on a scalar. Checking straight
+        # after `self.loss(...)` would sync between forward and backward on every step.
         loss_cpu = l.detach().cpu()
         if not bool(torch.isfinite(loss_cpu)):
             self._report_nonfinite_loss(loss_cpu, data, target, output, batch.get("keys"))

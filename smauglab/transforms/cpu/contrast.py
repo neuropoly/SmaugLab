@@ -68,10 +68,10 @@ class _ConvBaseTransform(ImageOnlyTransform):
         spatial_dims = len(data_dict["image"].shape) - 1
         if spatial_dims not in (2, 3):
             raise ValueError(f"{self.__class__} can only handle 2D or 3D images.")
-        # Shared with the GPU backend. These tables used to be written out here and
-        # again in gpu/contrast.py, which is how the 2-D Scharr x-kernel came to have
-        # [-10, 0, -10] as its middle row on this side only -- summing to -20, so not
-        # a gradient operator at all. See smauglab/transforms/kernels.py.
+        # Shared with the GPU backend. Duplicating these tables here and in
+        # gpu/contrast.py is how the 2-D Scharr x-kernel came to have [-10, 0, -10] as its
+        # middle row on this side only -- summing to -20, so not a gradient operator at
+        # all. See smauglab/transforms/kernels.py.
         kernel = laplace_kernel(spatial_dims) if self.kernel_type == "Laplace" else scharr_kernels(spatial_dims)
 
         return {"kernel_type": self.kernel_type, "kernel": kernel, "absolute": self.absolute, "retain_stats": self.retain_stats}
@@ -92,10 +92,9 @@ class _ConvBaseTransform(ImageOnlyTransform):
                 tot_ = laplacian_response(img_, spatial_dims)
             elif params["kernel_type"] == "Scharr":
                 # One convolution with every directional kernel in the output-channel
-                # axis, not one convolution per direction summed: bit-for-bit the same
-                # response, a third of the time. `params["kernel"]` still carries the
-                # kernels individually, so anything inspecting the parameters sees what
-                # it always did.
+                # axis, not one per direction summed: bit-for-bit the same response, a
+                # third of the time. `params["kernel"]` still carries the kernels
+                # individually, so anything inspecting the parameters sees what it did.
                 conv = F.conv3d if spatial_dims == 3 else F.conv2d
                 weight = torch.stack([k.to(img_) for k in params["kernel"]]).unsqueeze(1)
                 response = conv(img_, weight, padding="same")
@@ -174,15 +173,12 @@ class HistogramEqualTransform(ImageOnlyTransform):
             cdf = (cdf - cdf.min()) / (cdf.max() - cdf.min())  # Normalize to [0,1]
             cdf = cdf * (img_max - img_min) + img_min  # Scale back to image range
 
-            # Perform histogram equalization.
-            #
-            # bucketize against the 255 *interior* edges gives the index of the bin
-            # a value falls in: 0 for anything below edge 1, 255 for anything at or
-            # above edge 255. `searchsorted(bin_edges[:-1], v)` used to be used
-            # here, which returns the number of edges strictly below v -- that is
-            # bin + 1 for every value above the minimum, and 256 at the maximum,
-            # one past the end of a 256-entry CDF. The clamp hid the overflow and
-            # 63 of 64 voxels in a linear ramp landed one bin too high.
+            # bucketize against the 255 *interior* edges gives the index of the bin a
+            # value falls in: 0 below edge 1, 255 at or above edge 255. `searchsorted` on
+            # `bin_edges[:-1]` instead returns the number of edges strictly below v --
+            # bin + 1 for every value above the minimum, and 256 at the maximum, one past
+            # the end of a 256-entry CDF. The clamp hid that overflow, and 63 of 64 voxels
+            # in a linear ramp landed one bin too high.
             indices = torch.bucketize(img_flattened, bin_edges[1:-1])
             img_eq = torch.index_select(cdf, dim=0, index=indices)
             img[c] = img_eq.reshape(img[c].shape)
@@ -217,14 +213,11 @@ class _FunctionBaseTransform(ImageOnlyTransform):
                 orig_mean = torch.mean(img[c])
                 orig_std = torch.std(img[c])
 
-            # Normalize.
-            #
-            # img[c].min()/max(), not img.min()/max(): every other line in this
-            # loop works on the single channel, and reducing over the whole slab
-            # let one channel decide another's range. That matters concretely in
-            # the two-channel layout `torchio_ops.apply_tio` produces, where
-            # channel 1 is a 0/1 label map and pins img.max() at 1. The GPU
-            # sibling documents the same fix.
+            # img[c].min()/max(), not img.min()/max(): every other line in this loop works
+            # on the single channel, and reducing over the whole slab let one channel decide
+            # another's range. Concretely, in the two-channel layout
+            # `torchio_ops.apply_tio` produces, channel 1 is a 0/1 label map that pins
+            # img.max() at 1.
             channel_min, channel_max = img[c].min(), img[c].max()
             img[c] = (img[c] - channel_min) / (channel_max - channel_min + 0.00001)
 

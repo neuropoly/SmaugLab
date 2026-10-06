@@ -1,10 +1,10 @@
 """SynthSeg generative model (``BrainGenerator``) as a torch module.
 
-``SynthSegGenerator`` faithfully reproduces the order of operations and the
-default hyper-parameters of the SynthSeg "brain generator"
-(``SynthSeg/brain_generator.py`` -> ``labels_to_image_model``), turning an
-anatomical *label map* into a randomly-synthesised image together with the
-matching (spatially-deformed, possibly relabelled) ground-truth label map:
+``SynthSegGenerator`` reproduces the order of operations and the default hyper-parameters
+of the SynthSeg "brain generator" (``SynthSeg/brain_generator.py`` ->
+``labels_to_image_model``), turning an anatomical *label map* into a randomly synthesised
+image together with the matching (spatially deformed, possibly relabelled) ground-truth
+label map:
 
     spatial deform (affine + diffeomorphic SVF, on labels, nearest)
       -> [optional random crop]
@@ -15,15 +15,13 @@ matching (spatially-deformed, possibly relabelled) ground-truth label map:
       -> resolution randomisation (blur -> subsample -> resample), per channel
       -> map generation labels to output/segmentation labels
 
-The default hyper-parameters match ``BrainGenerator`` (which overrides several
-``labels_to_image_model`` signature defaults). See ``README.md`` for the table
-and source citations.
+The defaults match ``BrainGenerator``, which overrides several ``labels_to_image_model``
+signature defaults; ``README.md`` has the table and the source citations.
 
-Note on label maps: SynthSeg derives its realism from a *dense* anatomical label
-map (e.g. a FreeSurfer/SAMSEG segmentation covering every tissue). When fed a
-sparse target segmentation (only a few foreground structures over a 0
-background) it still runs correctly, but the synthetic image will only contain
-those structures over a single-Gaussian background.
+Note on label maps: SynthSeg's realism comes from a *dense* anatomical label map (e.g. a
+FreeSurfer/SAMSEG segmentation covering every tissue). Fed a sparse target segmentation it
+still runs correctly, but the synthetic image contains only those structures over a
+single-Gaussian background.
 """
 
 from __future__ import annotations

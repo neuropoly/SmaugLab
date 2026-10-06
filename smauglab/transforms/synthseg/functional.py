@@ -1,27 +1,25 @@
 """Functional building blocks for the SynthSeg generative model (GPU / torch).
 
-This module re-implements, as standalone differentiable-free torch ops, the
-individual layers of the SynthSeg "brain generator" described in:
+Standalone torch re-implementations of the individual layers of the SynthSeg "brain
+generator" described in:
 
     B. Billot et al., "SynthSeg: Segmentation of brain MRI scans of any contrast
     and resolution without retraining", Medical Image Analysis, 2023.
     (and the earlier MICCAI-2020 contrast-agnostic / PV-segmentation papers)
 
 The reference TensorFlow implementation lives in ``BBillot/SynthSeg`` and
-``BBillot/lab2im``. Each function below cites the corresponding reference layer.
-Everything operates on 3D volumes stored as ``(B, C, D, H, W)`` torch tensors
-(label maps as ``(B, 1, D, H, W)`` integer tensors), which is the convention
-used throughout SmaugLab's GPU transforms.
+``BBillot/lab2im``, and each function below cites the corresponding reference layer.
+Everything operates on 3D volumes stored as ``(B, C, D, H, W)`` torch tensors (label maps
+as ``(B, 1, D, H, W)`` integer tensors), SmaugLab's GPU-transform convention.
 
 Spatial conventions
 --------------------
-* Spatial axes ``(D, H, W)`` map to torch dims ``(2, 3, 4)``. Internally we work
-  with voxel coordinates in ``(i, j, k) = (D, H, W)`` order and only convert to
-  the ``(x, y, z) = (W, H, D)`` order expected by ``F.grid_sample`` at the very
-  end, with ``align_corners=True`` so that integer voxel indices map exactly.
-* Affine transforms are applied about the volume centre (standard practice and
-  matching SmaugLab's existing ``RandomAffineGPU``), so small rotations /
-  scalings keep the anatomy in frame.
+* Spatial axes ``(D, H, W)`` map to torch dims ``(2, 3, 4)``. Voxel coordinates are
+  ``(i, j, k) = (D, H, W)`` internally, converted to the ``(x, y, z) = (W, H, D)`` order
+  ``F.grid_sample`` expects only at the very end, with ``align_corners=True`` so that
+  integer voxel indices map exactly.
+* Affine transforms are applied about the volume centre, matching SmaugLab's existing
+  ``RandomAffineGPU``, so small rotations / scalings keep the anatomy in frame.
 """
 
 from __future__ import annotations
@@ -60,9 +58,7 @@ __all__ = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Label map helpers
-# ---------------------------------------------------------------------------
+# --- Label map helpers ----------------------------------------------------------------------------
 def to_label_map(seg: torch.Tensor) -> torch.Tensor:
     """Coerce a segmentation tensor into a single-channel integer label map.
 
@@ -95,10 +91,7 @@ def infer_label_values(label_map: torch.Tensor) -> torch.Tensor:
     return torch.unique(label_map).long()
 
 
-# ---------------------------------------------------------------------------
-# GMM intensity model  (lab2im.layers.SampleConditionalGMM
-#                       + SynthSeg.model_inputs.build_model_inputs)
-# ---------------------------------------------------------------------------
+# --- GMM intensity model (lab2im.layers.SampleConditionalGMM + SynthSeg.model_inputs.build_model_inputs)
 def _draw_value(
     prior: Union[Number, Sequence[Number], torch.Tensor] | None,
     size: tuple[int, int],
@@ -222,11 +215,10 @@ def sample_gmm_parameters(
     # 25% very dark/low-variance, 70% normal draw.
     if randomise_background and background_label_index is not None and 0 <= background_label_index < n_labels:
         # One draw per sample and two candidate parameter sets, selected with
-        # `torch.where`. The loop this replaces read `float(torch.rand(()))` back to
-        # the host once per sample, which stalls the whole queue; the branch
-        # probabilities and the per-sample independence are unchanged, but the dark
-        # draws are now made for every sample rather than only the ones that take
-        # that branch, so the stream differs from the previous release's.
+        # `torch.where`; the loop this replaces read `float(torch.rand(()))` back to the
+        # host once per sample. Branch probabilities and per-sample independence are
+        # unchanged, but the dark draws are now made for every sample rather than only the
+        # ones taking that branch, so the stream differs from the previous release's.
         draw = torch.rand(batch, 1, device=device)
         dark_means = torch.rand(batch, n_channels, device=device) * 15.0
         dark_stds = torch.rand(batch, n_channels, device=device) * 5.0
@@ -277,10 +269,9 @@ def labels_to_image_gmm(
     lut[label_values] = torch.arange(label_values.numel(), device=device)
     idx = lut[label_map.clamp(min=0, max=max_label)].squeeze(1)  # (B, D, H, W)
 
-    # One gather and one noise draw for the whole batch. The nested loop this
-    # replaces indexed `means[b, :, ch][idx_b]` once per (sample, channel) and drew
-    # its noise volume separately, so a four-channel batch of two paid eight small
-    # `randn` launches and eight gathers for what is one of each.
+    # One gather and one noise draw for the whole batch. The nested loop this replaces
+    # indexed `means[b, :, ch][idx_b]` once per (sample, channel) and drew its noise volume
+    # separately, so a four-channel batch of two paid eight small `randn` launches.
     flat_idx = idx.reshape(B, 1, -1).expand(B, C, -1)  # (B, C, N)
     mean_map = torch.gather(means.transpose(1, 2), 2, flat_idx)  # (B, C, N)
     std_map = torch.gather(stds.transpose(1, 2), 2, flat_idx)
@@ -288,10 +279,7 @@ def labels_to_image_gmm(
     return (mean_map + std_map * noise.reshape(B, C, -1)).reshape(B, C, *spatial)
 
 
-# ---------------------------------------------------------------------------
-# Spatial deformation  (lab2im.layers.RandomSpatialDeformation
-#                       + utils.sample_affine_transform + neuron VecInt)
-# ---------------------------------------------------------------------------
+# --- Spatial deformation (lab2im.layers.RandomSpatialDeformation + utils.sample_affine_transform + neuron VecInt)
 def _as_3vec(value, device: torch.device, default: float = 0.0) -> torch.Tensor:
     if value is None or value is False:
         return torch.full((3,), float(default), device=device)
@@ -497,9 +485,7 @@ def random_svf_field(
     return _integrate_velocity(velocity, int_steps=int_steps)
 
 
-# ---------------------------------------------------------------------------
-# Bias field  (lab2im.layers.BiasFieldCorruption)
-# ---------------------------------------------------------------------------
+# --- Bias field (lab2im.layers.BiasFieldCorruption) -----------------------------------------------
 def bias_field(
     image: torch.Tensor,
     bias_field_std: float = 0.7,
@@ -519,9 +505,7 @@ def bias_field(
     return image * random_bias_field3d((D, H, W), bias_field_std, bias_scale, image.device, image.dtype, batch=B, channels=C)
 
 
-# ---------------------------------------------------------------------------
-# Intensity augmentation  (lab2im.layers.IntensityAugmentation)
-# ---------------------------------------------------------------------------
+# --- Intensity augmentation (lab2im.layers.IntensityAugmentation) ---------------------------------
 def intensity_augmentation(
     image: torch.Tensor,
     clip: float = 300.0,
@@ -552,11 +536,7 @@ def intensity_augmentation(
     return image
 
 
-# ---------------------------------------------------------------------------
-# Resolution randomisation  (lab2im.edit_tensors + layers.GaussianBlur /
-#                            DynamicGaussianBlur / SampleResolution /
-#                            MimicAcquisition)
-# ---------------------------------------------------------------------------
+# --- Resolution randomisation (lab2im.edit_tensors + layers.GaussianBlur / DynamicGaussianBlur / SampleResolution / MimicAcquisition)
 def blurring_sigma_for_downsampling(
     current_res: torch.Tensor,
     downsample_res: torch.Tensor,
@@ -664,9 +644,7 @@ def mimic_acquisition(
     return x
 
 
-# ---------------------------------------------------------------------------
-# EM label completion for sparse label maps  (SynthSeg paper, Sec. 5.4)
-# ---------------------------------------------------------------------------
+# --- EM label completion for sparse label maps (SynthSeg paper, Sec. 5.4) -------------------------
 def _quadratic_log_likelihood_terms(means: torch.Tensor, var: torch.Tensor, weights: torch.Tensor, eps: float) -> torch.Tensor:
     """The `(3, K)` coefficients of the per-component log-density as a quadratic in x.
 
@@ -821,10 +799,9 @@ def em_subdivide_labels(
     B = image.shape[0]
     device = image.device
     ref = image[:, channel]  # (B, D, H, W)
-    # Per-sample label histogram, in one pass. It answers three questions the loop
-    # below used to ask one at a time with a host synchronisation each: which labels
-    # exist batch-wide, which is the largest, and how many voxels each holds in each
-    # sample.
+    # Per-sample label histogram in one pass. It answers three questions the loop below
+    # asked one at a time with a host synchronisation each: which labels exist batch-wide,
+    # which is the largest, and how many voxels each holds in each sample.
     label_counts = _label_counts_per_sample(label_map)
     totals = label_counts.sum(dim=0)
     parents = totals.nonzero().flatten().tolist()  # sorted, batch-wide
@@ -834,9 +811,9 @@ def em_subdivide_labels(
     mult = max(hi, int(n_foreground_clusters)) + 1  # collision-free encoding
 
     # If the configured background label is absent (e.g. a *complete* one-hot whose
-    # decoding shifted every label by +1, so the real background is no longer 0),
-    # fall back to the largest-area label so it still receives the richer
-    # [min, max] background split rather than the 2-cluster foreground split.
+    # decoding shifted every label by +1, so the real background is no longer 0), fall back
+    # to the largest-area label, so it still receives the richer [min, max] background
+    # split rather than the 2-cluster foreground split.
     if background_label not in parents and len(parents) > 0:
         background_label = int(totals.argmax())
 
@@ -927,9 +904,7 @@ def random_merge_classes(
     return classes
 
 
-# ---------------------------------------------------------------------------
-# Label utilities  (lab2im.layers.RandomFlip / ConvertLabels)
-# ---------------------------------------------------------------------------
+# --- Label utilities (lab2im.layers.RandomFlip / ConvertLabels) -----------------------------------
 def flip_lr_with_swap(
     label_map: torch.Tensor,
     flip_axis: int,

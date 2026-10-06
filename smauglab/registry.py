@@ -161,12 +161,10 @@ class InvalidConfigError(RegistryError, ValueError):
         super().__init__(f"{source}: {len(problems)} problem(s)\n{joined}")
 
 
-# Renamed *parameters*, for diagnostics only -- consulted when building an error
-# message, NEVER when loading a config. difflib cannot bridge these on its own:
-# "probability" vs "p" scores ~0.17, well under any usable cutoff, so without this
-# table the commonest mistake in an old config would get no suggestion at all.
-# A test asserts that no key here resolves through `get()`, which is what keeps it
-# from becoming a back-compat path.
+# Renamed *parameters*, for diagnostics only -- consulted when building an error message,
+# NEVER when loading a config. difflib cannot bridge these on its own ("probability" vs
+# "p" scores ~0.17, well under any usable cutoff), and a test asserts that no key here
+# resolves through `get()`, which keeps the table from becoming a back-compat path.
 #
 # Renamed augmentations are deliberately absent: stem matching in
 # `_unknown_augmentation_message` already bridges "ScharrTransform" -> RandomScharrGPU
@@ -183,22 +181,17 @@ RENAMED_HINTS: Mapping[str, str] = MappingProxyType(
 )
 
 
-#: Where each augmentation sits in its backend's pipeline.
+#: Where each augmentation sits in its backend's pipeline, replacing the `if` ladders in
+#: `gpu/transforms.py` and `cpu/transforms.py`. One tuple per backend rather than an
+#: `order=` on each `@register`, so the sequence stays diffable against the old ladder in
+#: one place.
 #:
-#: This replaces the fixed sequence that used to be written into the `if` ladders --
-#: `gpu/transforms.py` for GPU, `cpu/transforms.py` for CPU. It is one list per backend
-#: rather than an `order=` number on each `@register` for a specific reason: the whole
-#: point of review here is "does the new pipeline run things in the same sequence as the
-#: old one?", and that question is answerable by diffing this against the ladder it came
-#: from. Spread over eight files as integers, it is not.
+#: Order matters, and config key order does not decide it -- the two have never agreed, and
+#: honouring the file would reorder every pipeline the moment someone tidied a config. A
+#: config can opt into key order explicitly; see `pipeline.order` in smauglab/config.py.
 #:
-#: Order matters. Config key order does not decide it -- the two have never agreed, and
-#: honouring the file would silently reorder every pipeline the moment someone tidied a
-#: config. A config can opt into key order explicitly; see `pipeline.order` in
-#: smauglab/config.py.
-#:
-#: Registering a class that is absent from its backend's tuple is an error, so this
-#: cannot silently fall out of date.
+#: Registering a class absent from its backend's tuple is an error, so this cannot
+#: silently fall out of date.
 PIPELINE_ORDER: Mapping[Backend, tuple[str, ...]] = MappingProxyType(
     {
         # From the ladder in gpu/transforms.py, top to bottom. The four names that ladder
@@ -298,21 +291,19 @@ class AugEntry:
     # CPU only: batchgeneratorsv2 puts the apply probability on a RandomTransform
     # wrapper rather than the transform, so `p` is a builder key, not a ctor kwarg.
     wrap_random: bool = True
-    # Run in pipeline order even in the random-order pipelines, instead of going
-    # into a shuffled RandomChooseX bucket. GEO transforms are always sequential;
-    # this is for the ones whose group says otherwise. RandomLowResTransformGPU is
-    # the only case: segtransferaug's AUG2GROUP calls it GE, but the random-order
-    # builder has always run it in sequence, and the group is used downstream for
-    # filtering, so the two meanings are kept apart rather than reconciled.
+    # Run in pipeline order even in the random-order pipelines, instead of going into a
+    # shuffled RandomChooseX bucket. GEO is always sequential; this is for the ones whose
+    # group says otherwise. RandomLowResTransformGPU is the only case: segtransferaug's
+    # AUG2GROUP calls it GE but the random-order builder has always run it in sequence, and
+    # the group is used downstream for filtering, so the two meanings are kept apart.
     force_sequential: bool = False
     # Name of an env var pointing at a large artefact the transform needs but the
     # wheel does not ship. Tests skip rather than fail when it is unset.
     external_asset: str | None = None
-    # Parameters the builder must pass through a callable before handing them over.
-    # batchgeneratorsv2 ranges are the reason: `BGContrast((0.7, 1.5))` samples 50/50
-    # from [lo, 1] and [max(lo, 1), hi], where the bare tuple would be sampled
-    # uniformly -- a different distribution, not a formatting detail. The config
-    # stores the plain range; the adapter is applied on the way in.
+    # Parameters the builder must pass through a callable first. batchgeneratorsv2 ranges
+    # are the reason: `BGContrast((0.7, 1.5))` samples 50/50 from [lo, 1] and
+    # [max(lo, 1), hi] where the bare tuple would be sampled uniformly -- a different
+    # distribution, not a formatting detail. The config stores the plain range.
     param_adapters: Mapping[str, Callable[[Any], Any]] = field(default_factory=lambda: MappingProxyType({}))
     # Constructor nudges that make the standalone smoke test exercise something.
     smoke_kwargs: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
@@ -493,12 +484,11 @@ def _unknown_augmentation_message(name: str, backend: Backend | None) -> str:
     where = f"{backend.value} " if backend is not None else ""
     lines = [f"unknown {where}augmentation {name!r}."]
 
-    # Two kinds of near-miss, and they find different things. difflib catches
-    # typos; matching on the distinctive middle of the name catches a renamed key
-    # such as "ScharrTransform" -> "RandomScharrGPU", which shares too little with
-    # its replacement for any usable cutoff. Merged rather than used as a fallback:
-    # searching across backends, difflib alone would fill the list with CPU
-    # candidates and crowd out the GPU rename the caller is probably after.
+    # Two kinds of near-miss that find different things: difflib catches typos, while
+    # matching on the distinctive middle of the name catches a rename such as
+    # "ScharrTransform" -> "RandomScharrGPU", which shares too little with its replacement
+    # for any usable cutoff. Merged rather than used as a fallback, because across backends
+    # difflib alone would fill the list with CPU candidates and crowd out the GPU rename.
     stem = name.removeprefix("Random").removesuffix("Transform").removesuffix("GPU")
     close = difflib.get_close_matches(name, candidates, n=3, cutoff=0.6)
     close += [c for c in candidates if stem and stem.lower() in c.lower() and c not in close]

@@ -262,14 +262,13 @@ class MaskSequentialOpsCustom(MaskSequentialOps):
             extra_args = {}
 
         if _leaves_masks_untouched(module) and isinstance(input, Tensor) and input.dim() == 5:
-            # Nothing to do, and `transform_masks` is not cheap: it deep-copies the
-            # params, reshapes and validates the volume and resolves the row
-            # selection, all to hand back the tensor it was given. Most of a
-            # pipeline is image-only, so this is most of the mask pass.
+            # Nothing to do, and `transform_masks` is not cheap: it deep-copies the params,
+            # reshapes and validates the volume and resolves the row selection, all to hand
+            # back the tensor it was given. Most of a pipeline is image-only.
             #
-            # Restricted to an already-batched volume because that is the shape
-            # kornia's `transform_tensor` / `_transform_output_shape` round-trip
-            # leaves untouched; a 4-D mask would come back with a batch axis.
+            # Restricted to an already-batched volume because that is the shape kornia's
+            # `transform_tensor` / `_transform_output_shape` round-trip leaves untouched; a
+            # 4-D mask would come back with a batch axis.
             return input
 
         if isinstance(module, (K.GeometricAugmentationBase2D,)):
@@ -561,10 +560,9 @@ class AugmentationSequentialOpsCustom(AugmentationSequentialOps):
         keys = [dk.name for dk in _data_keys]
         if "MASK" in keys:
             mask_index = keys.index("MASK")
-            # kornia types ParamItem.data as dict | list[ParamItem] | None and the
-            # inputs as the wider DataType, but the MASK entry of a leaf
-            # augmentation is always a params dict holding a plain tensor. Asserted
-            # rather than ignored so a violated assumption still fails loudly.
+            # kornia types ParamItem.data as dict | list[ParamItem] | None and the inputs
+            # as the wider DataType, but a leaf augmentation's MASK entry is always a params
+            # dict holding a plain tensor. Asserted rather than ignored, so it fails loudly.
             mask = arg[mask_index]
             assert isinstance(param.data, dict)
             assert isinstance(mask, Tensor)

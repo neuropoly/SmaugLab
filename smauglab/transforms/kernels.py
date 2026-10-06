@@ -1,24 +1,16 @@
 """Convolution kernels and smooth random fields, shared by every backend.
 
-Four independent 3-D Gaussian implementations, three bias fields and two copies of
-the Laplace/Scharr constant tables used to live in five different modules. They were
-not equivalent, and the divergence is what let two of them go wrong unnoticed: the
-uncentred Gaussian in `gpu/contrast.py` and the malformed 2-D Scharr x-kernel in
-`cpu/contrast.py`, both corrected earlier in this series. Each was fixed on its own
-because there was no shared implementation to fix instead. This module is that
-implementation; anything that convolves or blurs should import from here rather than
-growing a fifth copy.
+Four 3-D Gaussian implementations, three bias fields and two copies of the Laplace/Scharr
+constant tables used to live in five different modules, and the divergence is what let two
+of them go wrong unnoticed: an uncentred Gaussian in `gpu/contrast.py`, a malformed 2-D
+Scharr x-kernel in `cpu/contrast.py`. Anything that convolves or blurs imports from here.
 
-The consolidation is not bit-for-bit for the two blur call sites, and deliberately so:
-
-* Radius is `ceil(3*sigma)`. `domain_transfer` and `fromSeg` used `round(3*sigma)`,
-  which is never wider, so their kernels may now be one tap larger.
-* Padding is `reflect` everywhere. `domain_transfer` used `replicate` and `fromSeg`
-  relied on conv3d's implicit zero padding. Zero padding darkens the volume border,
-  which is the one difference here that was wrong rather than merely different.
-
-Everything else -- the dense Gaussian, both derivative tables, the bias field -- is
-the same arithmetic as the copy it replaces.
+The consolidation is deliberately not bit-for-bit for the two blur call sites: the radius is
+`ceil(3*sigma)` where `domain_transfer` and `fromSeg` used `round(3*sigma)`, which is never
+wider, so their kernels may now be one tap larger; and padding is `reflect` everywhere,
+where `domain_transfer` used `replicate` and `fromSeg` relied on conv3d's implicit zero
+padding -- which darkens the volume border, the one difference here that was a bug rather
+than a choice. Everything else is the same arithmetic as the copy it replaces.
 """
 
 from __future__ import annotations
@@ -295,14 +287,12 @@ SCHARR_2D = [
 
 #: 3-D Scharr, (x, y, z).
 #:
-#: Signed the same way as SCHARR_2D above and as the usual Scharr/Sobel
-#: convention: the derivative runs [-1, 0, +1], so the positive lobe is on the
-#: far side of each axis. This table used to be the exact negation of that, so a
-#: 2-D and a 3-D run produced opposite-signed gradients from the same image.
+#: Signed as SCHARR_2D above and as the usual Scharr/Sobel convention: the derivative
+#: runs [-1, 0, +1], so the positive lobe is on the far side of each axis. This table was
+#: the exact negation, so a 2-D and a 3-D run produced opposite-signed gradients.
 #:
-#: Every shipped config sets `absolute: true`, and |(-k) * x| == |k * x|, so no
-#: shipped pipeline changes. It matters for `absolute=False`, which is the
-#: default of `RandomScharrGPU`.
+#: Every shipped config sets `absolute: true`, and |(-k) * x| == |k * x|, so no shipped
+#: pipeline changes. It matters for `absolute=False`, the default of `RandomScharrGPU`.
 SCHARR_3D = [
     [
         [[-9, 0, 9], [-30, 0, 30], [-9, 0, 9]],
@@ -322,12 +312,11 @@ SCHARR_3D = [
 ]
 
 
-# These tables are compile-time constants, but `torch.tensor(nested_list)` walks the
-# list in Python and then copies host memory to the device -- every call, from inside
-# `apply_transform`, for a tensor of at most 27 numbers. Caching makes the second and
-# later calls a dictionary lookup.
+# These tables are compile-time constants, but `torch.tensor(nested_list)` walks the list
+# in Python and then copies host memory to the device -- every call, from inside
+# `apply_transform`, for at most 27 numbers. Caching makes later calls a dict lookup.
 #
-# The cached tensors are shared, so callers must treat them as read-only. Every one in
+# The cached tensors are shared, so callers must treat them as read-only. Every caller in
 # this repository does: they expand, reshape, or convolve with them.
 
 

@@ -59,10 +59,9 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
         # Compute original mean, std and min/max values
         original_mean, original_std = img.mean(), img.std()
 
-    # Normalize image. The clamp mirrors the GPU implementation: a constant patch -- CT
-    # air, which preprocessing clips to a single value -- makes this 0/0, and unlike the
-    # GPU path nothing downstream inspects the result, so the NaN reaches the loss and
-    # `GradScaler` then skips the step without a word in the log.
+    # The clamp mirrors the GPU path: a constant patch (CT air, which preprocessing clips
+    # to a single value) makes this 0/0, and nothing downstream inspects the result here,
+    # so the NaN reaches the loss and `GradScaler` skips the step without a word in the log.
     img_min, img_max = img.min(), img.max()
     img = (img - img_min) / (img_max - img_min).clamp_min(1e-6)
 
@@ -82,14 +81,13 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
 
         # Convert to NumPy for dilation operations (not supported in PyTorch)
         l_mask_np = l_mask.cpu().numpy()
-        # Rank from the data, not hardcoded 3: scipy requires the structuring element
-        # to match the input's rank, so a 2-D image raised
-        # "structure rank must match input rank" here.
+        # Rank from the data, not a hardcoded 3: scipy requires the structuring element to
+        # match the input's rank, so a 2-D image raised "structure rank must match input
+        # rank" here.
         #
-        # Three passes of the 6-connected element, not one pass of
-        # `iterate_structure(..., 3)`. They give bit-identical masks -- that is what
-        # iterating a structure means -- but the iterated element is a 7x7x7 stencil
-        # evaluated at every voxel, where three small passes are 3 x 7 taps: 9 ms
+        # Three passes of the 6-connected element rather than one of
+        # `iterate_structure(..., 3)`: bit-identical masks, but the iterated element is a
+        # 7x7x7 stencil at every voxel where three small passes are 3 x 7 taps -- 9 ms
         # against 45 ms for a 96^3 mask.
         struct = ndi.generate_binary_structure(l_mask_np.ndim, 1)
         l_mask_dilate_np = ndi.binary_dilation(l_mask_np, structure=struct, iterations=3)
@@ -119,18 +117,15 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
         else:
             to_add += _normal_pdf(img, l_mean, redist_std) * sign
 
-    # Normalize to_add and apply it to the image.
+    # The min-max form shifted zero: with `2 * (to_add - min) / range`, a voxel where
+    # nothing was redistributed picks up `-2 * min / range`, non-zero whenever min < 0 --
+    # and it always is, since the per-label scale is `2 * rand - 1` in [-1, 1]. On the
+    # `in_seg` branch `to_add` is exactly zero outside the labels, so that constant became
+    # a DC offset over the whole patch: `in_seg` restricted where the redistribution was
+    # *computed* but not where it landed.
     #
-    # The min-max form used here shifted zero: with `2 * (to_add - min) / range`,
-    # a voxel where nothing was redistributed picks up `-2 * min / range`, which is
-    # non-zero whenever min < 0 -- and it always is, since the per-label scale is
-    # `2 * rand - 1` in [-1, 1]. On the `in_seg` branch `to_add` is exactly zero
-    # outside the labels, so that constant became a DC offset applied to the whole
-    # patch: `in_seg` restricted where the redistribution was *computed* but not
-    # where it landed.
-    #
-    # Scaling by the largest magnitude keeps the same peak amplitude of 2 and maps
-    # zero to zero, so an untouched voxel stays untouched.
+    # Scaling by the largest magnitude keeps the peak amplitude of 2 and maps zero to zero,
+    # so an untouched voxel stays untouched.
     to_add_scale = to_add.abs().max()
     img += 2 * to_add / (to_add_scale + 1e-6)
 
