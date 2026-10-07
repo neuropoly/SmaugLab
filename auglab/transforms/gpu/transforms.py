@@ -134,6 +134,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
                     label_classes=v26_6_2_nf_params.get("label_classes", None),
                     noise_std_range=v26_6_2_nf_params.get("noise_std_range", [0.05, 0.25]),
                     label_fill_noise=v26_6_2_nf_params.get("label_fill_noise", False),
+                    label_voronoi=v26_6_2_nf_params.get("label_voronoi", False),
                 )
             )
 

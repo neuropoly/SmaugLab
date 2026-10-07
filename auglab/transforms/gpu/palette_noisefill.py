@@ -19,6 +19,7 @@ partition distribution and region means are provably identical — only the fill
 """
 from __future__ import annotations
 
+import os
 import random
 from typing import Any, Dict, List, Optional
 
@@ -50,6 +51,14 @@ class RandomV26_6_2NoiseFillContrastGPU(RandomV26_6_2ContrastGPU):
     (`mu_c + sigma_c*N(0,1)`, same noise_std_range), so no path in the transform
     preserves real texture. This is the version that actually tests "remove all
     texture preservation," which v1 didn't fully do.
+
+    label_voronoi=True (with label_fill_noise=True; 2026-10-07): a remapped label is
+    not refilled as ONE noise level but split into spatial Voronoi cells (same helper,
+    s_choices and skip_sub_parc_prob as the step-1 sub-parcellation, cells seeded
+    inside the label), each cell with its own mu + sigma*N(0,1). The label still
+    replaces whatever k-means structure was inside it (SynthSeg-style label
+    redistribution), but the Voronoi sub-regions now exist inside labels too, as they
+    do in the real-fill arm, so the fill swap no longer also removes Voronoi there.
     """
 
     def __init__(
@@ -57,11 +66,22 @@ class RandomV26_6_2NoiseFillContrastGPU(RandomV26_6_2ContrastGPU):
         *args: Any,
         noise_std_range: List[float] = [0.05, 0.25],
         label_fill_noise: bool = False,
+        label_voronoi: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.noise_std_range = noise_std_range
         self.label_fill_noise = label_fill_noise
+        self.label_voronoi = label_voronoi
+        # GUARD (2026-10-07): noise label refill + Voronoi sub-parcellation WITHOUT label_voronoi erases the Voronoi
+        # cells inside every remapped label, so the ladder's fill swap (noise -> real fill) would also add Voronoi there.
+        # That was the retired rung-4 config (transform_params_gpu_baseline_kmeans_label_remap_voronoi_spatialDA_train050);
+        # the current one is ..._voronoi_lblvor_spatialDA_train050.json. Only reproducing an old run may bypass this.
+        if label_fill_noise and not label_voronoi and self.skip_sub_parc_prob < 1.0 and self.label_remap_prob > 0 \
+                and os.environ.get("AUGLAB_ALLOW_LEGACY_NOISEFILL") != "1":
+            raise ValueError("RandomV26_6_2NoiseFillContrastGPU: label_fill_noise=True with Voronoi on requires "
+                             "label_voronoi=True (use transform_params_gpu_baseline_kmeans_label_remap_voronoi_lblvor_spatialDA_"
+                             "train050.json); set AUGLAB_ALLOW_LEGACY_NOISEFILL=1 only to reproduce a retired run")
 
     @torch.no_grad()
     def apply_transform(
@@ -183,7 +203,21 @@ class RandomV26_6_2NoiseFillContrastGPU(RandomV26_6_2ContrastGPU):
                     continue
 
                 mu_c = torch.rand(B, 1, device=device)
-                if self.label_fill_noise:
+                if self.label_fill_noise and self.label_voronoi:
+                    # Voronoi cells inside the label, each its own noise level (see class docstring)
+                    new_vals = torch.empty(B, N, device=device)
+                    for i in range(B):
+                        m_i = c_mask[i]
+                        if m_i.sum() == 0:              # label absent from this sample: write_mask is 0 there anyway
+                            new_vals[i] = synth[i]
+                            continue
+                        cell, n_cell = _voronoi_region_ids(
+                            coords, torch.zeros(N, dtype=torch.long, device=device), m_i, 1, device,
+                            self.s_choices, self.skip_sub_parc_prob)
+                        mu_cell = torch.rand(n_cell, device=device)
+                        sd_cell = torch.rand(n_cell, device=device) * (std_hi - std_lo) + std_lo
+                        new_vals[i] = (mu_cell[cell] + sd_cell[cell] * torch.randn(N, device=device)).clamp(0, 1)
+                elif self.label_fill_noise:
                     sigma_c = torch.rand(B, 1, device=device) * (std_hi - std_lo) + std_lo
                     noise_c = torch.randn(B, N, device=device)
                     new_vals = (mu_c + sigma_c * noise_c).clamp(0, 1)
