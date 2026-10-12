@@ -96,6 +96,25 @@ SMAUGLAB_PARAMS_GPU_JSON=/path/to/your/params.json nnUNetv2_train 100 3d_fullres
 
 > ⚠️ **Warning** : To avoid any paths issues, please specify an absolute path to your JSON file.
 
+### Mixed-precision gradient scale
+
+The trainer floors the AMP gradient scale at `1.0`. `torch`'s `GradScaler` halves the scale on every
+step with a non-finite gradient and only doubles it back after 2000 *consecutive* clean steps, with no
+floor underneath, so a bad-batch rate above 1-in-2000 drives it to exactly `0.0` -- at which point every
+gradient becomes `NaN`, clean batches included, and the run cannot recover while still logging epochs.
+Below `1.0` the scaler can only shrink gradients, so the floor costs nothing.
+
+`SMAUGLAB_MIN_GRAD_SCALE` overrides it, for the one case the default forecloses: gradients that genuinely
+overflow fp16 at scale 1, where halving is the correct response.
+
+```bash
+SMAUGLAB_MIN_GRAD_SCALE=0.25 nnUNetv2_train 100 3d_fullres 0 -tr nnUNetTrainerDAExtGPU -p nnUNetPlans
+```
+
+A value at or below zero is rejected, since that is the collapse the floor exists to prevent, and a value
+below `1.0` warns: a floor deep in the denormals trains on all-zero gradients without ever reporting a
+non-finite step. Resets are written to the training log and counted in the epoch summary either way.
+
 ## Run Monai training with SmaugLab augmentations
 
 > To use SmaugLab augmentations in a MONAI training pipeline, refer to the example [training script](https://github.com/neuropoly/SmaugLab/blob/main/scripts/train_monai.py). Key implementation lines required for proper integration are marked with a 🐞 emoji in the comments.
@@ -243,20 +262,6 @@ transfer augmentations (`RandomScharrGPU`, `RandomUnsharpMaskGPU`, `RandomRandCo
 `RandomRedistributeSegGPU`, `RandomInverseGPU`, `RandomHistogramEqualizationGPU`) at
 `p=0` and `RandomSynthSegGPU` at `p=1.0` in their place. The general-enhancement half is
 identical between the two.
-
-
-## Citation
-
-If you use SmaugLab, please make sure to cite the following paper:
-
-```
-@article{molinier2026one,
-  title={One Sequence to Segment Them All: Efficient Data Augmentation for CT and MRI Cross-Domain 3D Spine Segmentation},
-  author={Molinier, Nathan and M{\"o}ller, Hendrik and Dagonneau, Thomas and Curto-Vilalta, Anna and Graf, Robert and Atad, Matan and Rueckert, Daniel and Kirschke, Jan S and Cohen-Adad, Julien},
-  journal={arXiv preprint arXiv:2605.03098},
-  year={2026}
-}
-```
 
 ## Available augmentations
 
