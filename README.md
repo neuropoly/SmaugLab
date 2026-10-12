@@ -189,20 +189,6 @@ transfer augmentations (`RandomScharrGPU`, `RandomUnsharpMaskGPU`, `RandomRandCo
 `p=0` and `RandomSynthSegGPU` at `p=1.0` in their place. The general-enhancement half is
 identical between the two.
 
-
-## Citation
-
-If you use SmaugLab, please make sure to cite the following paper:
-
-```
-@article{molinier2026one,
-  title={One Sequence to Segment Them All: Efficient Data Augmentation for CT and MRI Cross-Domain 3D Spine Segmentation},
-  author={Molinier, Nathan and M{\"o}ller, Hendrik and Dagonneau, Thomas and Curto-Vilalta, Anna and Graf, Robert and Atad, Matan and Rueckert, Daniel and Kirschke, Jan S and Cohen-Adad, Julien},
-  journal={arXiv preprint arXiv:2605.03098},
-  year={2026}
-}
-```
-
 ## Available augmentations
 
 Which augmentations exist, and which of the two backends implements each one. An empty
