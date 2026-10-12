@@ -65,15 +65,27 @@ class Backend(str, Enum):
 class AugType(str, Enum):
     """Augmentation strength class.
 
-    Member names are verbatim from segtransferaug's `AUG2GROUP`, which this
+    GEO, GE and TA are verbatim from segtransferaug's `AUG2GROUP`, which this
     replaces, so downstream `AugType.TA` keeps resolving. The GPU random-order
     pipelines bucket transforms by this to decide what goes inside each
     `RandomChooseXTransformsGPU`.
+
+    OCC has no `AUG2GROUP` ancestor and is GEO for every purpose the pipeline
+    has: `build.SEQUENTIAL_GROUPS` runs it in the same leading sequential run and
+    `PIPELINE_ORDER` is untouched. It exists so the consistency loss can decline
+    to hoist it. That loss runs the GEO transforms once and shares the result with
+    its reference branch (`build.SHARED_GROUPS`), and a transform that *blanks*
+    part of the volume rather than moving it must not go in that stage: the
+    intensity transforms that follow would paint texture into the region it
+    discarded. The split rests on GEO being a prefix of the pipeline, which is
+    also why the two cannot be one group -- `RandomCropTransformGPU` sits near
+    the end of `PIPELINE_ORDER`.
     """
 
-    GEO = "GEO"  # geometric: applied in sequence, never bucketed
+    GEO = "GEO"  # geometric: moves voxels, applied in sequence, never bucketed
     GE = "GE"  # general enhancement, usually light
     TA = "TA"  # transfer augmentation, usually heavy
+    OCC = "OCC"  # occlusion: sequential like GEO, but discards field of view
 
 
 class AugId(str, Enum):

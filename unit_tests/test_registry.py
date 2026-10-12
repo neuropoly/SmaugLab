@@ -317,6 +317,31 @@ class TestMatrix(RegistryTestCase):
             registry.render_matrix("yaml")
 
 
+class TestSharedGeometricGroup(unittest.TestCase):
+    """What `build_gpu_stages` relies on, asserted against the real registry.
+
+    The consistency loss runs `AugType.GEO` once and shares the result with its
+    reference branch. That is only sound for transforms that *move* voxels:
+    `RandomCropTransformGPU` blanks the field of view instead, and run ahead of the
+    intensity stage its flat fill gets texture painted into it. Hence `AugType.OCC`.
+    """
+
+    def test_the_crop_is_not_in_the_geometric_group(self):
+        self.assertIs(registry.get("RandomCropTransformGPU", Backend.GPU).group, AugType.OCC)
+
+    def test_the_geometric_group_is_exactly_the_voxel_moving_transforms(self):
+        self.assertEqual(
+            registry.names(Backend.GPU, group=AugType.GEO),
+            ["RandomFlipTransformGPU", "RandomAffineGPU"],
+        )
+
+    def test_the_geometric_group_leads_the_pipeline(self):
+        """A prefix, which is what makes the split free of reordering."""
+        order = registry.PIPELINE_ORDER[Backend.GPU]
+        positions = [i for i, name in enumerate(order) if registry.get(name, Backend.GPU).group is AugType.GEO]
+        self.assertEqual(positions, list(range(len(positions))))
+
+
 class TestModuleHygiene(unittest.TestCase):
     def test_registry_does_not_import_torch(self):
         """`smauglab list` must be able to answer without paying for torch."""

@@ -15,6 +15,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 from smauglab.config import OrderSource, PipelineMode, SmaugConfig, validate_file, validate_section
 from smauglab.registry import Backend, InvalidConfigError
@@ -146,3 +147,100 @@ class TestOrderSource(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLossSection(unittest.TestCase):
+    """The `loss` section, validated the same way `pipeline` is.
+
+    A typo'd setting has to be an error rather than an ignored key: a config saying
+    `"detatch_reference": false` would otherwise train with the reference detached and
+    then be copied into the run folder as that run's only record, claiming the opposite.
+    """
+
+    BASE: ClassVar[dict] = {"GPU": {"RandomFlipTransformGPU": {"p": 1.0}}}
+
+    def _config(self, loss) -> SmaugConfig:
+        return SmaugConfig({**self.BASE, "loss": loss})
+
+    def test_the_section_is_optional_and_the_term_defaults_to_off(self):
+        config = SmaugConfig(dict(self.BASE))
+        self.assertFalse(config.consistency_enabled())
+        self.assertEqual(
+            config.loss_options("consistency"),
+            {"enabled": False, "weight": 0.5, "detach_reference": True},
+        )
+
+    def test_defaults_fill_in_around_a_partial_block(self):
+        config = self._config({"consistency": {"enabled": True, "weight": 0.25}})
+        self.assertTrue(config.consistency_enabled())
+        self.assertEqual(
+            config.loss_options("consistency"),
+            {"enabled": True, "weight": 0.25, "detach_reference": True},
+        )
+
+    def test_options_are_handed_out_as_copies(self):
+        config = self._config({"consistency": {"enabled": True}})
+        config.loss_options("consistency")["weight"] = 99
+        self.assertEqual(config.loss_options("consistency")["weight"], 0.5)
+
+    def test_comment_keys_are_accepted(self):
+        config = self._config({"_why": "ablation", "consistency": {"_note": "x", "enabled": True}})
+        self.assertTrue(config.consistency_enabled())
+
+    def test_an_unknown_term_is_rejected_with_a_suggestion(self):
+        with self.assertRaises(InvalidConfigError) as caught:
+            self._config({"consistancy": {"enabled": True}})
+        self.assertIn("Did you mean: consistency?", caught.exception.problems[0])
+
+    def test_an_unknown_setting_is_rejected_with_a_suggestion(self):
+        with self.assertRaises(InvalidConfigError) as caught:
+            self._config({"consistency": {"detatch_reference": True}})
+        self.assertIn("Did you mean: detach_reference?", caught.exception.problems[0])
+
+    def test_a_non_boolean_flag_is_rejected(self):
+        for key in ("enabled", "detach_reference"):
+            with self.subTest(key=key), self.assertRaises(InvalidConfigError) as caught:
+                self._config({"consistency": {key: "yes"}})
+            self.assertIn(f"loss.consistency.{key}", caught.exception.problems[0])
+
+    def test_a_negative_weight_is_rejected(self):
+        with self.assertRaises(InvalidConfigError) as caught:
+            self._config({"consistency": {"weight": -0.5}})
+        self.assertIn("non-negative", caught.exception.problems[0])
+
+    def test_a_non_numeric_weight_is_rejected(self):
+        for weight in ("0.5", True, None):
+            with self.subTest(weight=weight), self.assertRaises(InvalidConfigError):
+                self._config({"consistency": {"weight": weight}})
+
+    def test_a_zero_weight_is_accepted(self):
+        """The "pay the second forward, measure the term, change nothing" ablation."""
+        config = self._config({"consistency": {"enabled": True, "weight": 0}})
+        self.assertEqual(config.loss_options("consistency")["weight"], 0)
+
+    def test_the_section_must_be_an_object(self):
+        with self.assertRaises(InvalidConfigError) as caught:
+            self._config(3)
+        self.assertEqual(caught.exception.problems, ["loss: expected an object"])
+
+    def test_a_terms_block_must_be_an_object(self):
+        with self.assertRaises(InvalidConfigError) as caught:
+            self._config({"consistency": 3})
+        self.assertIn("loss.consistency: expected an object", caught.exception.problems[0])
+
+    def test_every_problem_in_the_section_is_reported_at_once(self):
+        with self.assertRaises(InvalidConfigError) as caught:
+            self._config({"nope": {}, "consistency": {"bad": 1, "weight": -1}})
+        self.assertEqual(len(caught.exception.problems), 3)
+
+    def test_a_null_setting_is_rejected_rather_than_meaning_the_default(self):
+        """`loss_options` merges the block over the defaults, so null would replace one.
+
+        `"weight": null` would reach the trainer as None and raise in `float(...)`;
+        `"enabled": null` is worse -- `bool(None)` is False, so the term would silently
+        not run while the recorded config looked like it asked for it.
+        """
+        for key in ("enabled", "weight", "detach_reference"):
+            with self.subTest(key=key), self.assertRaises(InvalidConfigError) as caught:
+                self._config({"consistency": {key: None}})
+            self.assertIn(f"loss.consistency.{key}", caught.exception.problems[0])
