@@ -232,7 +232,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("list", help="registered augmentations, in pipeline order")
     p.add_argument("--backend", choices=["gpu", "cpu"])
-    p.add_argument("--group", choices=["geo", "ge", "ta"])
+    p.add_argument("--group", choices=["geo", "ge", "ta", "norm"])
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_list)
 
