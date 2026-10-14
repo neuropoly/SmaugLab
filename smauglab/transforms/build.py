@@ -14,6 +14,7 @@ fixed in one pass.
 
 from __future__ import annotations
 
+import itertools
 from typing import Any
 
 from smauglab import registry
@@ -76,6 +77,16 @@ def build_transforms(
     return sorted(built, key=lambda pair: registry.pipeline_position(pair[1]))
 
 
+#: Groups that run in sequence ahead of any shuffled bucket. OCC is listed beside GEO
+#: deliberately: the crop has always run here, and keeping it here is what makes every
+#: built pipeline identical to the one before `AugType.OCC` existed.
+SEQUENTIAL_GROUPS: tuple[AugType, ...] = (AugType.GEO, AugType.OCC)
+
+#: Groups `build_gpu_stages` may hoist into the stage both branches of the consistency
+#: loss share. OCC is deliberately absent -- see `AugType`.
+SHARED_GROUPS: tuple[AugType, ...] = (AugType.GEO,)
+
+
 def _buckets(built: list[tuple[Any, AugEntry]], *, hoist_sequential: bool) -> tuple[list, list, list]:
     """Split into (sequential, transfer, general-enhancement).
 
@@ -88,7 +99,7 @@ def _buckets(built: list[tuple[Any, AugEntry]], *, hoist_sequential: bool) -> tu
     """
     sequential, transfer, enhancement = [], [], []
     for transform, entry in built:
-        if entry.group is AugType.GEO or (hoist_sequential and entry.force_sequential):
+        if entry.group in SEQUENTIAL_GROUPS or (hoist_sequential and entry.force_sequential):
             sequential.append(transform)
         elif entry.group is AugType.TA:
             transfer.append(transform)
@@ -97,16 +108,33 @@ def _buckets(built: list[tuple[Any, AugEntry]], *, hoist_sequential: bool) -> tu
     return sequential, transfer, enhancement
 
 
-def build_gpu_pipeline(
-    section: dict,
-    *,
-    mode: PipelineMode = PipelineMode.SEQUENTIAL,
-    options: dict[str, Any] | None = None,
-    source: str = "<config>",
-    order_source: OrderSource = OrderSource.REGISTRY,
-) -> list[Any]:
-    """The GPU transform list for a given pipeline mode."""
-    built = build_transforms(section, Backend.GPU, source=source, order_source=order_source)
+def _split_shared(built: list[tuple[Any, AugEntry]], *, source: str) -> tuple[list, list]:
+    """Partition into (shared by both branches, augmented branch only).
+
+    The shared stage has to be a *prefix*. Hoisting a transform past one that stays
+    behind silently reorders the pipeline for every config naming both, and the
+    consistency loss would then be comparing a reference built by a pipeline nobody
+    configured. Today GPU `SHARED_GROUPS` is {flip, affine} at `PIPELINE_ORDER`
+    positions 0 and 1, so the prefix is free -- but a later registration, or
+    `pipeline.order: config`, can break it, and this is the only place that notices.
+    """
+    shared = [pair for pair in built if pair[1].group in SHARED_GROUPS]
+    prefix = list(itertools.takewhile(lambda pair: pair[1].group in SHARED_GROUPS, built))
+    if len(prefix) != len(shared):
+        late = [entry.name for _, entry in shared[len(prefix) :]]
+        raise InvalidConfigError(
+            source,
+            [
+                f"the consistency loss needs the shared stage to be a prefix of the pipeline, but "
+                f"{', '.join(late)} run(s) after a transform that stays in the augmented branch. "
+                f"Reorder the pipeline, or disable loss.consistency."
+            ],
+        )
+    return prefix, built[len(prefix) :]
+
+
+def _assemble(built: list[tuple[Any, AugEntry]], *, mode: PipelineMode, options: dict[str, Any] | None) -> list[Any]:
+    """Arrange already-instantiated transforms according to the pipeline mode."""
     if mode is PipelineMode.SEQUENTIAL:
         return [transform for transform, _ in built]
 
@@ -140,6 +168,45 @@ def build_gpu_pipeline(
         # enhancements stay in pipeline order, as they always have.
         out.extend(enhancement)
     return out
+
+
+def build_gpu_stages(
+    section: dict,
+    *,
+    mode: PipelineMode = PipelineMode.SEQUENTIAL,
+    options: dict[str, Any] | None = None,
+    source: str = "<config>",
+    order_source: OrderSource = OrderSource.REGISTRY,
+    split_shared: bool = False,
+) -> tuple[list[Any], list[Any]]:
+    """The GPU pipeline, optionally split into (shared, augmented-only).
+
+    With `split_shared=False` -- the default, and what `build_gpu_pipeline` asks for --
+    the first list is empty and the second is the whole pipeline. With it True the
+    leading `SHARED_GROUPS` transforms move into the first list, which the consistency
+    loss runs once and hands to both branches so their segmentation references align.
+
+    The two lists always concatenate to exactly what the unsplit call returns, in every
+    `PipelineMode`: the shared transforms are a prefix (`_split_shared` enforces it) and
+    `_assemble` only ever emits sequential groups at the front anyway.
+    """
+    built = build_transforms(section, Backend.GPU, source=source, order_source=order_source)
+    shared, rest = _split_shared(built, source=source) if split_shared else ([], built)
+    return [transform for transform, _ in shared], _assemble(rest, mode=mode, options=options)
+
+
+def build_gpu_pipeline(
+    section: dict,
+    *,
+    mode: PipelineMode = PipelineMode.SEQUENTIAL,
+    options: dict[str, Any] | None = None,
+    source: str = "<config>",
+    order_source: OrderSource = OrderSource.REGISTRY,
+) -> list[Any]:
+    """The GPU transform list for a given pipeline mode."""
+    # `shared` is empty: build_gpu_stages was not asked to split.
+    shared, augmented = build_gpu_stages(section, mode=mode, options=options, source=source, order_source=order_source)
+    return shared + augmented
 
 
 def build_cpu_pipeline(

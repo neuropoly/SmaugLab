@@ -6,7 +6,8 @@ A config is a JSON document with reserved top-level sections:
       "_comment": "...",              // any key starting with '_' is ignored
       "GPU":      { "<ClassName>": { <constructor kwargs> }, ... },
       "CPU":      { ... },
-      "pipeline": { "random_choose": { ... } }
+      "pipeline": { "random_choose": { ... } },
+      "loss":     { "consistency": { "enabled": true, "weight": 0.5 } }
     }
 
 A key is a class name, exactly, and a parameter is a constructor argument, exactly. Both are
@@ -25,8 +26,10 @@ import copy
 import difflib
 import functools
 import json
+from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from smauglab import registry
@@ -93,10 +96,34 @@ def validate_section(section: dict, backend: Backend, *, source: str = "<config>
 
 
 #: Top-level keys that are not augmentation sections.
-RESERVED_SECTIONS = ("pipeline",)
+RESERVED_SECTIONS = ("pipeline", "loss")
 
 #: Keys the `pipeline` section may hold.
 PIPELINE_KEYS = ("mode", "order", "random_choose", "same_on_batch")
+
+#: Loss terms the `loss` section can configure. The supervised term is nnU-Net's own
+#: and is not reachable from here; these are the ones SmaugLab adds on top of it.
+LOSS_KEYS = ("consistency",)
+
+#: Every setting each loss term accepts, with its default. Two jobs in one table: it is
+#: the accepted-key list validation checks against, and it is the defaults
+#: `SmaugConfig.loss_options` merges in, so a default cannot drift between the trainer,
+#: the startup summary and the tests.
+LOSS_DEFAULTS: Mapping[str, Mapping[str, Any]] = MappingProxyType(
+    {
+        "consistency": MappingProxyType(
+            {
+                # Off, so every config predating this section behaves exactly as before.
+                "enabled": False,
+                "weight": 0.5,
+                # False keeps the reference forward in the graph: roughly double the
+                # activation memory, and the term becomes minimisable by degrading the
+                # reference prediction instead of improving the augmented one.
+                "detach_reference": True,
+            }
+        )
+    }
+)
 
 #: What to do about a config that has no backend section. Quoted by both errors that
 #: can report it, so the two cannot drift apart.
@@ -136,6 +163,20 @@ class SmaugConfig:
         that omitted the block.
         """
         return copy.deepcopy(self.payload.get("pipeline", {}).get(name, {}))
+
+    def loss_options(self, name: str) -> dict[str, Any]:
+        """One loss term's settings, defaults filled in. Always a dict, always a copy.
+
+        The defaults from `LOSS_DEFAULTS` are merged here rather than left to each
+        caller's `.get(key, default)`: the trainer, the startup summary and the tests
+        all have to get the same answer out of a partially specified block.
+        """
+        block = self.payload.get("loss", {}).get(name, {})
+        return {**LOSS_DEFAULTS.get(name, {}), **copy.deepcopy(block)}
+
+    def consistency_enabled(self) -> bool:
+        """Whether the augmented/reference consistency term is on."""
+        return bool(self.loss_options("consistency")["enabled"])
 
     def pipeline_mode(self) -> PipelineMode:
         """How the GPU pipeline arranges its transforms.
@@ -198,6 +239,7 @@ class SmaugConfig:
             problems.append(f"no GPU or CPU section; this looks like a pre-registry config. {SECTION_HINT}")
 
         problems.extend(self._pipeline_problems())
+        problems.extend(self._loss_problems())
 
         for backend in Backend:
             section = self.payload.get(backend.value)
@@ -247,6 +289,71 @@ class SmaugConfig:
                 hint = f" Did you mean: {', '.join(close)}?" if close else ""
                 problems.append(f"pipeline.mode: unknown mode {mode!r}. Accepted: {', '.join(valid)}.{hint}")
         return problems
+
+    def _loss_problems(self) -> list[str]:
+        """Check the `loss` section, the same way `_pipeline_problems` checks its own.
+
+        A typo'd setting has to be an error rather than an ignored key: a run whose
+        config says `"detatch_reference": false` would otherwise train with the
+        reference detached and record a config claiming the opposite, and that config
+        is the only provenance a finished run carries.
+        """
+        loss = self.payload.get("loss")
+        if loss is None:
+            return []
+        if not isinstance(loss, dict):
+            return ["loss: expected an object"]
+
+        problems = []
+        for key in loss:
+            if key.startswith("_") or key in LOSS_KEYS:
+                continue
+            close = difflib.get_close_matches(key, LOSS_KEYS, n=2, cutoff=0.6)
+            hint = f" Did you mean: {', '.join(close)}?" if close else ""
+            problems.append(f"loss: unknown term {key!r}. Accepted: {', '.join(LOSS_KEYS)}.{hint}")
+
+        for term in LOSS_KEYS:
+            block = loss.get(term)
+            if block is None:
+                continue
+            if not isinstance(block, dict):
+                problems.append(f"loss.{term}: expected an object of settings")
+                continue
+            accepted = tuple(LOSS_DEFAULTS[term])
+            for key in block:
+                if key.startswith("_") or key in accepted:
+                    continue
+                close = difflib.get_close_matches(key, accepted, n=2, cutoff=0.6)
+                hint = f" Did you mean: {', '.join(close)}?" if close else ""
+                problems.append(f"loss.{term}: unknown setting {key!r}. Accepted: {', '.join(accepted)}.{hint}")
+            problems.extend(_consistency_setting_problems(term, block))
+        return problems
+
+
+def _consistency_setting_problems(term: str, block: dict) -> list[str]:
+    """Type-check one loss term's settings. Split out so the checks read as a list.
+
+    Presence is tested with `in`, not against None. A JSON `null` is not a request for
+    the default: `loss_options` merges the block over `LOSS_DEFAULTS`, so a null would
+    *replace* the default with None and the trainer's `float(None)` would raise -- or,
+    worse for `enabled`, `bool(None)` would quietly turn the term off.
+    """
+    problems = [
+        f"loss.{term}.{key}: expected true or false, got {block[key]!r}"
+        for key in ("enabled", "detach_reference")
+        if key in block and not isinstance(block[key], bool)
+    ]
+
+    if "weight" in block:
+        weight = block["weight"]
+        # `isinstance(True, int)` is True, so bool has to be excluded explicitly.
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+            problems.append(f"loss.{term}.weight: expected a number, got {weight!r}")
+        elif weight < 0:
+            # 0 is allowed: it is the "pay the second forward, measure the term, change
+            # nothing" ablation, and the epoch summary still reports it.
+            problems.append(f"loss.{term}.weight: expected a non-negative number, got {weight!r}")
+    return problems
 
 
 @functools.lru_cache(maxsize=8)

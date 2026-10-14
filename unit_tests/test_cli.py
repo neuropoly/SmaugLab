@@ -43,6 +43,12 @@ class TestList(unittest.TestCase):
         self.assertIn("RandomFlipTransformGPU", out)
         self.assertNotIn("RandomScharrGPU", out)
 
+    def test_the_occlusion_group_is_listable(self):
+        """`occ` is a group like any other, and the crop is the only member."""
+        _, out = run("list", "--backend", "gpu", "--group", "occ")
+        self.assertIn("RandomCropTransformGPU", out)
+        self.assertNotIn("RandomFlipTransformGPU", out)
+
     def test_json_output_is_machine_readable(self):
         _, out = run("list", "--backend", "cpu", "--json")
         payload = json.loads(out)

@@ -46,6 +46,7 @@ data on disk, so it is fast enough to gate every pull request.
 | `test_configs.py` | Every shipped config parses, builds a pipeline, runs a forward pass, and is reproducible under a fixed seed |
 | `test_transforms_gpu.py` | Each GPU transform in isolation |
 | `test_packaging.py` | Builds the real wheel and checks its contents |
+| `test_consistency_loss.py` | The `loss.consistency` term, the geometric/intensity pipeline split it needs, and its guardrails |
 
 Tests are `unittest.TestCase` subclasses, so they run under either runner:
 

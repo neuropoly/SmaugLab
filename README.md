@@ -187,6 +187,61 @@ Scripts developped in this repository use JSON files to specify image and segmen
 
 To track parameters used during data augmentation, JSON files are also used: see this [example](https://github.com/neuropoly/SmaugLab/blob/16653a84e031c40e25a72e946c2724494606b21c/smauglab/configs/transform_params.json)
 
+### Domain-generalization consistency loss
+
+An optional second loss term for the nnU-Net trainer. The augmented patch and the
+*unaugmented* one both go through the network, and their predictions are compared with
+a soft Dice: the two images show the same anatomy, so they should get the same
+segmentation, whatever the appearance augmentation did to the intensities.
+
+The reference is taken **after the geometric transforms and before the intensity ones**.
+Geometry (`RandomFlipTransformGPU`, `RandomAffineGPU`) runs once and is shared by both
+branches, so the two images are aligned voxel for voxel and one segmentation is correct
+for both. The term is off unless a config asks for it:
+
+```json
+{
+  "loss": {
+    "consistency": {
+      "enabled": true,
+      "weight": 0.5,
+      "detach_reference": true
+    }
+  },
+  "GPU": { "...": {} }
+}
+```
+
+| key | default | what it does |
+| --- | --- | --- |
+| `enabled` | `false` | Turns the term on. Needs a `GPU` section; a CPU-only config is rejected, because there the dataloader has already applied everything and there is no unaugmented image left. |
+| `weight` | `0.5` | Multiplier on the term. `0` measures and logs it without changing training, which is the ablation worth running first. |
+| `detach_reference` | `true` | Runs the reference forward under `no_grad`. With `false` both branches are in the graph: roughly double the activation memory, and the term becomes minimisable by making the *clean* prediction worse. |
+
+Costs one extra forward pass per step. Only the full-resolution deep-supervision head
+takes part; the lower-resolution heads keep nnU-Net's own weighting for the supervised
+term alone.
+
+Two things to know when reading the numbers:
+
+* `train_loss` now carries both terms, so it is not comparable with a run that had the
+  term off. The epoch log prints the component on its own line
+  (`consistency: soft dice ... contributing ... to train_loss`).
+* The term is a Dice against a *soft* target, so it does not reach `-1` when the two
+  branches agree; its minimiser is the reference's hard argmax, which means it sharpens
+  predictions as well as aligning them.
+
+`RandomCropTransformGPU` interacts with it. The crop occludes part of the field of view
+rather than moving voxels, so it is grouped `OCC` rather than `GEO` and stays behind the
+intensity stage -- in front of it, the intensity transforms would paint texture into the
+region it discarded. It is therefore not applied to the reference branch, and in the
+batches where it fires the consistency term asks the network to agree with the reference
+inside the occluded region, where the supervised target says background. Nothing masks
+this; the trainer prints a warning at startup naming the probability. Set its `p` to `0`
+to avoid it, which is what every shipped config other than `transform_params_gpu.json`,
+`transform_params_gpu_default01-23_CropTransform.json` and
+`transform_params_gpu_palette-em.json` already does.
+
 ### Paper configs
 
 Two shipped configs are the setups behind the paper's tables. `smauglab hash <config>`
@@ -220,7 +275,7 @@ column -- see "Run Monai training with SmaugLab augmentations" above. Regenerate
 | --- | --- | --- | --- |
 | flip | GEO | `RandomFlipTransformGPU` | — |
 | affine | GEO | `RandomAffineGPU` | — |
-| crop | GEO | `RandomCropTransformGPU` | — |
+| crop | OCC | `RandomCropTransformGPU` | — |
 | spatial | GEO | — | `SpatialTransform` |
 | gaussian_noise | GE | `RandomGaussianNoiseGPU` | `GaussianNoiseTransform` |
 | gaussian_blur | GE | `RandomGaussianBlurGPU` | `GaussianBlurTransform` |

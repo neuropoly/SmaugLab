@@ -614,7 +614,12 @@ class FlipGenerator3D(RandomGeneratorBase):
 @register(
     aug_id=AugId.CROP,
     backend=Backend.GPU,
-    group=AugType.GEO,
+    # OCC, not GEO, although it runs in the same leading sequential position. GEO is
+    # what the consistency loss hoists into the stage its two branches share, and this
+    # one must not be hoisted: run before the intensity transforms, the flat slab it
+    # leaves behind gets texture painted into it -- the failure the `pad_value` note
+    # below describes -- which makes the occlusion no occlusion at all. See AugType.
+    group=AugType.OCC,
 )
 class RandomCropTransformGPU(RigidAffineAugmentationBase3D):
     """Restrict the field of view to a random sub-box, filling the rest with `pad_value`.

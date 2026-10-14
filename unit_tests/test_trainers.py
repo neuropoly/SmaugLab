@@ -37,6 +37,50 @@ if importlib.util.find_spec("nnunetv2") is None:
     raise unittest.SkipTest("the trainer needs the nnunetv2 extra")
 
 
+def bare_trainer(loss, *, transforms=None, network=None, device="cpu"):
+    """A trainer instance without plans, dataset_json or an output folder.
+
+    `__init__` wants all three, so `__new__` sidesteps it and only the attributes
+    `train_step` and the epoch hooks actually read are filled in. Kept at module level
+    because three test classes need it, and because every attribute the trainer grows
+    has to be added here or the bare instance raises AttributeError instead of failing
+    on what is under test.
+    """
+    import torch
+
+    from smauglab.trainers.nnUNetTrainerDAExt import nnUNetTrainerDAExtGPU
+
+    trainer = nnUNetTrainerDAExtGPU.__new__(nnUNetTrainerDAExtGPU)
+    trainer.device = torch.device(device)  # cpu, so autocast is skipped via dummy_context
+    trainer.transforms = transforms
+    trainer.transforms_shared = None
+    trainer.grad_scaler = None
+    trainer.network = network if network is not None else torch.nn.Conv3d(1, 2, 1)
+    trainer.optimizer = torch.optim.SGD(trainer.network.parameters(), lr=0.1)
+    trainer.loss = loss
+    trainer.current_epoch = 0
+    trainer.num_iterations_per_epoch = 250
+    trainer._nan_steps_this_epoch = 0
+    trainer._nan_steps_total = 0
+    # `on_train_epoch_end` reports all three guards; `__init__` sets every counter.
+    trainer._scale_floor_hits_this_epoch = 0
+    trainer._scale_floor_hits_total = 0
+    trainer._min_grad_scale = 1.0
+    trainer.consistency = None
+    trainer.consistency_weight = 0.0
+    trainer.consistency_detach = True
+    trainer.consistency_nonlin = torch.nn.functional.softmax
+    trainer._consistency_sum = None
+    trainer._consistency_steps = 0
+    trainer._consistency_last = None
+    trainer._get_deep_supervision_scales = lambda: None
+    # An instance attribute shadowing the bound method: capturing the log this way
+    # needs no output folder and no open file handle.
+    trainer.logged = []
+    trainer.print_to_log_file = lambda *args, **_kwargs: trainer.logged.append(" ".join(str(a) for a in args))
+    return trainer
+
+
 def flatten(transform) -> list[str]:
     """Class names, descending into Compose and unwrapping RandomTransform."""
     if isinstance(transform, ComposeTransforms):
@@ -265,34 +309,12 @@ class TestNonFiniteLossGuard(unittest.TestCase):
 
     Driving this needs a trainer instance, which the rest of this file never builds:
     `__init__` wants plans, a dataset_json and an output folder to copy the config into.
-    `__new__` sidesteps all of it, and `train_step` only ever touches seven attributes.
+    `__new__` sidesteps all of it, and `train_step` only ever touches the handful of
+    attributes `bare_trainer` sets.
     """
 
     def _trainer(self, loss, transforms=None):
-        import torch
-
-        from smauglab.trainers.nnUNetTrainerDAExt import nnUNetTrainerDAExtGPU
-
-        trainer = nnUNetTrainerDAExtGPU.__new__(nnUNetTrainerDAExtGPU)
-        trainer.device = torch.device("cpu")  # so autocast is skipped via dummy_context
-        trainer.transforms = transforms
-        trainer.grad_scaler = None
-        trainer.network = torch.nn.Conv3d(1, 2, 1)
-        trainer.optimizer = torch.optim.SGD(trainer.network.parameters(), lr=0.1)
-        trainer.loss = loss
-        trainer.current_epoch = 0
-        trainer.num_iterations_per_epoch = 250
-        trainer._nan_steps_this_epoch = 0
-        trainer._nan_steps_total = 0
-        # `on_train_epoch_end` reports both guards; `__init__` sets all four counters.
-        trainer._scale_floor_hits_this_epoch = 0
-        trainer._scale_floor_hits_total = 0
-        trainer._get_deep_supervision_scales = lambda: None
-        # An instance attribute shadowing the bound method: capturing the log this way
-        # needs no output folder and no open file handle.
-        trainer.logged = []
-        trainer.print_to_log_file = lambda *args, **_kwargs: trainer.logged.append(" ".join(str(a) for a in args))
-        return trainer
+        return bare_trainer(loss, transforms=transforms)
 
     def _batch(self, key="case_a"):
         import torch
@@ -391,19 +413,8 @@ class TestTargetReachesTheDeviceEitherShape(unittest.TestCase):
     """
 
     def _trainer(self):
-        import torch
-
-        from smauglab.trainers.nnUNetTrainerDAExt import nnUNetTrainerDAExtGPU
-
-        trainer = nnUNetTrainerDAExtGPU.__new__(nnUNetTrainerDAExtGPU)
-        trainer.device = torch.device("cpu")
-        trainer.transforms = None  # a CPU-only config builds no GPU pipeline
-        trainer.grad_scaler = None
-        trainer.network = torch.nn.Conv3d(1, 2, 1)
-        trainer.optimizer = torch.optim.SGD(trainer.network.parameters(), lr=0.1)
-        trainer.current_epoch = 0
-        trainer._nan_steps_this_epoch = 0
-        trainer._nan_steps_total = 0
+        # transforms=None: a CPU-only config builds no GPU pipeline.
+        trainer = bare_trainer(None)
         trainer.seen = []
         # Record what the loss was handed, which is the thing under test.
         trainer.loss = lambda out, tgt: (trainer.seen.append(tgt), out.mean())[1]
