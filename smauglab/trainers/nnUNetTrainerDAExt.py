@@ -17,6 +17,7 @@ would make several hundred trained models unloadable.
 
 import filecmp
 import importlib
+import math
 import os
 import shutil
 import warnings
@@ -57,6 +58,22 @@ DEFAULT_CONFIG = "transform_params_gpu.json"
 #: warning worth reading becomes noise nobody reads.
 NAN_REPORTS_PER_EPOCH = 3
 
+#: Default floor for the AMP gradient scale. The scaler exists to lift small fp16
+#: gradients out of the denormal range, so a scale below 1 only shrinks them -- it can
+#: never help, and it is the first step of a ratchet that ends at zero. See
+#: `_guard_grad_scale`.
+DEFAULT_MIN_GRAD_SCALE = 1.0
+
+#: Env var overriding that floor. It exists for the one case the default forecloses:
+#: gradients that genuinely overflow fp16 at scale 1, where halving is the correct move
+#: and the floor is in the way. Nothing observed so far needs it. See
+#: `resolve_min_grad_scale`.
+MIN_GRAD_SCALE_ENV = "SMAUGLAB_MIN_GRAD_SCALE"
+
+#: `torch.amp.GradScaler`'s default `init_scale`. Only used to warn about a floor at or
+#: above it, which would undo every backoff the scaler ever makes.
+GRAD_SCALER_INIT_SCALE = 2.0**16
+
 
 def resolve_config_path() -> str:
     """Locate the config: new env var, then the deprecated one, then the default."""
@@ -73,6 +90,49 @@ def resolve_config_path() -> str:
         )
         return legacy
     return str(importlib.resources.files(configs) / DEFAULT_CONFIG)
+
+
+def resolve_min_grad_scale() -> float:
+    """Read the gradient-scale floor from the env var, or return the default.
+
+    Anything that is not a positive, finite number raises instead of falling back: a
+    typo in a sweep script would otherwise train for days under a floor nobody chose,
+    and a floor of zero or below is precisely the collapse `_guard_grad_scale` exists
+    to prevent. Going below the default is allowed but warned about, because a scale
+    under 1 cannot do the job the scaler is there for.
+    """
+    raw = os.environ.get(MIN_GRAD_SCALE_ENV)
+    if raw is None or not raw.strip():
+        return DEFAULT_MIN_GRAD_SCALE
+
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{MIN_GRAD_SCALE_ENV}={raw!r} is not a number") from exc
+
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(
+            f"{MIN_GRAD_SCALE_ENV}={raw!r} must be a positive, finite number. Zero or below leaves the "
+            "scale free to ratchet to zero, the collapse the floor exists to prevent; `nan` never "
+            "compares true, so the guard would never fire; `inf` would pin the scale past fp16."
+        )
+
+    if value < DEFAULT_MIN_GRAD_SCALE:
+        warnings.warn(
+            f"{MIN_GRAD_SCALE_ENV}={value} is below {DEFAULT_MIN_GRAD_SCALE}, where the scaler can only "
+            "shrink gradients. That is useful only if the gradients genuinely overflow fp16 at scale 1; "
+            "otherwise it buys underflow, and a floor deep in the denormals trains on all-zero gradients "
+            "without ever reporting a non-finite step.",
+            stacklevel=2,
+        )
+    elif value >= GRAD_SCALER_INIT_SCALE:
+        warnings.warn(
+            f"{MIN_GRAD_SCALE_ENV}={value} is at or above the scaler's initial scale "
+            f"({GRAD_SCALER_INIT_SCALE:g}), so every backoff is undone immediately and an overflowing run "
+            "will skip every step instead of adapting.",
+            stacklevel=2,
+        )
+    return value
 
 
 def _record_config(source: str, destination: str) -> None:
@@ -153,6 +213,19 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         # epoch line, naming neither the batch nor the cause. See `_report_nonfinite_loss`.
         self._nan_steps_this_epoch = 0
         self._nan_steps_total = 0
+        self._scale_floor_hits_this_epoch = 0
+        self._scale_floor_hits_total = 0
+        # Resolved once: the floor is consulted on every step, and a run whose guard
+        # changed halfway through because the environment did would be worse than no
+        # override at all. A non-default value goes to stdout, which is what nnU-Net
+        # captures into the training log -- the `warnings.warn` above only reaches
+        # stderr, and the floor in force is provenance the finished run needs.
+        self._min_grad_scale = resolve_min_grad_scale()
+        if self._min_grad_scale != DEFAULT_MIN_GRAD_SCALE:
+            note = (
+                " (below the default, where the scaler can only shrink gradients)" if self._min_grad_scale < DEFAULT_MIN_GRAD_SCALE else ""
+            )
+            print(f"AMP gradient-scale floor set to {self._min_grad_scale} via {MIN_GRAD_SCALE_ENV}{note}")
 
     @staticmethod
     def get_training_transforms(
@@ -287,6 +360,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
             # the poisoned gradients. The weights are never touched.
             self.grad_scaler.step(self.optimizer)
             self.grad_scaler.update()
+            self._guard_grad_scale()
         else:
             l.backward()
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
@@ -303,6 +377,45 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         if not bool(torch.isfinite(loss_cpu)):
             self._report_nonfinite_loss(loss_cpu, data, target, output, batch.get("keys"))
         return {"loss": loss_cpu.numpy()}
+
+    def _guard_grad_scale(self) -> None:
+        """Stop the AMP gradient scale ratcheting down to zero, which kills the run.
+
+        `GradScaler` halves the scale on every step with a non-finite gradient and only
+        doubles it back after `growth_interval` *consecutive* clean steps -- 2000 by
+        default, which is eight epochs at nnU-Net's 250 iterations. The asymmetry means
+        any non-finite rate above one step in 2000 drives the scale down monotonically,
+        and nothing in torch floors it: from the initial 65536 it reaches denormals in
+        ~150 halvings and then exactly 0.0.
+
+        Zero is terminal, not merely small. `scale(loss)` gives 0, so backward produces
+        zero gradients; `unscale_` then multiplies by `1/0 = inf` and 0*inf is NaN. The
+        scaler finds the NaN, halves 0 to 0, and the run can never recover -- it keeps
+        logging epochs having stopped learning entirely, and the denormal steps on the
+        way down can push non-finite values into the weights before it gets there.
+
+        Clamping at `self._min_grad_scale` keeps the run recoverable: bad steps are still
+        skipped, and once the batches are clean again the scale grows back normally. A
+        scale pinned to the floor is itself the diagnosis, so it is logged.
+        """
+        if self.grad_scaler.get_scale() >= self._min_grad_scale:
+            return
+
+        self._scale_floor_hits_this_epoch += 1
+        self._scale_floor_hits_total += 1
+        # `update(new_scale=...)` is the public way to set it, and resets the growth
+        # tracker so the floor does not immediately get halved again by a stale count.
+        self.grad_scaler.update(new_scale=self._min_grad_scale)
+
+        if self._scale_floor_hits_this_epoch <= NAN_REPORTS_PER_EPOCH:
+            self.print_to_log_file(
+                f"AMP gradient scale fell below {self._min_grad_scale} and was reset to it "
+                f"(epoch={self.current_epoch}, {self._scale_floor_hits_total} times since the run started). "
+                "Steps are being skipped for non-finite gradients often enough that the scale cannot recover; "
+                "look for the non-finite loss reports above for the cause."
+            )
+        elif self._scale_floor_hits_this_epoch == NAN_REPORTS_PER_EPOCH + 1:
+            self.print_to_log_file("AMP gradient scale: further resets suppressed this epoch; see the epoch summary")
 
     def _report_nonfinite_loss(self, loss, data, target, output, keys) -> None:
         """Say *why* the loss went non-finite, in the training log.
@@ -347,6 +460,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
     def on_train_epoch_start(self):
         super().on_train_epoch_start()
         self._nan_steps_this_epoch = 0
+        self._scale_floor_hits_this_epoch = 0
 
     def on_train_epoch_end(self, train_outputs: list[dict]):
         super().on_train_epoch_end(train_outputs)
@@ -358,4 +472,11 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                 f"non-finite loss in {self._nan_steps_this_epoch}/{self.num_iterations_per_epoch} batches "
                 f"this epoch ({self._nan_steps_total} since the run started); "
                 f"those steps did not update the weights"
+            )
+        if self._scale_floor_hits_this_epoch:
+            self.print_to_log_file(
+                f"AMP gradient scale hit the floor in {self._scale_floor_hits_this_epoch}/"
+                f"{self.num_iterations_per_epoch} batches this epoch "
+                f"({self._scale_floor_hits_total} since the run started); "
+                f"without the floor the run would be unrecoverable by now"
             )

@@ -55,7 +55,14 @@ include = [{ path = "smauglab/configs/**/*.json", format = ["sdist", "wheel"] }]
 [tool.poetry.dependencies]
 python = ">=3.10"
 batchgenerators = "*"
-batchgeneratorsv2 = "*"
+# Capped, like kornia below: eight CPU augmentations are batchgeneratorsv2
+# classes registered as they come, so their signatures are what the shipped
+# smauglab/configs/all_augmentations.json records and `smauglab matrix --check`
+# compares against. An upstream default change makes that file stale and turns
+# every open PR red, whatever it touches. 0.3.6 did exactly that to
+# SpatialTransform: `bg_style_seg_sampling` flipped to False and a keyword-only
+# `seg_tiebreak` appeared. Verified working: 0.3.5.
+batchgeneratorsv2 = "<0.3.6"
 # smauglab subclasses kornia's private augmentation internals
 # (_AugmentationBase, RigidAffineAugmentationBase3D, augmentation.container.ops,
 # _adapted_rsampling, _tuple_range_reader). Those move between minor releases,

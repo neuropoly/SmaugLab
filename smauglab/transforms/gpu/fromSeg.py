@@ -216,8 +216,20 @@ def _region_moments(region_mask: torch.Tensor, design: torch.Tensor) -> tuple[to
     `E[x^2] - E[x]^2`, which is the same quantity the explicit
     `((x - mean) * mask) ** 2` pass computed -- the mask is binary, so squaring it
     changes nothing -- without materialising the centred array.
+
+    The matmul is pinned to fp32, and must stay that way. `autocast` demotes matmuls
+    to fp16, which maxes at 65504, so the `1` column -- a plain voxel count -- saturates
+    to `inf` for any region above about 40^3 voxels. At the 128^3 training patch size
+    the background region always does, and then `counts=inf` gives `means=NaN`, every
+    per-region Gaussian contribution is NaN, the `tmax - tmin > 1e-8` guard in
+    `RandomRedistributeSegGPU` is False on NaN, and the transform returns its input
+    untouched -- an exact identity that no NaN check sees, because the NaN never
+    reaches the output. fp32 represents these counts exactly (128^3 is far below 2^24)
+    and TF32 keeps the matmul as fast as the fp16 one. Returned in fp32 deliberately:
+    casting back to `design.dtype` would reintroduce the overflow under autocast.
     """
-    sums = region_mask.to(design.dtype) @ design  # (R, 3)
+    with torch.autocast(device_type=design.device.type, enabled=False):
+        sums = region_mask.to(torch.float32) @ design.to(torch.float32)  # (R, 3)
     counts = sums[:, 0].clamp_min(1)
     means = sums[:, 1] / counts
     variances = (sums[:, 2] / counts - means * means).clamp_min(0)
