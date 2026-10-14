@@ -366,7 +366,7 @@ def apply_filter(x: torch.Tensor, kernel: torch.Tensor, **kwargs) -> torch.Tenso
 @register(
     aug_id=AugId.ZSCORE,
     backend=Backend.CPU,
-    group=AugType.GE,
+    group=AugType.NORM,
 )
 class ZscoreNormalization(ImageOnlyTransform):
     """

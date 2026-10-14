@@ -1819,7 +1819,7 @@ class RandomClampGPU(ImageOnlyTransform):
 @register(
     aug_id=AugId.ZSCORE,
     backend=Backend.GPU,
-    group=AugType.GE,
+    group=AugType.NORM,
 )
 class ZscoreNormalizationGPU(ImageOnlyTransform):
     """Apply z-score normalization to selected channels.

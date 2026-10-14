@@ -76,8 +76,8 @@ def build_transforms(
     return sorted(built, key=lambda pair: registry.pipeline_position(pair[1]))
 
 
-def _buckets(built: list[tuple[Any, AugEntry]], *, hoist_sequential: bool) -> tuple[list, list, list]:
-    """Split into (sequential, transfer, general-enhancement).
+def _buckets(built: list[tuple[Any, AugEntry]], *, hoist_sequential: bool) -> tuple[list, list, list, list]:
+    """Split into (sequential, transfer, general-enhancement, normalization).
 
     Geometry always leads, in order. `force_sequential` means "never inside the GE
     bucket" and so only bites when there *is* one: with both groups bucketed,
@@ -85,16 +85,61 @@ def _buckets(built: list[tuple[Any, AugEntry]], *, hoist_sequential: bool) -> tu
     only the transfer group is bucketed it stays in its ordinary GE position. That
     is exactly what the two hand-written pipelines did, and the difference is
     invisible unless you line their two ladders up side by side.
+
+    Normalization is its own list because it is the one group whose members are
+    alternatives rather than additions -- see `AugType.NORM` and `_normalization_stage`.
     """
-    sequential, transfer, enhancement = [], [], []
+    sequential, transfer, enhancement, normalization = [], [], [], []
     for transform, entry in built:
         if entry.group is AugType.GEO or (hoist_sequential and entry.force_sequential):
             sequential.append(transform)
         elif entry.group is AugType.TA:
             transfer.append(transform)
+        elif entry.group is AugType.NORM:
+            normalization.append(transform)
         else:
             enhancement.append(transform)
-    return sequential, transfer, enhancement
+    return sequential, transfer, enhancement, normalization
+
+
+def _normalization_stage(normalization: list, *, options: dict[str, Any]) -> list:
+    """Wrap the normalization group so that exactly one of its members runs.
+
+    Chaining normalizations does not compose them -- a min-max rescale on top of a
+    z-score simply discards the z-score -- so a config naming several of them is asking
+    for a *choice*, not for a sequence. `RandomChooseXTransformsGPU` with
+    `num_transforms=1` is that choice already: it draws one child uniformly and then
+    spends that child's own `p`, which makes each scheme's `p` its weight
+    (`P(scheme) = p / n`) and leaves the remainder as "no normalization at all".
+    `random_order=True` in every mode, including the sequential one: with one transform
+    to pick there is no order to shuffle, and `False` would pin the choice to whichever
+    scheme sorts first.
+
+    One draw per *batch*, not per sample, under the default `pipeline.same_on_batch`.
+    That setting defaults to True and the container forces it onto every stage it holds,
+    this bucket included, which is what makes a bucket take one decision for the whole
+    batch -- the same is true of the `ta` and `ge` buckets today. A config wanting each
+    sample to draw its own scheme sets `pipeline.same_on_batch: false`, which is also
+    what makes every transform's `p` per-sample; see `SmaugConfig.same_on_batch`.
+
+    Fewer than two members and nothing is wrapped. A single normalization keeps its
+    pipeline position verbatim -- wrapping it would move it, which `pipeline.order:
+    config` can notice, and would gate it behind a second probability for no gain.
+    """
+    if len(normalization) < 2:
+        return normalization
+
+    from smauglab.transforms.gpu.transforms_list import RandomChooseXTransformsGPU
+
+    return [
+        RandomChooseXTransformsGPU(
+            transforms_list=normalization,
+            num_transforms=1,
+            p=options.get("norm_probability", 1.0),
+            random_order=True,
+            label="norm",
+        )
+    ]
 
 
 def build_gpu_pipeline(
@@ -107,13 +152,20 @@ def build_gpu_pipeline(
 ) -> list[Any]:
     """The GPU transform list for a given pipeline mode."""
     built = build_transforms(section, Backend.GPU, source=source, order_source=order_source)
+    options = options or {}
     if mode is PipelineMode.SEQUENTIAL:
-        return [transform for transform, _ in built]
+        # Order is left exactly as `build_transforms` produced it, including under
+        # `pipeline.order: config`. The only rearrangement is the normalization choice,
+        # and only when there is a choice to make: a lone normalization is not touched.
+        normalization = [transform for transform, entry in built if entry.group is AugType.NORM]
+        if len(normalization) < 2:
+            return [transform for transform, _ in built]
+        kept = [transform for transform, entry in built if entry.group is not AugType.NORM]
+        return kept + _normalization_stage(normalization, options=options)
 
     from smauglab.transforms.gpu.transforms_list import RandomChooseXTransformsGPU
 
-    options = options or {}
-    sequential, transfer, enhancement = _buckets(built, hoist_sequential=mode is PipelineMode.RANDOM_ORDER)
+    sequential, transfer, enhancement, normalization = _buckets(built, hoist_sequential=mode is PipelineMode.RANDOM_ORDER)
 
     out = list(sequential)
     out.append(
@@ -139,6 +191,8 @@ def build_gpu_pipeline(
         # RANDOM_ORDER_TA shuffles only the transfer augmentations; the general
         # enhancements stay in pipeline order, as they always have.
         out.extend(enhancement)
+    # Last in every mode: it standardizes whatever everything above it did.
+    out.extend(_normalization_stage(normalization, options=options))
     return out
 
 
