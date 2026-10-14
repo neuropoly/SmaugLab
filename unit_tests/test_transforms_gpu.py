@@ -25,6 +25,7 @@ TRANSFORM_MODULES = [
     "smauglab.transforms.gpu.contrast",
     "smauglab.transforms.gpu.spatial",
     "smauglab.transforms.gpu.fromSeg",
+    "smauglab.transforms.gpu.gin",
     "smauglab.transforms.gpu.domain_transfer",
     "smauglab.transforms.gpu.palette.transform",
 ]

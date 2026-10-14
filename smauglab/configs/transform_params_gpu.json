@@ -122,6 +122,9 @@
             "mix_prob": 0.5,
             "p": 0.2
         },
+        "RandomGINGPU": {
+            "p": 0.0
+        },
         "RandomClampGPU": {
             "max_clamp_amount": 0.2,
             "retain_stats": true,

@@ -113,6 +113,11 @@ class AugId(str, Enum):
     LAPLACE = "laplace"
     UNSHARP_MASK = "unsharp_mask"
     RAND_CONV = "rand_conv"
+    # A separate concept from RAND_CONV rather than a second implementation of it:
+    # RandConv is one random kernel, GIN is a cascade of them with a non-linearity
+    # between the layers and the output renormalised to the input's energy. Sharing the
+    # id would overwrite RandomRandConvGPU's matrix cell.
+    GIN = "gin"
     BIAS_FIELD = "bias_field"
     INVERSE = "inverse"
     HISTOGRAM_EQUAL = "histogram_equal"
@@ -213,6 +218,9 @@ PIPELINE_ORDER: Mapping[Backend, tuple[str, ...]] = MappingProxyType(
             "RandomLaplaceGPU",
             "RandomUnsharpMaskGPU",  # UnsharpMaskTransform
             "RandomRandConvGPU",  # RandomConvTransform
+            # No ladder key: GIN postdates the ladder. Placed next to the single-layer
+            # RandConv it generalises, so a config reads the two together.
+            "RandomGINGPU",
             "RandomClampGPU",  # ClampTransform
             "RandomGaussianNoiseGPU",  # GaussianNoiseTransform
             "RandomGaussianBlurGPU",  # GaussianBlurTransform
