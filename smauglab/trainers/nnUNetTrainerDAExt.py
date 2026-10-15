@@ -194,6 +194,7 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
                     options=config.pipeline_options("random_choose"),
                     source=config.source,
                     order_source=config.order_source(),
+                    retain_stats=config.retain_stats_spec(),
                 ),
                 data_keys=["input", "mask"],
                 # See AugTransformsGPU: True forces the flag onto every child and

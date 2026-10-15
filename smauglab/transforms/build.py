@@ -14,11 +14,14 @@ fixed in one pass.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from smauglab import registry
 from smauglab.config import NON_AUGMENTATION_KEYS, OrderSource, PipelineMode, validate_section
-from smauglab.registry import AugEntry, AugType, Backend, InvalidConfigError
+from smauglab.registry import AugEntry, AugId, AugType, Backend, InvalidConfigError
+
+if TYPE_CHECKING:  # the spec is a plain dataclass, but importing it pulls in kornia
+    from smauglab.transforms.gpu.stats import StatsSpec
 
 
 def _instantiate(entry: AugEntry, params: dict, context: dict[str, Any]) -> Any:
@@ -76,8 +79,8 @@ def build_transforms(
     return sorted(built, key=lambda pair: registry.pipeline_position(pair[1]))
 
 
-def _buckets(built: list[tuple[Any, AugEntry]], *, hoist_sequential: bool) -> tuple[list, list, list]:
-    """Split into (sequential, transfer, general-enhancement).
+def _buckets(built: list[tuple[Any, AugEntry]], *, hoist_sequential: bool) -> tuple[list, list, list, list]:
+    """Split into (sequential, transfer, general-enhancement, normalization).
 
     Geometry always leads, in order. `force_sequential` means "never inside the GE
     bucket" and so only bites when there *is* one: with both groups bucketed,
@@ -85,16 +88,79 @@ def _buckets(built: list[tuple[Any, AugEntry]], *, hoist_sequential: bool) -> tu
     only the transfer group is bucketed it stays in its ordinary GE position. That
     is exactly what the two hand-written pipelines did, and the difference is
     invisible unless you line their two ladders up side by side.
+
+    Normalization is its own list because it is the one group whose members are
+    alternatives rather than additions -- see `AugType.NORM` and `_normalization_stage`.
     """
-    sequential, transfer, enhancement = [], [], []
+    sequential, transfer, enhancement, normalization = [], [], [], []
     for transform, entry in built:
         if entry.group is AugType.GEO or (hoist_sequential and entry.force_sequential):
             sequential.append(transform)
         elif entry.group is AugType.TA:
             transfer.append(transform)
+        elif entry.group is AugType.NORM:
+            normalization.append(transform)
         else:
             enhancement.append(transform)
-    return sequential, transfer, enhancement
+    return sequential, transfer, enhancement, normalization
+
+
+def _normalization_stage(normalization: list, *, options: dict[str, Any]) -> list:
+    """Wrap the normalization group so that exactly one of its members runs.
+
+    Chaining normalizations does not compose them -- a min-max rescale on top of a
+    z-score simply discards the z-score -- so a config naming several of them is asking
+    for a *choice*, not for a sequence. `RandomChooseXTransformsGPU` with
+    `num_transforms=1` is that choice already: it draws one child uniformly and then
+    spends that child's own `p`, which makes each scheme's `p` its weight
+    (`P(scheme) = p / n`) and leaves the remainder as "no normalization at all".
+    `random_order=True` in every mode, including the sequential one: with one transform
+    to pick there is no order to shuffle, and `False` would pin the choice to whichever
+    scheme sorts first.
+
+    One draw per *batch*, not per sample, under the default `pipeline.same_on_batch`.
+    That setting defaults to True and the container forces it onto every stage it holds,
+    this bucket included, which is what makes a bucket take one decision for the whole
+    batch -- the same is true of the `ta` and `ge` buckets today. A config wanting each
+    sample to draw its own scheme sets `pipeline.same_on_batch: false`, which is also
+    what makes every transform's `p` per-sample; see `SmaugConfig.same_on_batch`.
+
+    Fewer than two members and nothing is wrapped. A single normalization keeps its
+    pipeline position verbatim -- wrapping it would move it, which `pipeline.order:
+    config` can notice, and would gate it behind a second probability for no gain.
+    """
+    if len(normalization) < 2:
+        return normalization
+
+    from smauglab.transforms.gpu.transforms_list import RandomChooseXTransformsGPU
+
+    return [
+        RandomChooseXTransformsGPU(
+            transforms_list=normalization,
+            num_transforms=1,
+            p=options.get("norm_probability", 1.0),
+            random_order=True,
+            label="norm",
+        )
+    ]
+
+
+def _after_geometry(core: list[Any], geometry: list[Any], snapshot: Any) -> list[Any]:
+    """`core` with `snapshot` inserted after the last geometric transform it holds.
+
+    Positions are found by identity rather than by index arithmetic because the three
+    pipeline modes assemble `core` differently -- geometry leads in all of them, but what
+    follows it is a bucket in two and a flat run in the third -- and because
+    `pipeline.order: config` can put a geometric transform anywhere. Insert-after-the-last
+    is the one rule that reads the same in every case.
+
+    In `random_order` mode this deliberately lands *before* the hoisted `force_sequential`
+    entry: `RandomLowResTransformGPU` is a general enhancement that happens to run early,
+    and blurring a patch moves its standard deviation, so it belongs inside the bracket.
+    """
+    identities = {id(transform) for transform in geometry}
+    cut = max((index for index, transform in enumerate(core) if id(transform) in identities), default=-1) + 1
+    return [*core[:cut], snapshot, *core[cut:]]
 
 
 def build_gpu_pipeline(
@@ -104,42 +170,79 @@ def build_gpu_pipeline(
     options: dict[str, Any] | None = None,
     source: str = "<config>",
     order_source: OrderSource = OrderSource.REGISTRY,
+    retain_stats: StatsSpec | None = None,
 ) -> list[Any]:
-    """The GPU transform list for a given pipeline mode."""
+    """The GPU transform list for a given pipeline mode.
+
+    `retain_stats` is the parsed `pipeline.retain_stats` block. When it is given, the list
+    gains the statistics bracket from `gpu/stats.py` and two groups move to the tail:
+
+        [geometry] [SNAPSHOT] [augmentations] [RESTORE] [crop] [normalization]
+
+    Crop goes after the restore because it is not an intensity augmentation at all -- it
+    occludes a random box with the volume's own minimum, so restoring a profile measured
+    before it would be undoing the occlusion rather than the augmentations. Normalization
+    goes last, as it already does, because its entire job is to decide the scale the
+    network sees; a restore after it would overwrite that decision. With `retain_stats`
+    absent the list is exactly what it was, including the order a lone normalization sits
+    in and the random numbers the pipeline spends.
+    """
     built = build_transforms(section, Backend.GPU, source=source, order_source=order_source)
-    if mode is PipelineMode.SEQUENTIAL:
-        return [transform for transform, _ in built]
-
-    from smauglab.transforms.gpu.transforms_list import RandomChooseXTransformsGPU
-
     options = options or {}
-    sequential, transfer, enhancement = _buckets(built, hoist_sequential=mode is PipelineMode.RANDOM_ORDER)
 
-    out = list(sequential)
-    out.append(
-        RandomChooseXTransformsGPU(
-            transforms_list=transfer,
-            num_transforms=len(transfer),
-            p=options.get("ta_probability", 1.0),
-            random_order=options.get("ta_random_order", True) if mode is PipelineMode.RANDOM_ORDER else False,
-            label="ta",
-        )
-    )
-    if mode is PipelineMode.RANDOM_ORDER:
-        out.append(
+    bracket = None
+    staged: list[Any] = []
+    if retain_stats is not None:
+        from smauglab.transforms.gpu.stats import make_bracket
+
+        bracket = make_bracket(retain_stats)
+        staged = [transform for transform, entry in built if entry.aug_id is AugId.CROP]
+        built = [(transform, entry) for transform, entry in built if entry.aug_id is not AugId.CROP]
+    geometry = [transform for transform, entry in built if entry.group is AugType.GEO]
+
+    if mode is PipelineMode.SEQUENTIAL:
+        normalization = [transform for transform, entry in built if entry.group is AugType.NORM]
+        if bracket is None and len(normalization) < 2:
+            # Order is left exactly as `build_transforms` produced it, including under
+            # `pipeline.order: config`. The only rearrangement is the normalization choice,
+            # and only when there is a choice to make: a lone normalization is not touched.
+            return [transform for transform, _ in built]
+        core = [transform for transform, entry in built if entry.group is not AugType.NORM]
+    else:
+        from smauglab.transforms.gpu.transforms_list import RandomChooseXTransformsGPU
+
+        sequential, transfer, enhancement, normalization = _buckets(built, hoist_sequential=mode is PipelineMode.RANDOM_ORDER)
+
+        core = list(sequential)
+        core.append(
             RandomChooseXTransformsGPU(
-                transforms_list=enhancement,
-                num_transforms=len(enhancement),
-                p=options.get("ge_probability", 1.0),
-                random_order=options.get("ge_random_order", True),
-                label="ge",
+                transforms_list=transfer,
+                num_transforms=len(transfer),
+                p=options.get("ta_probability", 1.0),
+                random_order=options.get("ta_random_order", True) if mode is PipelineMode.RANDOM_ORDER else False,
+                label="ta",
             )
         )
-    else:
-        # RANDOM_ORDER_TA shuffles only the transfer augmentations; the general
-        # enhancements stay in pipeline order, as they always have.
-        out.extend(enhancement)
-    return out
+        if mode is PipelineMode.RANDOM_ORDER:
+            core.append(
+                RandomChooseXTransformsGPU(
+                    transforms_list=enhancement,
+                    num_transforms=len(enhancement),
+                    p=options.get("ge_probability", 1.0),
+                    random_order=options.get("ge_random_order", True),
+                    label="ge",
+                )
+            )
+        else:
+            # RANDOM_ORDER_TA shuffles only the transfer augmentations; the general
+            # enhancements stay in pipeline order, as they always have.
+            core.extend(enhancement)
+
+    # Last in every mode: it standardizes whatever everything above it did.
+    if bracket is None:
+        return core + _normalization_stage(normalization, options=options)
+    snapshot, restore = bracket
+    return [*_after_geometry(core, geometry, snapshot), restore, *staged, *_normalization_stage(normalization, options=options)]
 
 
 def build_cpu_pipeline(

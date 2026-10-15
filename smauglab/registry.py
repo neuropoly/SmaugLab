@@ -65,15 +65,23 @@ class Backend(str, Enum):
 class AugType(str, Enum):
     """Augmentation strength class.
 
-    Member names are verbatim from segtransferaug's `AUG2GROUP`, which this
+    GEO, GE and TA are verbatim from segtransferaug's `AUG2GROUP`, which this
     replaces, so downstream `AugType.TA` keeps resolving. The GPU random-order
     pipelines bucket transforms by this to decide what goes inside each
     `RandomChooseXTransformsGPU`.
+
+    NORM has no `AUG2GROUP` ancestor. It is the group of whole-volume intensity
+    standardizations, which are mutually exclusive by nature: chaining a min-max
+    rescale onto a z-score does not compose two augmentations, it discards the
+    first. So the builder bucket for this group picks exactly *one* of its members
+    per sample rather than running them all, which is a different question from the
+    "which order, how many" one GE and TA ask. See `build.build_gpu_pipeline`.
     """
 
     GEO = "GEO"  # geometric: applied in sequence, never bucketed
     GE = "GE"  # general enhancement, usually light
     TA = "TA"  # transfer augmentation, usually heavy
+    NORM = "NORM"  # intensity standardization: mutually exclusive, one per sample
 
 
 class AugId(str, Enum):
@@ -106,8 +114,14 @@ class AugId(str, Enum):
     CLAMP = "clamp"
     LOW_RES = "low_res"
     ACQ = "acq"
-    ZSCORE = "zscore"
     MIRROR = "mirror"
+    # -- intensity standardization, one concept each so key <-> class stays 1:1
+    ZSCORE = "zscore"
+    NORM_MINMAX = "norm_minmax"
+    NORM_PERCENTILE = "norm_percentile"
+    NORM_ROBUST_ZSCORE = "norm_robust_zscore"
+    NORM_MAX_SCALE = "norm_max_scale"
+    NORM_MEAN_SCALE = "norm_mean_scale"
     # -- transfer augmentation
     SCHARR = "scharr"
     LAPLACE = "laplace"
@@ -241,7 +255,14 @@ PIPELINE_ORDER: Mapping[Backend, tuple[str, ...]] = MappingProxyType(
             "RandomAcqTransformGPU",  # AcqTransform
             "RandomCropTransformGPU",  # CropTransform
             "RandomBiasFieldGPU",  # BiasFieldTransform
+            # The normalization group, last: it standardizes whatever the intensity
+            # transforms above it did. Only one of these runs per sample -- see AugType.NORM.
             "ZscoreNormalizationGPU",  # ZscoreNormalizationTransform
+            "MinMaxNormalizationGPU",
+            "PercentileNormalizationGPU",
+            "RobustZscoreNormalizationGPU",
+            "MaxScaleNormalizationGPU",
+            "MeanScaleNormalizationGPU",
         ),
         # From the ladder in cpu/transforms.py, top to bottom.
         Backend.CPU: (

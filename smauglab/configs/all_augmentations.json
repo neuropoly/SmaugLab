@@ -803,6 +803,91 @@
             "seg_feather": 0.0,
             "seg_unit": "whole",
             "seg_unit_prob": 0.5
+        },
+        "MinMaxNormalizationGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "clip_percentiles": null,
+            "in_seg": 0.0,
+            "keepdim": true,
+            "min_scale": 0.001,
+            "nonzero_threshold": 1e-06,
+            "out_range": [
+                0.0,
+                1.0
+            ],
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "stats_from": "all"
+        },
+        "PercentileNormalizationGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "clip_range": null,
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mean": null,
+            "min_scale": 0.001,
+            "nonzero_threshold": 1e-06,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "percentiles": [
+                0.005,
+                0.995
+            ],
+            "stats_from": "all",
+            "std": null
+        },
+        "RobustZscoreNormalizationGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "min_scale": 0.001,
+            "nonzero_threshold": 1e-06,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "percentiles": [
+                0.25,
+                0.75
+            ],
+            "spread": "iqr",
+            "stats_from": "all",
+            "unit_variance": true
+        },
+        "MaxScaleNormalizationGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "min_scale": 0.001,
+            "nonzero_threshold": 1e-06,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "percentile": null,
+            "stats_from": "all",
+            "use_abs": true
+        },
+        "MeanScaleNormalizationGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "in_seg": 0.0,
+            "keepdim": true,
+            "min_scale": 0.001,
+            "nonzero_threshold": 1e-06,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "stats_from": "nonzero"
         }
     },
     "CPU": {

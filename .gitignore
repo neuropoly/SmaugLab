@@ -50,6 +50,9 @@ MANIFEST
 # configs beside it are tracked only because they predate the blanket rule above;
 # a new one has to say so.
 !smauglab/configs/transform_params_paper-synthseg.json
+# The statistics bracket's reference config (see "Statistics restore" in README.md),
+# shipped so `unit_tests/test_configs.py` builds and runs it like any other.
+!smauglab/configs/transform_params_gpu_stats-restore.json
 *.yaml
 *.nii
 *.nii.gz

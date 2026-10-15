@@ -13,9 +13,24 @@ never runs is invisible for the length of a training run.
 import torch
 
 from smauglab.transforms.gpu.contrast import RandomBiasFieldGPU, RandomBrightnessGPU, ZscoreNormalizationGPU
+from smauglab.transforms.gpu.normalization import (
+    MaxScaleNormalizationGPU,
+    MeanScaleNormalizationGPU,
+    MinMaxNormalizationGPU,
+    PercentileNormalizationGPU,
+    RobustZscoreNormalizationGPU,
+)
 from unit_tests.helpers import SmaugLabTestCase
 
-GUARDED = (RandomBiasFieldGPU, ZscoreNormalizationGPU)
+GUARDED = (
+    RandomBiasFieldGPU,
+    ZscoreNormalizationGPU,
+    MinMaxNormalizationGPU,
+    PercentileNormalizationGPU,
+    RobustZscoreNormalizationGPU,
+    MaxScaleNormalizationGPU,
+    MeanScaleNormalizationGPU,
+)
 
 
 class TestOutOfRangeChannelRaises(SmaugLabTestCase):

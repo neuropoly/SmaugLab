@@ -6,7 +6,7 @@ A config is a JSON document with reserved top-level sections:
       "_comment": "...",              // any key starting with '_' is ignored
       "GPU":      { "<ClassName>": { <constructor kwargs> }, ... },
       "CPU":      { ... },
-      "pipeline": { "random_choose": { ... } }
+      "pipeline": { "random_choose": { ... }, "retain_stats": { ... } }
     }
 
 A key is a class name, exactly, and a parameter is a constructor argument, exactly. Both are
@@ -96,7 +96,7 @@ def validate_section(section: dict, backend: Backend, *, source: str = "<config>
 RESERVED_SECTIONS = ("pipeline",)
 
 #: Keys the `pipeline` section may hold.
-PIPELINE_KEYS = ("mode", "order", "random_choose", "same_on_batch")
+PIPELINE_KEYS = ("mode", "order", "random_choose", "retain_stats", "same_on_batch")
 
 #: What to do about a config that has no backend section. Quoted by both errors that
 #: can report it, so the two cannot drift apart.
@@ -136,6 +136,22 @@ class SmaugConfig:
         that omitted the block.
         """
         return copy.deepcopy(self.payload.get("pipeline", {}).get(name, {}))
+
+    def retain_stats_spec(self) -> Any:
+        """The parsed `pipeline.retain_stats` block, or None when there is none.
+
+        Returns a `gpu.stats.StatsSpec`, imported here rather than at module scope: that
+        module reaches kornia, and a CPU-only caller validating a config should not have
+        to. Typed loosely for the same reason -- `build_gpu_pipeline` has the real
+        annotation under `TYPE_CHECKING`.
+        """
+        from smauglab.transforms.gpu.stats import parse_spec
+
+        # Read off the payload rather than through `pipeline_options`, which cannot tell
+        # an absent block from an empty one: it always hands back a dict, and here the
+        # difference is the difference between off and on-with-defaults.
+        block = self.payload.get("pipeline", {}).get("retain_stats")
+        return parse_spec(copy.deepcopy(block))
 
     def pipeline_mode(self) -> PipelineMode:
         """How the GPU pipeline arranges its transforms.
@@ -238,6 +254,14 @@ class SmaugConfig:
         same_on_batch = pipeline.get("same_on_batch")
         if same_on_batch is not None and not isinstance(same_on_batch, bool):
             problems.append(f"pipeline.same_on_batch: expected true or false, got {same_on_batch!r}")
+
+        retain_stats = pipeline.get("retain_stats")
+        if retain_stats is not None:
+            # Imported inside the check so a config with no statistics bracket still
+            # validates without importing the GPU transform stack.
+            from smauglab.transforms.gpu.stats import spec_problems
+
+            problems.extend(spec_problems(retain_stats))
 
         mode = pipeline.get("mode")
         if mode is not None:

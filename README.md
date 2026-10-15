@@ -187,6 +187,129 @@ Scripts developped in this repository use JSON files to specify image and segmen
 
 To track parameters used during data augmentation, JSON files are also used: see this [example](https://github.com/neuropoly/SmaugLab/blob/16653a84e031c40e25a72e946c2724494606b21c/smauglab/configs/transform_params.json)
 
+### Random normalization
+
+The `NORM` group in the table below -- z-score, min-max, the CT-style percentile clip, a
+robust median/IQR scaling, divide-by-max, divide-by-mean -- is the intensity
+standardization step. Its members are alternatives, not additions: a min-max rescale on
+top of a z-score does not apply two augmentations, it discards the first. So a config
+naming more than one of them does not get a sequence. The builder puts them in a single
+stage at the end of the pipeline that picks **one scheme per draw**, which makes the
+choice of normalization itself an augmentation.
+
+```json
+{
+  "GPU": {
+    "ZscoreNormalizationGPU": { "p": 1.0 },
+    "MinMaxNormalizationGPU": { "out_range": [0.0, 1.0], "p": 1.0 },
+    "PercentileNormalizationGPU": { "percentiles": [0.005, 0.995], "p": 1.0 },
+    "RobustZscoreNormalizationGPU": { "spread": "iqr", "p": 1.0 },
+    "MaxScaleNormalizationGPU": { "p": 0.5 }
+  },
+  "pipeline": { "random_choose": { "norm_probability": 1.0 } }
+}
+```
+
+Inside that stage a scheme's `p` is its **weight**, not its frequency: one scheme is drawn
+uniformly from the `n` named, and its own `p` is then spent, so `P(scheme) = p / n`. The
+config above gives each of the first four a 1-in-5 share and `MaxScaleNormalizationGPU` a
+1-in-10 one, and in the remaining 1-in-10 of samples nothing is applied -- which is how
+"leave it at the preprocessing normalization" is expressed. There is deliberately no
+no-op transform to name; a scheme at `p: 0.0` is a share of the choice that does nothing.
+
+| key | default | what it does |
+| --- | --- | --- |
+| `stats_from` | `"all"` | Which voxels the statistics are read from: `"all"`, `"seg"` (the labelled anatomy) or `"nonzero"` (everything preprocessing did not zero out, the closest thing here to nnU-Net's `use_mask_for_norm`). It changes what is *measured*, never what is written -- `in_seg` / `out_seg` still decide that. |
+| `min_scale` | `0.001` | Leave a sample alone when the divisor is below this fraction of its standard deviation. Without it, `MeanScaleNormalizationGPU` on an already-z-scored patch divides rounding noise by a mean of ~0. |
+| `norm_probability` | `1.0` | Probability that the stage runs at all, under `pipeline.random_choose`. |
+
+A draw is one per **batch** at the default `pipeline.same_on_batch: true`, which the
+pipeline forces onto every stage it holds -- the `ta` and `ge` buckets behave the same
+way. Set `pipeline.same_on_batch: false` and each sample draws its own scheme, which is
+also what makes every transform's `p` per-sample rather than batch-wide.
+
+Three things to know before turning this on:
+
+* The patch has already been normalized once, by nnU-Net's preprocessing, and inference
+  re-applies only that fixed preprocessing. Randomizing the final standardization is
+  therefore a deliberate train/test difference in input scale, on the same logic as every
+  other appearance augmentation here: the network is being asked to stop depending on one
+  scale. There is no compensating re-normalization at the end -- if that is what you want,
+  it is the statistics bracket below, which runs *before* this stage.
+* The schemes act on preprocessed intensities, not on HU. A CT window in Hounsfield units
+  means nothing after preprocessing unless its bounds are stated, which is why
+  `PercentileNormalizationGPU` takes an explicit `clip_range`, `mean` and `std` -- given
+  all three it reproduces nnU-Net's `CTNormalization` exactly, and
+  `MinMaxNormalizationGPU` at its defaults reproduces `RescaleTo01Normalization`.
+  `unit_tests/test_normalization.py` pins both against the installed nnU-Net.
+
+### Statistics restore (`pipeline.retain_stats`)
+
+The per-transform `retain_stats` flag puts a channel's mean and standard deviation back
+after one transform. This is the same idea for the whole pipeline, with two more
+statistics and a jitter: the profile is snapshotted once after the geometry and restored
+once at the end, so the augmentations are free to do what they like in between and the
+network still sees an intensity profile that is plausible -- but never exactly the one the
+patch arrived with.
+
+```json
+{
+  "pipeline": {
+    "retain_stats": {
+      "stats": ["mean", "std", "p1", "p99"],
+      "percentiles": [1.0, 99.0],
+      "std_scale": [0.9, 1.1],
+      "percentile_scale": [0.9, 1.1],
+      "stats_from": "all",
+      "p": 1.0
+    }
+  }
+}
+```
+
+An absent block is off and spends no random numbers. A block that is present but empty is
+on with every default, which restores the snapshot exactly.
+
+**Two of the four, drawn per batch.** The snapshot is the per-sample, per-channel mean,
+standard deviation, 1st and 99th percentile. An affine map `y = ax + b` has two degrees of
+freedom, so all four cannot be restored at once -- each pass therefore draws **two** of
+them and solves for the map that puts exactly those two on target, leaving the other two
+to fall where the augmentations left them. The six pairs span the two useful extremes:
+
+| drawn pair | what it pins | what it is |
+| --- | --- | --- |
+| mean, std | the moments | what per-transform `retain_stats` does |
+| p1, p99 | the robust dynamic range | immune to the outliers an edge filter or a random convolution manufactures, which are exactly what make the standard deviation a bad target |
+| mean, p1 / mean, p99 / std, p1 / std, p99 | one of each | the mixed cases in between |
+
+`stats` is the pool the pair is drawn from, so `["mean", "std"]` reproduces the old
+behaviour at pipeline level and the default draws from all six pairs.
+
+**The jitter.** `std_scale` multiplies the standard-deviation target; `percentile_scale`
+multiplies each percentile's distance from the mean, independently, so the span can widen,
+narrow or go asymmetric. Both are a scalar or a `[lo, hi]` range, and `1.0` restores the
+snapshot exactly. The mean target is never jittered -- it is the anchor every pair shares,
+and moving it as well would put two unrelated augmentations behind one knob. `p` is the
+per-sample probability that the restore applies at all.
+
+**Where it sits.** With the block on, the pipeline is
+
+```
+[geometry] [snapshot] [augmentations] [restore] [crop] [normalization]
+```
+
+in all three pipeline modes. Two groups move to the tail: the crop, because it occludes a
+random box with the volume's own minimum rather than changing intensities, so a restore
+measured before it would be undoing the occlusion; and the normalization stage, because
+deciding the scale the network sees is its entire job. In `random_order` mode the snapshot
+lands after the geometry but *before* the hoisted `RandomLowResTransformGPU`, which is a
+general enhancement that merely runs early.
+
+A config should pick one mechanism or the other: the two do not compose, and a transform
+that restores its own moments inside the bracket is doing work the restore will redo.
+`smauglab/configs/transform_params_gpu_stats-restore.json` is the paper's `Ours` setup with
+the bracket on and every per-transform `retain_stats` turned off.
+
 ### Paper configs
 
 Two shipped configs are the setups behind the paper's tables. `smauglab hash <config>`
@@ -231,8 +354,13 @@ column -- see "Run Monai training with SmaugLab augmentations" above. Regenerate
 | clamp | GE | `RandomClampGPU` | — |
 | low_res | GE | `RandomLowResTransformGPU` | `SimulateLowResolutionTransform` |
 | acq | GE | `RandomAcqTransformGPU` | — |
-| zscore | GE | `ZscoreNormalizationGPU` | `ZscoreNormalization` |
 | mirror | GEO | — | `MirrorTransform` |
+| zscore | NORM | `ZscoreNormalizationGPU` | `ZscoreNormalization` |
+| norm_minmax | NORM | `MinMaxNormalizationGPU` | — |
+| norm_percentile | NORM | `PercentileNormalizationGPU` | — |
+| norm_robust_zscore | NORM | `RobustZscoreNormalizationGPU` | — |
+| norm_max_scale | NORM | `MaxScaleNormalizationGPU` | — |
+| norm_mean_scale | NORM | `MeanScaleNormalizationGPU` | — |
 | scharr | TA | `RandomScharrGPU` | `ScharrConvTransform` |
 | laplace | TA | `RandomLaplaceGPU` | `LaplaceConvTransform` |
 | unsharp_mask | TA | `RandomUnsharpMaskGPU` | — |
