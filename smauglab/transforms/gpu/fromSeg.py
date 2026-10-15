@@ -9,6 +9,7 @@ from torch.nn import functional as F
 
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
+from smauglab.transforms.gpu.mixing import DEFAULT_MIX_ALPHA, MixAlphaSpec, blend_at, configure_mix, mix_with_original, sample_mix
 from smauglab.transforms.kernels import gaussian_blur3d
 from smauglab.transforms.rng import shared_choice
 
@@ -278,6 +279,8 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
         keepdim: bool = True,
         std_noise_range: Sequence[float] = (0.1, 0.3),
         dilation_iterations_range: Sequence[int] = (1, 3),
+        mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
     ) -> None:
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.in_seg = in_seg
@@ -285,6 +288,7 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
         self.retain_stats = retain_stats
         self.std_noise_range = std_noise_range
         self.dilation_iterations_range = dilation_iterations_range
+        configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -344,6 +348,10 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
             dilation_draws = torch.randint(
                 self.dilation_iterations_range[0], self.dilation_iterations_range[1] + 1, (N,), device=input.device
             ).tolist()
+            # Hoisted for the same reason as the two above, and for one more: the loop
+            # below keeps drawing after the blend would land, so drawing in place would
+            # make switching `mix_prob` on change every later sample's redistribution.
+            mix_draws = sample_mix(self, N, input.device)
 
             # Iterate per sample (seg can differ in shape or labels per sample)
             for b in range(N):
@@ -418,6 +426,11 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                 tmin, tmax = to_add.min(), to_add.max()
                 x = torch.where(tmax - tmin > 1e-8, x + 2 * (to_add - tmin) / (tmax - tmin + 1e-6), x)
 
+                # Before the restore below, as everywhere else in the group. `img_batch[b]`
+                # rather than `input[b, c]` is the original: it is the sanitised channel this
+                # method works from, and what the no-foreground branch above writes back.
+                x = blend_at(mix_draws, b, img_batch[b], x)
+
                 # Restore stats
                 if self.retain_stats:
                     mean = x.mean()
@@ -471,6 +484,11 @@ class RandomPaletteGPU(ImageOnlyTransform):
         min_label_voxels: minimum voxels in a label to attempt the remap.
         label_classes: if set, restrict label remap to these class indices
             (None = all foreground classes present in the batch).
+        mix_prob: per-sample probability of blending the synthesis back with the original.
+        mix_alpha: weight on the original when blending, fixed or sampled from a [lo, hi]
+            range. 0 is the pure synthesis, 1 is the input's own contrast. Both sides of
+            the blend are in the [0, 1] min-max space the synthesis is built in, and the
+            foreground z-score below runs after it, so the background stays at zero.
         p: probability of applying the transform.
     """
 
@@ -487,6 +505,8 @@ class RandomPaletteGPU(ImageOnlyTransform):
         label_remap_prob: float = 0.5,
         min_label_voxels: int = 4,
         label_classes: list[int] | None = None,
+        mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
         p_batch: float = 1.0,
         same_on_batch: bool = False,
@@ -507,6 +527,7 @@ class RandomPaletteGPU(ImageOnlyTransform):
         self.label_remap_prob = label_remap_prob
         self.min_label_voxels = min_label_voxels
         self.label_classes = label_classes
+        configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()
     def apply_transform(
@@ -645,6 +666,11 @@ class RandomPaletteGPU(ImageOnlyTransform):
         if sigma2 > 0.0:
             synth_01 = _gaussian_blur_3d(synth_01, sigma2)
             synth = synth_01.reshape(B, N)
+
+        # Before the foreground z-score below, which is this transform's stats restore.
+        # Blending here rather than on the way out keeps both sides in the same [0, 1]
+        # space, and leaves the `* flat_m_all` masking to hold the background at zero.
+        synth = mix_with_original(self, images_01, synth)
 
         b_sum = (synth * flat_m_all).sum(dim=1, keepdim=True)
         b_cnt = flat_m_all.sum(dim=1, keepdim=True).clamp(min=1)

@@ -15,6 +15,12 @@ one.
 `transform_params_gpu.json` and `transform_params_one-sequence-to-segment-them-all.json`
 run `RandomScharrGPU` at `mix_prob: 0.5`, so this is a live difference, not a
 latent one.
+
+All three copies now live in `smauglab/transforms/gpu/mixing.py`, which also made the
+blend weight configurable as `mix_alpha` -- see `test_mix_alpha.py`. This file keeps
+working unchanged, which is the point of it: `mix_alpha`'s default is the `U(0, 1)` draw
+these cases were written against, so a failure here means that default stopped
+reproducing it.
 """
 
 from __future__ import annotations

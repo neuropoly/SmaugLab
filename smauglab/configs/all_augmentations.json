@@ -64,6 +64,11 @@
             "keepdim": true,
             "max_res_aniso": 8.0,
             "max_res_iso": 4.0,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
+            "mix_prob": 0.0,
             "n_channels": 1,
             "n_neutral_labels": null,
             "nonlin_scale": 0.04,
@@ -109,6 +114,11 @@
             "label_classes": null,
             "label_remap_prob": 0.5,
             "min_label_voxels": 4,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
+            "mix_prob": 0.0,
             "n_kmeans_subsample": 10000,
             "p": 1.0,
             "p_batch": 1.0,
@@ -151,6 +161,11 @@
             "dark_threshold": 0.01,
             "initial_partitioner": null,
             "keepdim": false,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
+            "mix_prob": 0.0,
             "overlay": null,
             "p": 1.0,
             "p_batch": 1.0,
@@ -167,6 +182,11 @@
             "blend_targets": 1,
             "include_self": true,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
+            "mix_prob": 0.0,
             "p": 0.2,
             "p_batch": 1.0,
             "p_class_mix": 0.0,
@@ -186,6 +206,10 @@
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
@@ -200,6 +224,10 @@
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
@@ -218,6 +246,11 @@
             ],
             "in_seg": 0.2,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
+            "mix_prob": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": true,
@@ -234,6 +267,10 @@
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
@@ -249,6 +286,10 @@
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
@@ -263,6 +304,10 @@
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
@@ -284,6 +329,10 @@
                 3,
                 5,
                 7
+            ],
+            "mix_alpha": [
+                0.0,
+                1.0
             ],
             "mix_in_out": false,
             "mix_prob": 0.0,
@@ -327,6 +376,10 @@
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
@@ -409,7 +462,12 @@
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
+            "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
@@ -422,7 +480,12 @@
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
+            "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
@@ -435,7 +498,12 @@
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
+            "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
@@ -448,7 +516,12 @@
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
+            "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
@@ -461,7 +534,12 @@
             ],
             "in_seg": 0.0,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
+            "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
@@ -514,7 +592,12 @@
             "in_seg": 0.0,
             "invert": false,
             "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
             "mix_in_out": false,
+            "mix_prob": 0.0,
             "order": 3,
             "out_seg": 0.0,
             "p": 1.0,

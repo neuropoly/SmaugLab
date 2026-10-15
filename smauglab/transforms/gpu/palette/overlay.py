@@ -7,6 +7,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from smauglab.transforms.gpu.fromSeg import foreground_classes
+from smauglab.transforms.gpu.mixing import normalise_blend_range
 
 #: A scalar blend, or a [lo, hi] range sampled per label per sample.
 BlendSpec = float | Sequence[float]
@@ -52,7 +53,7 @@ class AnatomicalLabelOverlay(nn.Module):
         self.label_remap_prob = float(label_remap_prob)
         self.min_label_voxels = int(min_label_voxels)
         self.label_classes = None if label_classes is None else list(label_classes)
-        self.blend_strength = _normalise_blend(blend_strength)
+        self.blend_strength = normalise_blend_range(blend_strength, key="blend_strength", owner=type(self).__name__, hint="")
         self.alpha_magnitude_range = tuple(alpha_magnitude_range)
 
     def remap_labels(
@@ -103,12 +104,3 @@ class AnatomicalLabelOverlay(nn.Module):
             synth = synth * (1.0 - write_mask) + new_vals * write_mask
 
         return synth
-
-
-def _normalise_blend(spec: BlendSpec) -> tuple[float, float]:
-    if isinstance(spec, (int, float)):
-        return (float(spec), float(spec))
-    lo, hi = float(spec[0]), float(spec[1])
-    if lo > hi:
-        raise ValueError(f"blend_strength range must be non-decreasing, got [{lo}, {hi}]")
-    return (lo, hi)
