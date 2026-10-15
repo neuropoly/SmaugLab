@@ -87,7 +87,7 @@ class TestRedistributeSegAgreesBetweenLayouts(SmaugLabTestCase):
         image = torch.rand(*SHAPE)
 
         def build():
-            return RandomRedistributeSegGPU(p=1.0, in_seg=1.0)
+            return RandomRedistributeSegGPU(p=1.0, confine_prob=1.0)
 
         torch.testing.assert_close(_apply(build, labels, image), _apply(build, onehot, image))
 
@@ -99,7 +99,7 @@ class TestRedistributeSegAgreesBetweenLayouts(SmaugLabTestCase):
         image = torch.rand(*SHAPE)
 
         def build():
-            return RandomRedistributeSegGPU(p=1.0, in_seg=1.0)
+            return RandomRedistributeSegGPU(p=1.0, confine_prob=1.0)
 
         per_label = _apply(build, labels, image)
         one_blob = _apply(build, merged, image)

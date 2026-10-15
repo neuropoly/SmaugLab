@@ -36,6 +36,7 @@ configs are unchanged:
 
 import math
 import os
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -48,6 +49,16 @@ from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.fromSeg import seg_region_masks
 from smauglab.transforms.gpu.mixing import DEFAULT_MIX_ALPHA, MixAlphaSpec, blend_at, configure_mix, sample_mix
+from smauglab.transforms.gpu.regions import (
+    DEFAULT_BG_EM_CLUSTERS,
+    DEFAULT_BG_SPLIT,
+    DEFAULT_SEG_FEATHER,
+    DEFAULT_SEG_UNIT,
+    DEFAULT_SEG_UNIT_PROB,
+    SegFeatherSpec,
+    _select_and_check,
+    configure_regions,
+)
 from smauglab.transforms.kernels import gaussian_blur3d, random_bias_field3d
 
 # The transfer LUT bank is a multi-hundred-MB artefact built offline by
@@ -146,6 +157,13 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         p_spatial_mix: float = 0.0,
         spatial_mix_scale: float = 0.03,
         spatial_mix_gain: float = 3.0,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         mix_prob: float = 0.0,
         mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         same_on_batch: bool = False,
@@ -223,6 +241,7 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         # Whole-transform blend back towards the input, distinct from `blend_targets` and
         # `p_spatial_mix` above: those interpolate between LUTs, which stays a monotone
         # remap of the source intensities, while this interpolates in image space.
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
         configure_mix(self, mix_prob, mix_alpha)
 
     def _sample_blended_luts(self, lut_bank: Tensor, n_seg_c: int, device) -> tuple[Tensor, bool]:
@@ -375,5 +394,14 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
                     # transferred distribution SHAPE while placing it back in the z-score scale the
                     # network trains on, so the augmented patch matches the rest of the batch.
                     acc = (acc - acc.mean()) / acc.std().clamp_min(1e-6) * sd + mu
-                out[b, ch] = acc
+
+                # Region selection after the z-restore above, not after the LUT-space blend:
+                # at that point `acc` is still in the LUT's [0, 1] domain while `x` is in the
+                # input's, and a composite has to have both sides on one scale. By here they
+                # do, which is also why this is the one of the four synthesising transforms
+                # that needs no `normalize`.
+                checked = _select_and_check(self, x, acc, seg[b])
+                if checked is None:
+                    continue
+                out[b, ch] = checked
         return out

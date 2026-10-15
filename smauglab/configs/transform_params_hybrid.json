@@ -35,18 +35,20 @@
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.3
         },
         "RandomHistogramEqualizationGPU": {
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.2
         },
         "RandomRedistributeSegGPU": {
-            "in_seg": 0.2,
+            "confine_prob": 0.2,
             "retain_stats": false,
             "p": 0.3
         },
@@ -55,7 +57,8 @@
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.15
         },
         "RandomUnsharpMaskGPU": {
@@ -63,7 +66,8 @@
             "unsharp_amount": 1,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.1
         },
         "RandomRandConvGPU": {
@@ -76,7 +80,8 @@
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "mix_prob": 0.2,
             "p": 0.1
         },
@@ -85,7 +90,8 @@
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.4
         },
         "RandomGaussianNoiseGPU": {
@@ -93,14 +99,14 @@
             "std": 0.1,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.1
         },
         "RandomGaussianBlurGPU": {
             "sigma": 1.0,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": false,
             "p": 0.1
         },
         "RandomBrightnessGPU": {
@@ -110,7 +116,6 @@
             ],
             "in_seg": 0.0,
             "out_seg": 0.0,
-            "mix_in_out": false,
             "p": 0.15
         },
         "RandomGammaGPU": {
@@ -121,7 +126,8 @@
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.3
         },
         "RandomInvGammaGPU": {
@@ -132,7 +138,8 @@
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.1
         },
         "RandomContrastGPU": {
@@ -143,42 +150,46 @@
             "retain_stats": false,
             "in_seg": 0.0,
             "out_seg": 0.0,
-            "mix_in_out": false,
             "p": 0.15
         },
         "RandomLog1pGPU": {
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.05
         },
         "RandomSqrtGPU": {
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.05
         },
         "RandomSinGPU": {
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.05
         },
         "RandomExpGPU": {
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.05
         },
         "RandomSigmoidGPU": {
             "retain_stats": false,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": true,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
             "p": 0.05
         },
         "RandomLowResTransformGPU": {
@@ -202,7 +213,6 @@
             "coefficients": 0.5,
             "in_seg": 0.5,
             "out_seg": 0.5,
-            "mix_in_out": false,
             "p": 0.2
         },
         "ZscoreNormalizationGPU": {
@@ -242,7 +252,7 @@
             "p": 0.1
         },
         "RedistributeTransform": {
-            "in_seg": 0.2,
+            "confine_prob": 0.2,
             "retain_stats": false,
             "p": 0.5
         },

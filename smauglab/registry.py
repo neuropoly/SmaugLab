@@ -177,6 +177,16 @@ RENAMED_HINTS: Mapping[str, str] = MappingProxyType(
         "kernel_type": "the class name now carries the kernel (e.g. RandomScharrGPU)",
         "func": "the class name now carries the function (e.g. RandomLog1pGPU)",
         "one_dim": "use RandomAcqTransformGPU (one_dim) or RandomLowResTransformGPU",
+        "mix_in_out": "use seg_unit='label' with seg_unit_prob",
+        # Only reachable on RandomRedistributeSegGPU, the one transform that does not
+        # accept `in_seg`. That is deliberate: it used to accept it with a *different*
+        # meaning (confine each region's Gaussian to its own voxels), twenty-eight shipped
+        # configs set it, and if the class also took the standard `in_seg` they would all
+        # have kept validating while silently changing what they do. Keeping the name
+        # unaccepted is what turns that into this message. Note difflib would otherwise
+        # answer "did you mean out_seg?" -- it scores 0.615, above the 0.6 cutoff -- which
+        # is exactly why `out_seg` is not accepted there either.
+        "in_seg": "on RandomRedistributeSegGPU it is now confine_prob; elsewhere in_seg is unchanged",
     }
 )
 

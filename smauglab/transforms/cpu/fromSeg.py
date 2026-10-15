@@ -19,14 +19,18 @@ class RedistributeTransform(BasicTransform):
     Based on https://github.com/neuropoly/totalspineseg/blob/main/totalspineseg/utils/augment.py
     """
 
-    def __init__(self, classes=None, in_seg=0.2, retain_stats=False):
+    # `confine_prob` was `in_seg`, renamed with its GPU twin: it is the probability that
+    # each label's Gaussian is confined to that label's own voxels, not the probability of
+    # applying the transform inside the segmentation, which is what `in_seg` means
+    # everywhere else. Both halves of `AugId.REDISTRIBUTE_SEG` use the one name.
+    def __init__(self, classes=None, confine_prob=0.2, retain_stats=False):
         super().__init__()
         self.classes = classes
-        self.in_seg = in_seg
+        self.confine_prob = confine_prob
         self.retain_stats = retain_stats
 
     def get_parameters(self, **data_dict) -> dict:
-        return {"classes": self.classes, "in_seg": self.in_seg, "retain_stats": self.retain_stats}
+        return {"classes": self.classes, "confine_prob": self.confine_prob, "retain_stats": self.retain_stats}
 
     def apply(self, data_dict: dict, **params) -> dict:
         if data_dict.get("image") is not None and data_dict.get("segmentation") is not None:
@@ -36,12 +40,12 @@ class RedistributeTransform(BasicTransform):
     def _apply_to_image(self, img: torch.Tensor, seg: torch.Tensor, **params) -> tuple[torch.Tensor, torch.Tensor]:
         for c in range(1):  # Works on the first channel only
             img[c], seg[c] = aug_redistribute_seg(
-                img[c], seg[c], classes=params["classes"], in_seg=params["in_seg"], retain_stats=params["retain_stats"]
+                img[c], seg[c], classes=params["classes"], confine_prob=params["confine_prob"], retain_stats=params["retain_stats"]
             )
         return img, seg
 
 
-def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False):
+def aug_redistribute_seg(img, seg, classes=None, confine_prob=0.2, retain_stats=False):
     """
     Augment the image by redistributing the values of the image within the
     regions defined by the segmentation.
@@ -50,7 +54,7 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
     """
     device = img.device
     _seg = seg
-    in_seg_bool = 1 - torch.rand(1, device=device) <= in_seg
+    confine = 1 - torch.rand(1, device=device) <= confine_prob
 
     if classes:
         _seg = combine_classes(_seg, classes)
@@ -112,7 +116,7 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
         )
 
         sign = 2 * torch.rand(1, device=device) - 1
-        if in_seg_bool:
+        if confine:
             to_add[l_mask] += _normal_pdf(img[l_mask], l_mean, redist_std) * sign
         else:
             to_add += _normal_pdf(img, l_mean, redist_std) * sign
@@ -120,8 +124,8 @@ def aug_redistribute_seg(img, seg, classes=None, in_seg=0.2, retain_stats=False)
     # The min-max form shifted zero: with `2 * (to_add - min) / range`, a voxel where
     # nothing was redistributed picks up `-2 * min / range`, non-zero whenever min < 0 --
     # and it always is, since the per-label scale is `2 * rand - 1` in [-1, 1]. On the
-    # `in_seg` branch `to_add` is exactly zero outside the labels, so that constant became
-    # a DC offset over the whole patch: `in_seg` restricted where the redistribution was
+    # confined branch `to_add` is exactly zero outside the labels, so that constant became
+    # a DC offset over the whole patch: confining restricted where the redistribution was
     # *computed* but not where it landed.
     #
     # Scaling by the largest magnitude keeps the peak amplitude of 2 and maps zero to zero,

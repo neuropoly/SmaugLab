@@ -10,6 +10,21 @@ from torch.nn import functional as F
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.mixing import DEFAULT_MIX_ALPHA, MixAlphaSpec, blend_at, configure_mix, mix_with_original, sample_mix
+from smauglab.transforms.gpu.regions import (
+    DEFAULT_BG_EM_CLUSTERS,
+    DEFAULT_BG_SPLIT,
+    DEFAULT_SEG_FEATHER,
+    DEFAULT_SEG_UNIT,
+    DEFAULT_SEG_UNIT_PROB,
+    SegFeatherSpec,
+    _select_and_check,
+    configure_regions,
+    draw_feather,
+    feather_alpha,
+    keep_units,
+    region_units,
+    unit_spec,
+)
 from smauglab.transforms.kernels import gaussian_blur3d
 from smauglab.transforms.rng import shared_choice
 
@@ -249,6 +264,24 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
     Mirrors the CPU `RedistributeTransform` behavior using GPU-friendly ops.
     Works with inputs shaped [N, C, H, W] or [N, C, D, H, W].
 
+    `confine_prob` is the per-sample probability that each region's Gaussian perturbation
+    is restricted to that region's own voxels rather than added across the whole patch.
+    It was called `in_seg`, which it should never have been: everywhere else in the
+    package `in_seg` is the probability of applying the *whole transform* inside the
+    segmentation, and the two are different questions. The rename is not cosmetic --
+    twenty-eight shipped configs set the old name, and had this class also accepted the
+    standard `in_seg` they would all have kept validating while silently changing meaning,
+    with no diagnostic possible because the key would be accepted. So this is the one
+    transform that does **not** take `in_seg` / `out_seg`, and a config still naming
+    `in_seg` here fails as an unknown parameter and is told what to write instead.
+
+    What it does take is the rest of the region surface, because its work is already
+    per region: `seg_unit` chooses what a region *is* (one per label value, which is what
+    it has always used and therefore the default here, or one per connected component),
+    `bg_split="em"` splits the background into intensity clusters so there is more than
+    one region of air to redistribute between, `seg_unit_prob` is the chance each region
+    contributes, and `seg_feather` softens the edge of a confined contribution.
+
     `retain_stats` defaults to True, and wants to stay that way. The whole method
     operates in a per-sample [0, 1] min-max space and adds a perturbation of up to
     2.0 *in that space* -- twice the input's full dynamic range. With
@@ -270,7 +303,7 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
     def __init__(
         self,
-        in_seg: float = 0.2,
+        confine_prob: float = 0.2,
         apply_to_channel: Sequence[int] = (0,),
         retain_stats: bool = True,
         same_on_batch: bool = False,
@@ -279,15 +312,28 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
         keepdim: bool = True,
         std_noise_range: Sequence[float] = (0.1, 0.3),
         dilation_iterations_range: Sequence[int] = (1, 3),
+        # `seg_unit` defaults to "label", not the base class's "whole": one region per
+        # distinct label value is the region set this transform has always used, so this
+        # is what keeps the default behaviour unchanged. `seg_unit_prob` defaults to 1.0
+        # for the same reason -- every region contributing is what it has always done, and
+        # at 1.0 the keep draw spends nothing, so the default is bit-compatible.
+        seg_unit: str = "label",
+        seg_unit_prob: float = 1.0,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         mix_prob: float = 0.0,
         mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
     ) -> None:
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
-        self.in_seg = in_seg
+        self.confine_prob = confine_prob
         self.apply_to_channel = apply_to_channel
         self.retain_stats = retain_stats
         self.std_noise_range = std_noise_range
         self.dilation_iterations_range = dilation_iterations_range
+        # `in_seg` and `out_seg` are passed as zero and are deliberately not constructor
+        # parameters; see the class docstring. The rest of the region surface is read.
+        configure_regions(self, 0.0, 0.0, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
         configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()
@@ -313,10 +359,34 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
 
         N = input.shape[0]
 
-        # One region per label, whichever layout the caller used. Reading regions off
-        # the channel axis alone collapses a single-channel label map -- which is what
-        # nnU-Net's trainer passes -- to one foreground blob.
-        regions = seg_region_masks(seg)
+        if not len(self.apply_to_channel):
+            return input
+
+        # The regions to redistribute between, from `gpu/regions.py` rather than from
+        # `seg_region_masks`. At this class's defaults -- `seg_unit="label"` -- the two
+        # produce the same set: one region per distinct label value, background included,
+        # numbered batch-wide. What the decomposition adds is the other two settings:
+        # `seg_unit="component"` splits a label into its connected pieces, and
+        # `bg_split="em"` splits the background into intensity clusters, so the
+        # redistribution has more than one region of air to work with.
+        #
+        # The reference image for `bg_split="em"` is the first selected channel. The
+        # decomposition is shared by every channel of the call -- and by every other
+        # transform in the pass -- so it cannot be per channel.
+        units = region_units(seg, input[:, self.apply_to_channel[0] : self.apply_to_channel[0] + 1], unit_spec(self))
+        # Only the units some voxel actually lands in. `RegionUnits` always carries a
+        # background unit, occupied or not, and an unoccupied region is not harmless here:
+        # `_region_moments` clamps its count to 1 and hands back mean 0, so it would
+        # contribute a full-amplitude Gaussian at zero. Dropping it is also what makes the
+        # default region set identical to the `seg_region_masks` one this replaced, whose
+        # count was the number of label values *present*.
+        present = torch.bincount(units.ids.reshape(-1), minlength=units.n_units).nonzero().flatten()
+        region_index = present.view(1, present.numel(), *([1] * spatial_dims))
+        regions = units.ids == region_index
+        # Which regions contribute at all. Spends nothing at the default `seg_unit_prob`
+        # of 1.0, where every region does.
+        keep_rows = keep_units(self, units, N, input.device)[:, present].tolist()
+        confine_sigma = draw_feather(self)
 
         # Apply per selected image channel and per batch sample
         for c in self.apply_to_channel:
@@ -344,7 +414,7 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
             # sample's draw independent but not in the loop's interleaved order, so a
             # seeded run differs from the previous release's.
             has_foreground = (seg.reshape(N, -1) > 0).any(dim=1).tolist()
-            in_seg_draws = (torch.rand(N, device=input.device) <= self.in_seg).tolist()
+            confine_draws = (torch.rand(N, device=input.device) <= self.confine_prob).tolist()
             dilation_draws = torch.randint(
                 self.dilation_iterations_range[0], self.dilation_iterations_range[1] + 1, (N,), device=input.device
             ).tolist()
@@ -368,7 +438,7 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                     continue
 
                 # Decide redistribution mode once per sample
-                in_seg_bool = in_seg_draws[b]
+                confine = confine_draws[b]
 
                 # Binary masks for regions
                 masks = regions[b]  # (R, ...)
@@ -415,10 +485,22 @@ class RandomRedistributeSegGPU(ImageOnlyTransform):
                 # `counts` is `clamp_min(1)`.
                 to_add = torch.zeros_like(x)
                 rand_sign = 2 * torch.rand(R, device=input.device) - 1  # random sign factor per region
+                # Feathered only where it is *multiplied in*, never where the statistics
+                # come from: `_region_moments` relies on the mask being binary (it squares
+                # it and calls the result a voxel count), so a soft mask there would
+                # quietly corrupt every per-region mean and standard deviation. Here it
+                # softens the edge of the confined contribution, which is the whole point.
+                confine_flat = mask_flat.to(x.dtype)
+                if confine and confine_sigma > 0.0:
+                    confine_flat = feather_alpha(confine_flat.view(1, R, *x.shape), confine_sigma).view(R, -1)
                 for r in range(R):
+                    # The sign is drawn for every region whether or not it contributes, so
+                    # `seg_unit_prob` does not shift the stream for the regions that do.
+                    if not keep_rows[b][r]:
+                        continue
                     contribution = _normal_pdf(x, means[r], redist_std[r]) * rand_sign[r]
-                    if in_seg_bool:
-                        contribution = contribution * mask_flat[r].view(x.shape)
+                    if confine:
+                        contribution = contribution * confine_flat[r].view(x.shape)
                     to_add += contribution
 
                 # Normalize to_add if non-zero. `torch.where`, not `if`: the test is one
@@ -484,6 +566,16 @@ class RandomPaletteGPU(ImageOnlyTransform):
         min_label_voxels: minimum voxels in a label to attempt the remap.
         label_classes: if set, restrict label remap to these class indices
             (None = all foreground classes present in the batch).
+        in_seg: per-sample probability of confining the synthesis to the foreground labels.
+        out_seg: per-sample probability of confining it to the background. Both firing means a
+            mixture of the two; neither means the whole patch, which is the default and what
+            this transform has always done.
+        seg_unit: what a unit is when only part of a side is used -- "whole", "label" or
+            "component". `seg_unit_prob` is the chance each unit takes part.
+        bg_split: "em" splits the background into intensity clusters so `out_seg` can land on
+            part of it. Not to be confused with the generator's own `em_*` parameters.
+        seg_feather: Gaussian sigma in voxels for the boundary between the composited region
+            and the untouched one. 0 is a hard edge.
         mix_prob: per-sample probability of blending the synthesis back with the original.
         mix_alpha: weight on the original when blending, fixed or sampled from a [lo, hi]
             range. 0 is the pure synthesis, 1 is the input's own contrast. Both sides of
@@ -505,6 +597,13 @@ class RandomPaletteGPU(ImageOnlyTransform):
         label_remap_prob: float = 0.5,
         min_label_voxels: int = 4,
         label_classes: list[int] | None = None,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         mix_prob: float = 0.0,
         mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
@@ -527,6 +626,7 @@ class RandomPaletteGPU(ImageOnlyTransform):
         self.label_remap_prob = label_remap_prob
         self.min_label_voxels = min_label_voxels
         self.label_classes = label_classes
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
         configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()
@@ -680,7 +780,17 @@ class RandomPaletteGPU(ImageOnlyTransform):
         synth_z = ((synth - b_mean) / b_std * flat_m_all).reshape(B, 1, D, H, W)
 
         out = input.clone()
-        out[:, 0:1] = synth_z.to(input.dtype)
+        # Region selection last, after the foreground z-score above -- which is this
+        # transform's stats restore -- as it is in every other transform. `normalize=True`
+        # because the synthesis is masked to zero on the background while the input's
+        # background is z-scored air: compositing them raw would put an intensity step on
+        # the mask boundary that has nothing to do with the augmentation.
+        #
+        # The non-finite guard is new here. This used to write `synth_z` unconditionally,
+        # so a NaN out of the synthesis reached the batch.
+        checked = _select_and_check(self, input[:, 0], synth_z[:, 0], seg_raw, normalize=True)
+        if checked is not None:
+            out[:, 0:1] = checked.unsqueeze(1).to(input.dtype)
         return out
 
 

@@ -1,13 +1,19 @@
-"""`in_seg` must confine the redistribution to the segmentation.
+"""`confine_prob` must confine the redistribution to the segmentation.
+
+The parameter was called `in_seg` until this file was renamed with it: everywhere else
+in the package `in_seg` is the probability of applying the whole transform inside the
+segmentation, while here it decides whether each label's Gaussian is restricted to that
+label's own voxels. Two different questions under one name, and twenty-eight shipped
+configs set the old one.
 
 `aug_redistribute_seg` builds a `to_add` field -- zero outside the labels on the
-`in_seg` branch -- and then normalised it with
+confined branch -- and then normalised it with
 
     img += 2 * (to_add - to_add.min()) / (to_add.max() - to_add.min() + 1e-6)
 
 A min-max rescale moves zero. A voxel where nothing was redistributed picked up
 `-2 * min / range`, which is non-zero whenever `min < 0` -- and it always is,
-because the per-label scale is `2 * rand - 1` on [-1, 1]. So `in_seg` restricted
+because the per-label scale is `2 * rand - 1` on [-1, 1]. So confining restricted
 where the redistribution was *computed* but not where it landed: the whole patch
 got a uniform DC offset.
 
@@ -36,21 +42,21 @@ def normalised(img: torch.Tensor) -> torch.Tensor:
     return (img - img.min()) / (img.max() - img.min()).clamp_min(1e-6)
 
 
-class TestInSegStaysInsideTheSegmentation(SmaugLabTestCase):
+class TestConfiningStaysInsideTheSegmentation(SmaugLabTestCase):
     def test_nothing_changes_outside_the_labels(self):
         for seed in range(5):
             with self.subTest(seed=seed):
                 torch.manual_seed(seed)
                 img, seg = pair()
 
-                out, _ = aug_redistribute_seg(img.clone(), seg, in_seg=1.0)
+                out, _ = aug_redistribute_seg(img.clone(), seg, confine_prob=1.0)
 
                 delta = out - normalised(img)
                 self.assertAlmostEqual(
                     float(delta[seg == 0].abs().max()),
                     0.0,
                     places=6,
-                    msg="in_seg applied a DC offset to the background",
+                    msg="confining applied a DC offset to the background",
                 )
 
     def test_something_still_changes_inside_the_labels(self):
@@ -58,7 +64,7 @@ class TestInSegStaysInsideTheSegmentation(SmaugLabTestCase):
         torch.manual_seed(0)
         img, seg = pair()
 
-        out, _ = aug_redistribute_seg(img.clone(), seg, in_seg=1.0)
+        out, _ = aug_redistribute_seg(img.clone(), seg, confine_prob=1.0)
 
         delta = out - normalised(img)
         self.assertGreater(float(delta[seg == 1].abs().max()), 0.1)
@@ -68,17 +74,17 @@ class TestInSegStaysInsideTheSegmentation(SmaugLabTestCase):
         torch.manual_seed(0)
         img, seg = pair()
 
-        out, _ = aug_redistribute_seg(img.clone(), seg, in_seg=1.0)
+        out, _ = aug_redistribute_seg(img.clone(), seg, confine_prob=1.0)
 
         delta = (out - normalised(img)).abs().max()
         self.assertLessEqual(float(delta), 2.0 + 1e-4)
 
     def test_the_whole_image_branch_still_redistributes(self):
-        """`in_seg=0` takes the other branch, which must keep working."""
+        """`confine_prob=0` takes the other branch, which must keep working."""
         torch.manual_seed(0)
         img, seg = pair()
 
-        out, _ = aug_redistribute_seg(img.clone(), seg, in_seg=0.0)
+        out, _ = aug_redistribute_seg(img.clone(), seg, confine_prob=0.0)
 
         delta = out - normalised(img)
         self.assertGreater(float(delta.abs().max()), 0.1)
@@ -89,6 +95,6 @@ class TestInSegStaysInsideTheSegmentation(SmaugLabTestCase):
         torch.manual_seed(0)
         _, seg = pair()
 
-        out, _ = aug_redistribute_seg(torch.full(SHAPE, -2.709), seg, in_seg=1.0)
+        out, _ = aug_redistribute_seg(torch.full(SHAPE, -2.709), seg, confine_prob=1.0)
 
         self.assertTrue(bool(torch.isfinite(out).all()))

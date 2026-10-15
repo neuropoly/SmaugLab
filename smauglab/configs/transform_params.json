@@ -30,7 +30,7 @@
             "retain_stats": true
         },
         "RedistributeTransform": {
-            "in_seg": 0.2,
+            "confine_prob": 0.2,
             "retain_stats": true,
             "p": 0.5
         },

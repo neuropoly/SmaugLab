@@ -686,6 +686,42 @@ def draw_feather(transform: RegionSelecting) -> float:
     return float(torch.rand(1).item()) * (high - low) + low
 
 
+def _keep_draw(transform: RegionSelecting, batch: int, columns: int, width: int, device: torch.device) -> Tensor:
+    """`[batch, columns]` of which units are kept, at a fixed draw width.
+
+    Spends nothing at `seg_unit_prob >= 1`, which means "every unit" and is therefore the
+    setting that turns granularity off. Same rule as `in_seg = out_seg = 0` spending
+    nothing in :func:`choose_region_modes`, and it is what lets `seg_unit="label"` at
+    probability 1 reproduce `"whole"` bit for bit rather than merely in distribution.
+    """
+    if transform.seg_unit_prob >= 1.0:
+        return torch.ones(batch, columns, dtype=torch.bool, device=device)
+    return torch.rand(batch, width, device=device)[:, :columns] < transform.seg_unit_prob
+
+
+def keep_units(transform: RegionSelecting, units: RegionUnits, batch: int, device: torch.device) -> Tensor:
+    """`[batch, n_units]` of which units take part, with no reference to the in/out mode.
+
+    For the transforms whose own work is already per region -- `RandomRedistributeSegGPU`
+    adds a Gaussian per region and then sums them -- rather than a composite over a
+    selected area. There is no "inside or outside" to choose there, only which of the
+    regions it already iterates should contribute, so this is the half of
+    :func:`region_alpha` that applies.
+
+    The fall-back rule applies as it does there: if the draw kept nothing, keep
+    everything, so a sample never silently loses the whole augmentation.
+    """
+    width = UNIT_DRAW_WIDTH[transform.seg_unit] + transform.bg_em_clusters[1]
+    columns = min(units.n_units, width)
+    keep = _keep_draw(transform, batch, columns, width, device)
+    keep = keep | ~keep.any(dim=1, keepdim=True)
+    if units.n_units > columns:
+        # The fold: units past the draw width share the last column's fate, as they do in
+        # `region_alpha`.
+        keep = torch.cat([keep, keep[:, -1:].expand(batch, units.n_units - columns)], dim=1)
+    return keep
+
+
 def region_alpha(transform: RegionSelecting, units: RegionUnits, modes: Tensor) -> Tensor:
     """The `[B, 1, *spatial]` composite weight: 1 where the transform applies, 0 where not.
 
@@ -710,7 +746,7 @@ def region_alpha(transform: RegionSelecting, units: RegionUnits, modes: Tensor) 
     columns = min(units.n_units, width)
     column = units.ids.clamp(0, columns - 1)
 
-    keep = torch.rand(modes.numel(), width, device=device)[:, :columns] < transform.seg_unit_prob
+    keep = _keep_draw(transform, modes.numel(), columns, width, device)
     # Background units come first, and only the high end is folded, so a column is
     # foreground exactly when its index is at or past `n_background`.
     is_foreground = torch.arange(columns, device=device) >= units.n_background
@@ -749,8 +785,8 @@ def feather_alpha(alpha: Tensor, sigma: float) -> Tensor:
     `max_pool3d` and a second parameter, and worth adding only if the shrink turns out to
     matter.
 
-    Two-dimensional spatial inputs pass through unfeathered: the blur is 3-D. The sigma is
-    still drawn, because the draw must not depend on the data.
+    The `dim` guard is defensive only: `apply_region_selection` rejects anything but three
+    spatial dimensions before it gets here, because the blur is 3-D.
     """
     if sigma <= 0.0 or alpha.dim() != 5:
         return alpha
@@ -795,8 +831,12 @@ def apply_region_selection(
     """
     if seg is None or not region_selection_active(transform):
         return transformed
+    if orig.dim() not in (3, 4):
+        # The contract `_apply_region_mode` had: a channel of a batch, or one sample's
+        # volume. Three spatial dimensions either way, because the feather blur is 3-D.
+        raise ValueError(f"Only 4D [N, D, H, W] and 3D [D, H, W] channels are supported. Got {orig.dim()}D.")
 
-    batched = orig.dim() >= 4
+    batched = orig.dim() == 4
     reference = orig if batched else orig.unsqueeze(0)
     modes = choose_region_modes(transform, reference.shape[0], orig.device)
     assert modes is not None  # region_selection_active was just checked
@@ -823,3 +863,32 @@ def apply_region_selection(
         reduce_dims = tuple(range(1, orig.dim())) if batched else tuple(range(orig.dim()))
         transformed = _rescaled_into(transformed, orig, reduce_dims)
     return weight * transformed + (1.0 - weight) * orig
+
+
+def _select_and_check(
+    transform: RegionSelecting,
+    orig: Tensor,
+    x: Tensor,
+    seg_mask: Tensor | None,
+    note: str = "",
+    normalize: bool = False,
+) -> Tensor | None:
+    """Apply region selection, then reject the result if it went non-finite.
+
+    Returns None when the channel should be left as it was -- the "Final safety" check
+    that closed all nine of these loops identically.
+
+    Takes the transform rather than its region attributes: every call site read exactly
+    the same ones off `self`, and spelling them out made the call longer than the code it
+    replaces. The selection itself lives in `gpu/regions.py`, which is also what decides
+    whether it runs at all -- a transform with both probabilities at zero gets its input
+    back having drawn nothing.
+    """
+    x = apply_region_selection(transform, orig, x, seg_mask, normalize=normalize)
+    # One `isfinite(...).all()`, not `isnan().any() or isinf().any()`: each of those
+    # reads a reduction back to the host, and the `or` forces the second on the common
+    # path. Runs for every channel of every region-selecting transform.
+    if not bool(torch.isfinite(x).all()):
+        print(f"Warning nan: {type(transform).__name__}{note}", flush=True)
+        return None
+    return x
