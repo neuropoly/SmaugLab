@@ -95,7 +95,11 @@ def normalise_blend_range(spec: MixAlphaSpec, key: str = "mix_alpha", owner: str
     is a different blend with the same shape of argument, and shares this.
     """
     where = f"{owner}: " if owner else ""
-    if isinstance(spec, (int, float)) and not isinstance(spec, bool):
+    if isinstance(spec, bool):  # an int subtype, and never a blend weight anyone meant
+        # ValueError, not the TypeError TRY004 asks for: every other rejection here is a
+        # ValueError, and a caller should only have to catch one thing for a bad range.
+        raise ValueError(f"{where}{key} must be a number or a [lo, hi] pair, got {spec!r}")  # noqa: TRY004
+    if isinstance(spec, (int, float)):
         lo = hi = float(spec)
     else:
         try:
@@ -113,10 +117,14 @@ def normalise_blend_range(spec: MixAlphaSpec, key: str = "mix_alpha", owner: str
     return (lo, hi)
 
 
-def configure_mix(transform: object, mix_prob: float, mix_alpha: MixAlphaSpec) -> None:
-    """Validate and assign the two parameters. One line per constructor."""
-    transform.mix_prob = float(mix_prob)  # type: ignore[attr-defined]
-    transform.mix_alpha = normalise_blend_range(mix_alpha, owner=type(transform).__name__)  # type: ignore[attr-defined]
+def configure_mix(transform: Mixing, mix_prob: float, mix_alpha: MixAlphaSpec) -> None:
+    """Validate and assign the two parameters. One line per constructor.
+
+    `ImageOnlyTransform` declares both attributes, which is what makes `transform`
+    satisfy `Mixing` here and at every read site -- see the note on that class.
+    """
+    transform.mix_prob = float(mix_prob)
+    transform.mix_alpha = normalise_blend_range(mix_alpha, owner=type(transform).__name__)
 
 
 def mix_with_original(transform: Mixing, orig: Tensor, x: Tensor) -> Tensor:

@@ -277,7 +277,9 @@ class TestTheRangeIsValidated(SmaugLabTestCase):
             self.assertIn("[0, 1]", str(caught.exception))
 
     def test_a_malformed_range_is_rejected(self):
-        for bad in ([0.1, 0.2, 0.3], [0.1], "half", [None, 1.0]):
+        # `True` is an int subtype, so without an explicit check it would quietly mean 1.0
+        # -- a transform configured to do nothing at all.
+        for bad in ([0.1, 0.2, 0.3], [0.1], "half", [None, 1.0], True):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 normalise_blend_range(bad)
 

@@ -32,6 +32,8 @@ from torch import Tensor
 from torch.distributions import RelaxedBernoulli
 from torch.nn import Module
 
+from smauglab.transforms.gpu.mixing import DEFAULT_MIX_ALPHA
+
 try:  # private to kornia, and the only part of the faster parameter draw that needs it
     from kornia.augmentation.container.image import ImageSequentialBase, _get_new_batch_shape
 
@@ -83,6 +85,15 @@ class ImageOnlyTransform(RigidAffineAugmentationBase3D):
           to the batch form ``False``.
 
     """
+
+    #: Blending the result back towards the input; see `gpu/mixing.py`. Declared here,
+    #: with the values that mean "off", rather than only assigned by `configure_mix` in
+    #: the constructors that expose them: an attribute a type checker cannot see on the
+    #: class resolves through `nn.Module.__getattr__`, which is typed `Tensor | Module`,
+    #: and neither of those is a number. Only the transforms that take them as
+    #: constructor arguments can be configured, since the signature is the config schema.
+    mix_prob: float = 0.0
+    mix_alpha: tuple[float, float] = DEFAULT_MIX_ALPHA
 
     def compute_transformation(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any]) -> Tensor:
         # These transforms never move anything, so the matrix is always the
