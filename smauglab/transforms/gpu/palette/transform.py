@@ -9,6 +9,7 @@ from torch import Tensor, nn
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.fromSeg import _gaussian_blur_3d, collapse_onehot_to_index, voxel_coordinates
+from smauglab.transforms.gpu.mixing import DEFAULT_MIX_ALPHA, MixAlphaSpec, configure_mix, mix_with_original
 from smauglab.transforms.gpu.palette.base import (
     BlockContext,
     InitialPartitioner,
@@ -69,6 +70,11 @@ class PaletteSynthesisGPU(ImageOnlyTransform):
         blur_sigmas_post: the same, for the pass after it. Split in two because a
             blend below 1.0 wants the overlay's own edges softened, which a single
             shared draw cannot express.
+        mix_prob: per-sample probability of blending the synthesis back with the original.
+        mix_alpha: weight on the original when blending, fixed or sampled from a [lo, hi]
+            range. 0 is the pure synthesis, 1 is the input's own contrast. Distinct from
+            the overlay's `blend_strength`, which mixes one label's remap back over the
+            rest of the synthesis; this one mixes the whole result back over the input.
         p: probability of applying the transform.
     """
 
@@ -81,6 +87,8 @@ class PaletteSynthesisGPU(ImageOnlyTransform):
         dark_threshold: float = 0.01,
         blur_sigmas_pre: Sequence[float] = (0.0, 0.0, 0.0, 0.3, 0.5, 0.8),
         blur_sigmas_post: Sequence[float] = (0.0, 0.0, 0.0, 0.3, 0.5, 0.8),
+        mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
         p_batch: float = 1.0,
         same_on_batch: bool = False,
@@ -95,6 +103,7 @@ class PaletteSynthesisGPU(ImageOnlyTransform):
         self.dark_threshold = float(dark_threshold)
         self.blur_sigmas_pre = list(blur_sigmas_pre)
         self.blur_sigmas_post = list(blur_sigmas_post)
+        configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()
     def apply_transform(
@@ -159,7 +168,12 @@ class PaletteSynthesisGPU(ImageOnlyTransform):
         if sigma2 > 0.0:
             synth = _gaussian_blur_3d(synth.reshape(B, 1, D, H, W), sigma2).reshape(B, N)
 
-        # ── Step 3: foreground z-score ────────────────────────────────────────
+        # ── Step 3: blend back towards the input, then foreground z-score ─────
+        # The z-score is this transform's stats restore, so the blend precedes it, as
+        # everywhere else in the group. Both sides are in the same [0, 1] space, and the
+        # `* flat_m_all` below still holds the background at zero.
+        synth = mix_with_original(self, images_01, synth)
+
         b_cnt = flat_m_all.sum(dim=1, keepdim=True).clamp(min=1)
         b_mean = (synth * flat_m_all).sum(dim=1, keepdim=True) / b_cnt
         b_std = (((synth - b_mean) * flat_m_all).pow(2).sum(dim=1, keepdim=True) / b_cnt + eps).sqrt()

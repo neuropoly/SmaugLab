@@ -47,6 +47,7 @@ from torch.nn import functional as F
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.fromSeg import seg_region_masks
+from smauglab.transforms.gpu.mixing import DEFAULT_MIX_ALPHA, MixAlphaSpec, blend_at, configure_mix, sample_mix
 from smauglab.transforms.kernels import gaussian_blur3d, random_bias_field3d
 
 # The transfer LUT bank is a multi-hundred-MB artefact built offline by
@@ -145,6 +146,8 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         p_spatial_mix: float = 0.0,
         spatial_mix_scale: float = 0.03,
         spatial_mix_gain: float = 3.0,
+        mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         same_on_batch: bool = False,
         p: float = 0.2,
         p_batch: float = 1.0,
@@ -217,6 +220,10 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
         self.p_spatial_mix = float(p_spatial_mix)
         self.spatial_mix_scale = float(spatial_mix_scale)
         self.spatial_mix_gain = float(spatial_mix_gain)
+        # Whole-transform blend back towards the input, distinct from `blend_targets` and
+        # `p_spatial_mix` above: those interpolate between LUTs, which stays a monotone
+        # remap of the source intensities, while this interpolates in image space.
+        configure_mix(self, mix_prob, mix_alpha)
 
     def _sample_blended_luts(self, lut_bank: Tensor, n_seg_c: int, device) -> tuple[Tensor, bool]:
         """Build the per-class LUTs to use for one sample.
@@ -320,6 +327,9 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
 
         N = input.shape[0]
         for ch in self.apply_to_channel:
+            # Drawn up front: the per-sample loop below draws its own target LUTs and
+            # fields, so a blend drawn in place would shift every later sample.
+            mix_draws = sample_mix(self, N, input.device)
             for b in range(N):
                 x = input[b, ch]  # [D, H, W] — may be z-scored
                 zmode = self._is_zscore(x)
@@ -354,6 +364,11 @@ class RandomDomainTransferGPU(ImageOnlyTransform):
                 if self.bias_field_std > 0.0:  # smooth multiplicative spatial inhomogeneity
                     field = _random_bias_field3d(acc.shape, self.bias_field_std, self.bias_scale, acc.device, acc.dtype)
                     acc = (acc * field).clamp(0.0, 1.0)
+
+                # Before the z-score restore below, as everywhere else in the group.
+                # `x01` is the original in the LUT's own [0, 1] domain, which is the space
+                # `acc` lives in -- blending against the z-scored `x` would mix two scales.
+                acc = blend_at(mix_draws, b, x01, acc)
 
                 if zmode:
                     # restore the input's mean/std (retain-stats): the affine rescale preserves the

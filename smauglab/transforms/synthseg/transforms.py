@@ -28,6 +28,7 @@ from torch import Tensor, nn
 
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
+from smauglab.transforms.gpu.mixing import DEFAULT_MIX_ALPHA, MixAlphaSpec, configure_mix, mix_with_original
 from smauglab.transforms.synthseg.generator import SynthSegGenerator
 
 # Keys understood from the JSON config / kwargs, forwarded to SynthSegGenerator.
@@ -102,6 +103,17 @@ class RandomSynthSegGPU(ImageOnlyTransform):
 
     Args:
         apply_to_channel: image channels to overwrite with the synthesis.
+        mix_prob: per-sample probability of blending the synthesis back with the original.
+        mix_alpha: weight on the original when blending, fixed or sampled from a [lo, hi]
+            range. 0 is the pure synthesis, 1 is the real image untouched.
+
+            This is the one transform in the group with no stats restore after the blend:
+            the synthesis is normalised to [0, 1] while a training patch is z-scored, so
+            unlike its siblings the two sides are genuinely on different scales. A blend
+            is still a well-defined convex combination on the same voxel grid -- the
+            synthesis is intensity-only by construction, see below -- but the result is
+            not in either input's units. Reach for `RandomPaletteGPU` instead if that
+            matters, or pair this with `ZscoreNormalizationGPU`.
         p: application probability (Kornia convention).
         Remaining kwargs are forwarded to :class:`SynthSegGenerator` (e.g.
         ``n_channels``, ``prior_means``, ``bias_field_std``, ``gamma_std``,
@@ -112,6 +124,8 @@ class RandomSynthSegGPU(ImageOnlyTransform):
         self,
         apply_to_channel: list[int] | None = None,
         same_on_batch: bool = False,
+        mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 0.5,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -119,6 +133,10 @@ class RandomSynthSegGPU(ImageOnlyTransform):
     ) -> None:
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.apply_to_channel = apply_to_channel if apply_to_channel is not None else [0]
+        # Named explicitly rather than left to **kwargs: those are filtered against
+        # `_GENERATOR_KEYS` on the way to SynthSegGenerator, so a mix parameter arriving
+        # that way would be dropped without a word.
+        configure_mix(self, mix_prob, mix_alpha)
         gen_kwargs = _filter_generator_kwargs(kwargs)
         # Intensity-only: never deform/flip internally (geometry comes from the
         # surrounding sequential, which also transports the mask).
@@ -131,6 +149,12 @@ class RandomSynthSegGPU(ImageOnlyTransform):
         if seg is None:
             return input
 
+        # A clone, not the caller's tensor: this writes channels back with
+        # `input[:, c] = ...` and kornia passes the caller's own tensor through when every
+        # sample applies, which destroyed `batch["data"]` for any caller holding it. Every
+        # sibling transform already does this; this one did not.
+        input = input.clone()
+
         # Pass the real image so EM label completion (if enabled) can cluster it.
         synth, _ = self.generator(seg, image=input)  # (B, n_channels, D, H, W)
         synth = synth.to(device=input.device, dtype=input.dtype)
@@ -140,6 +164,7 @@ class RandomSynthSegGPU(ImageOnlyTransform):
                 continue
             src = n if n < synth.shape[1] else synth.shape[1] - 1
             x = synth[:, src]
+            x = mix_with_original(self, input[:, c], x)
             if torch.isnan(x).any() or torch.isinf(x).any():
                 print(f"Warning nan: {self.__class__.__name__}", flush=True)
                 continue

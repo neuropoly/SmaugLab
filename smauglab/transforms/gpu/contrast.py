@@ -10,6 +10,7 @@ from torch.nn import functional as F
 
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
+from smauglab.transforms.gpu.mixing import DEFAULT_MIX_ALPHA, MixAlphaSpec, blend_one, configure_mix, mix_with_original
 from smauglab.transforms.kernels import depthwise_conv3d, gaussian_kernel3d, laplace_kernel, scharr_kernels, stacked_scharr_kernels
 from smauglab.transforms.rng import shared_choice
 
@@ -57,21 +58,6 @@ def _restore_stats(x: torch.Tensor, stats: tuple[torch.Tensor, torch.Tensor]) ->
     new_mean = x.mean(dim=reduce_dims).view(shape)
     new_std = x.std(dim=reduce_dims).view(shape)
     return (x - new_mean) / (new_std + eps) * orig_stds.view(shape) + orig_means.view(shape)
-
-
-def _mix_with_original(orig: torch.Tensor, x: torch.Tensor, mix_prob: float) -> torch.Tensor:
-    """Blend each sample back towards the original with probability `mix_prob`.
-
-    Per sample: an independent draw and an independent alpha for every element of
-    the batch, which is what "probability of blending the result back" means and
-    what the sibling transforms that write this inline already do.
-    """
-    if mix_prob <= 0.0:
-        return x
-    shape = [x.shape[0]] + [1] * (x.dim() - 1)
-    mix = torch.rand(x.shape[0], device=x.device).view(shape) < mix_prob
-    alpha = torch.rand(x.shape[0], device=x.device).view(shape)
-    return torch.where(mix, alpha * orig + (1 - alpha) * x, x)
 
 
 def _check_channel(transform: torch.nn.Module, channel: int, channels: int) -> None:
@@ -258,7 +244,9 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
         sigma (float): Gaussian width. GaussianBlur and UnsharpMask only.
         unsharp_amount (float): Strength of the unsharp mask. UnsharpMask only.
         kernel_sizes (list of int): Multi-scale kernel sizes to draw from. RandConv only.
-        mix_prob (float): Probability of blending the result back with the original.
+        mix_prob (float): Per-sample probability of blending the result back with the original.
+        mix_alpha (float | tuple[float, float]): Weight on the original when blending, fixed or
+            sampled from a [lo, hi] range. 0 is the convolved output, 1 is the input untouched.
         retain_stats (bool): If True, restore the original mean and std afterwards.
 
     Returns:
@@ -283,6 +271,7 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
         unsharp_amount: float = 1.0,
         kernel_sizes: Sequence[int] = (1, 3, 5, 7),
         mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -301,7 +290,7 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
         self.mix_in_out = mix_in_out
         self.unsharp_amount = unsharp_amount
         self.kernel_sizes = kernel_sizes
-        self.mix_prob = mix_prob
+        configure_mix(self, mix_prob, mix_alpha)
 
     def get_kernel(self, device: torch.device) -> Union[Tensor, list[Tensor]]:
         # Scharr is the odd one out: it returns the three directional kernels as a
@@ -411,11 +400,10 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
                 else:
                     x = apply_convolution_per_sample(channel_data, self._per_sample_kernels(channel_data.shape[0], input.device))
 
-            # Mix with the original per sample, not once per batch: `mix_prob` is
-            # documented as the probability of blending the result back with the original,
-            # a per-sample statement, and RandomInverseGPU /
-            # RandomHistogramEqualizationGPU run these same three lines inside their loop.
-            x = _mix_with_original(orig, x, self.mix_prob)
+            # Before `retain_stats`, not after: the restore is what promises the output
+            # carries the input's mean and std, and a convex combination of two images
+            # that already have them does not. See gpu/mixing.py.
+            x = mix_with_original(self, orig, x)
 
             if self.retain_stats:
                 x = _restore_stats(x, stats)
@@ -449,6 +437,7 @@ class RandomLaplaceGPU(_RandomConvBaseGPU):
         self,
         absolute: bool = False,
         mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         apply_to_channel: Sequence[int] = (0,),
         same_on_batch: bool = False,
         retain_stats: bool = False,
@@ -463,6 +452,7 @@ class RandomLaplaceGPU(_RandomConvBaseGPU):
             kernel_type="Laplace",
             absolute=absolute,
             mix_prob=mix_prob,
+            mix_alpha=mix_alpha,
             apply_to_channel=apply_to_channel,
             same_on_batch=same_on_batch,
             retain_stats=retain_stats,
@@ -488,6 +478,7 @@ class RandomScharrGPU(_RandomConvBaseGPU):
         absolute: bool = True,
         retain_stats: bool = True,
         mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         apply_to_channel: Sequence[int] = (0,),
         same_on_batch: bool = False,
         in_seg: float = 0.0,
@@ -502,6 +493,7 @@ class RandomScharrGPU(_RandomConvBaseGPU):
             absolute=absolute,
             retain_stats=retain_stats,
             mix_prob=mix_prob,
+            mix_alpha=mix_alpha,
             apply_to_channel=apply_to_channel,
             same_on_batch=same_on_batch,
             in_seg=in_seg,
@@ -531,6 +523,7 @@ class RandomGaussianBlurGPU(_RandomConvBaseGPU):
         out_seg: float = 0.0,
         mix_in_out: bool = False,
         mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -545,6 +538,7 @@ class RandomGaussianBlurGPU(_RandomConvBaseGPU):
             out_seg=out_seg,
             mix_in_out=mix_in_out,
             mix_prob=mix_prob,
+            mix_alpha=mix_alpha,
             p=p,
             p_batch=p_batch,
             keepdim=keepdim,
@@ -564,6 +558,7 @@ class RandomUnsharpMaskGPU(_RandomConvBaseGPU):
         sigma: float = 1.0,
         unsharp_amount: float = 1.5,
         mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         apply_to_channel: Sequence[int] = (0,),
         same_on_batch: bool = False,
         retain_stats: bool = False,
@@ -579,6 +574,7 @@ class RandomUnsharpMaskGPU(_RandomConvBaseGPU):
             sigma=sigma,
             unsharp_amount=unsharp_amount,
             mix_prob=mix_prob,
+            mix_alpha=mix_alpha,
             apply_to_channel=apply_to_channel,
             same_on_batch=same_on_batch,
             retain_stats=retain_stats,
@@ -603,6 +599,7 @@ class RandomRandConvGPU(_RandomConvBaseGPU):
         self,
         kernel_sizes: Sequence[int] = (1, 3, 5, 7),
         mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         apply_to_channel: Sequence[int] = (0,),
         same_on_batch: bool = False,
         retain_stats: bool = False,
@@ -617,6 +614,7 @@ class RandomRandConvGPU(_RandomConvBaseGPU):
             kernel_type="RandConv",
             kernel_sizes=kernel_sizes,
             mix_prob=mix_prob,
+            mix_alpha=mix_alpha,
             apply_to_channel=apply_to_channel,
             same_on_batch=same_on_batch,
             retain_stats=retain_stats,
@@ -1111,6 +1109,11 @@ class _RandomFunctionBaseGPU(ImageOnlyTransform):
         apply_to_channel (list of int): List of channel indices to apply the function to. Default is [0].
         retain_stats (bool): If True, retain the original mean and standard deviation of the image after gamma adjustment. Default is False.
         same_on_batch (bool): Apply the same transformation across the batch. Default is False.
+        mix_prob (float): Per-sample probability of blending the result back with the original.
+        mix_alpha (float | tuple[float, float]): Weight on the original when blending, fixed or
+            sampled from a [lo, hi] range. 0 is the remapped output, 1 is the input untouched.
+            Note the function is applied to a per-sample min-max normalisation of the channel, so
+            with `retain_stats=False` the two sides of the blend are on different scales.
         p (float): Probability of applying the transform. Default is 1.0.
         keepdim (bool): Whether to keep the number of dimensions. Default is False.
 
@@ -1127,6 +1130,8 @@ class _RandomFunctionBaseGPU(ImageOnlyTransform):
         in_seg: float = 0.0,
         out_seg: float = 0.0,
         mix_in_out: bool = False,
+        mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -1138,6 +1143,7 @@ class _RandomFunctionBaseGPU(ImageOnlyTransform):
         self.in_seg = in_seg
         self.out_seg = out_seg
         self.mix_in_out = mix_in_out
+        configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -1162,6 +1168,8 @@ class _RandomFunctionBaseGPU(ImageOnlyTransform):
 
             # Apply function
             x = self.func(x)
+
+            x = mix_with_original(self, orig, x)
 
             if self.retain_stats:
                 x = _restore_stats(x, stats)
@@ -1204,6 +1212,8 @@ class _RandomNamedFunctionGPU(_RandomFunctionBaseGPU):
         in_seg: float = 0.0,
         out_seg: float = 0.0,
         mix_in_out: bool = False,
+        mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -1216,6 +1226,8 @@ class _RandomNamedFunctionGPU(_RandomFunctionBaseGPU):
             in_seg=in_seg,
             out_seg=out_seg,
             mix_in_out=mix_in_out,
+            mix_prob=mix_prob,
+            mix_alpha=mix_alpha,
             p=p,
             p_batch=p_batch,
             keepdim=keepdim,
@@ -1306,6 +1318,7 @@ class RandomInverseGPU(ImageOnlyTransform):
         out_seg: float = 0.0,
         mix_in_out: bool = False,
         mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -1315,8 +1328,8 @@ class RandomInverseGPU(ImageOnlyTransform):
         self.retain_stats = retain_stats
         self.in_seg = in_seg
         self.out_seg = out_seg
-        self.mix_prob = mix_prob
         self.mix_in_out = mix_in_out
+        configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -1327,13 +1340,25 @@ class RandomInverseGPU(ImageOnlyTransform):
         for c in self.apply_to_channel:
             # The per-sample reductions -- max, and the two retain_stats passes -- are the
             # expensive part and are independent across samples, so they run once for the
-            # whole channel. The mix draw and the region selection stay in the loop:
+            # whole channel. Only the region selection stays in the loop:
             # `_choose_region_mode` picks `in` / `out` / `all` per sample, and hoisting it
-            # would make that one decision for the batch. It also keeps the RNG stream.
+            # would make that one decision for the batch.
             channel = input[:, c]
             reduce_dims = tuple(range(1, channel.dim()))
             keep_shape = (-1, *([1] * (channel.dim() - 1)))
             inverted = channel.amax(dim=reduce_dims, keepdim=True) - channel
+
+            # Before the restore below, which is this transform's `retain_stats`. Vectorised
+            # rather than drawn per sample inside the loop: the restore is already hoisted,
+            # and the blend has to precede it. So this transform's seeded output differs
+            # from the previous release's -- both because the blend moved and because the
+            # loop it came out of drew a gate per sample even at `mix_prob=0`. See
+            # gpu/mixing.py for what that cost and why it is gone.
+            #
+            # Worth knowing when choosing a range: inverting is `max - x`, so a blend at
+            # alpha 0.5 is `max / 2` everywhere -- a constant image. The useful ranges sit
+            # away from the middle.
+            inverted = mix_with_original(self, channel, inverted)
 
             if self.retain_stats:
                 eps = 1e-8
@@ -1346,11 +1371,6 @@ class RandomInverseGPU(ImageOnlyTransform):
             for i in range(input.shape[0]):
                 orig = channel[i]
                 x = inverted[i]
-
-                # Mix with original based on mix_prob
-                if torch.rand(1).item() < self.mix_prob:
-                    alpha = torch.rand(1, device=input.device)
-                    x = alpha * orig + (1 - alpha) * x
 
                 checked = _select_and_check(self, orig, x, None if seg_mask is None else seg_mask[i])
                 if checked is None:
@@ -1395,6 +1415,7 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         out_seg: float = 0.0,
         mix_in_out: bool = False,
         mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -1405,7 +1426,7 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         self.in_seg = in_seg
         self.out_seg = out_seg
         self.mix_in_out = mix_in_out
-        self.mix_prob = mix_prob
+        configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -1454,12 +1475,11 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
 
             channel_data = cdf.gather(1, indices).reshape(channel_data.shape).to(channel_data.dtype)
 
-            # Mix with original based on mix_prob, per sample. The draws stay in a loop
-            # so the RNG stream is the one the scalar version produced.
+            # Per sample, and the draws stay in a loop so the RNG stream is the one the
+            # scalar version produced -- `mix_prob` is above zero for this transform in most
+            # of the shipped configs. Before the restore below, as everywhere else.
             for b in range(batch_size):
-                if torch.rand(1).item() < self.mix_prob:
-                    alpha = torch.rand(1, device=input.device)
-                    channel_data[b] = alpha * orig[b] + (1 - alpha) * channel_data[b]
+                channel_data[b] = blend_one(self, orig[b], channel_data[b])
 
             if self.retain_stats:
                 channel_data = _restore_stats(channel_data, stats)
@@ -1535,6 +1555,11 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
         apply_to_channel (list[int]): Channels to which the bias field is applied.
         invert (bool): If True, uses inverse bias field (1 / field).
         retain_stats (bool): If True, restores original per-sample mean and std for affected channels.
+        mix_prob (float): Per-sample probability of blending the result back with the original.
+        mix_alpha (float | tuple[float, float]): Weight on the original when blending, fixed or
+            sampled from a [lo, hi] range. 0 is the biased output, 1 is the input untouched.
+            Blending is close to a rescale of `coefficients` here, since `(1-a) + a*field` is
+            itself a smooth positive field; it is offered for uniformity across the group.
         same_on_batch (bool): If True, uses the same sampled coefficients for all batch elements.
         p (float): Application probability.
         keepdim (bool): Keep input dimensions flag (passed to base).
@@ -1550,6 +1575,8 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
         in_seg: float = 0.0,
         out_seg: float = 0.0,
         mix_in_out: bool = False,
+        mix_prob: float = 0.0,
+        mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         same_on_batch: bool = False,
         p: float = 1.0,
         p_batch: float = 1.0,
@@ -1571,6 +1598,7 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
         self.in_seg = in_seg
         self.out_seg = out_seg
         self.mix_in_out = mix_in_out
+        configure_mix(self, mix_prob, mix_alpha)
 
     def _num_coeffs(self, dim: int) -> int:
         # Count coefficients generated by nested loops matching TorchIO logic.
@@ -1685,6 +1713,7 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
                 orig_mean = channel.mean(dim=reduce_dims)
                 orig_std = channel.std(dim=reduce_dims)
             channel = channel * bias_field
+            channel = mix_with_original(self, orig, channel)
             if self.retain_stats:
                 eps = 1e-8
                 new_mean = channel.mean(dim=reduce_dims)
