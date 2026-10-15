@@ -1,7 +1,7 @@
 import functools
 import math
 from collections.abc import Callable, Sequence
-from typing import Any, Protocol, Union
+from typing import Any, Union
 
 import torch
 import torchvision.transforms._functional_tensor as F_t
@@ -11,31 +11,23 @@ from torch.nn import functional as F
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.mixing import DEFAULT_MIX_ALPHA, MixAlphaSpec, blend_one, configure_mix, mix_with_original
+
+# Re-exported, not used here: `_foreground` moved to gpu/regions.py with the rest of the
+# region machinery, and the tests that pin its three segmentation layouts import it from
+# this module, where it used to live.
+from smauglab.transforms.gpu.regions import (
+    DEFAULT_BG_EM_CLUSTERS,
+    DEFAULT_BG_SPLIT,
+    DEFAULT_SEG_FEATHER,
+    DEFAULT_SEG_UNIT,
+    DEFAULT_SEG_UNIT_PROB,
+    SegFeatherSpec,
+    _foreground,  # noqa: F401
+    _select_and_check,
+    configure_regions,
+)
 from smauglab.transforms.kernels import depthwise_conv3d, gaussian_kernel3d, laplace_kernel, scharr_kernels, stacked_scharr_kernels
 from smauglab.transforms.rng import shared_choice
-
-
-def _choose_region_mode(
-    p_in: float,
-    p_out: float,
-    seg_mask: torch.Tensor | None,  # noqa: ARG001
-) -> str:
-    """Sample where to apply the transform: 'in', 'out', or 'all'.
-
-    - p_in, p_out are probabilities in [0,1].
-    - If both probs are 0, or both fire at once, return 'all'.
-    - seg_mask is accepted but unused here; _apply_region_mode treats a None
-      mask as 'all' regardless of the mode chosen.
-    """
-    p_in = float(max(0.0, min(1.0, p_in)))
-    p_out = float(max(0.0, min(1.0, p_out)))
-    in_bool = torch.rand(()) < p_in
-    out_bool = torch.rand(()) < p_out
-    if in_bool and not out_bool:
-        return "in"
-    if out_bool and not in_bool:
-        return "out"
-    return "all"
 
 
 def _channel_stats(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -76,159 +68,81 @@ def _check_channel(transform: torch.nn.Module, channel: int, channels: int) -> N
         )
 
 
-class _RegionSelecting(Protocol):
-    """What `_select_and_check` needs off the transform it is handed.
-
-    A Protocol rather than `ImageOnlyTransform`, because these are plain attributes on
-    an nn.Module: reading them through the base class resolves via `Module.__getattr__`,
-    which is typed as returning `Tensor | Module`. Naming them here is both what makes
-    that type-check and a statement of the helper's actual requirement.
-
-    All three are attributes rather than constructor parameters as far as this
-    Protocol is concerned; the registry derives a transform's config surface from its
-    __init__ signature, so declaring one here does not make it settable in a config.
+def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torch.Tensor:
     """
-
-    in_seg: float
-    out_seg: float
-    mix_in_out: bool
-
-
-def _select_and_check(
-    transform: _RegionSelecting,
-    orig: torch.Tensor,
-    x: torch.Tensor,
-    seg_mask: torch.Tensor | None,
-    note: str = "",
-) -> torch.Tensor | None:
-    """Apply region selection, then reject the result if it went non-finite.
-
-    Returns None when the channel should be left as it was -- the "Final safety" check
-    that closed all nine of these loops identically.
-
-    Takes the transform rather than its three region attributes: every call site read
-    exactly `self.in_seg`, `self.out_seg` and `self.mix_in_out`, and spelling them out
-    made the call longer than the code it replaces.
+    Based on https://github.com/pytorch/vision/blob/e3b5d3a8bf5e8636462fd8bce9897bccc690b2a0/torchvision/transforms/_functional_tensor.py#L746
     """
-    if seg_mask is not None:
-        region_mode = _choose_region_mode(transform.in_seg, transform.out_seg, seg_mask)
-        x = _apply_region_mode(orig, x, seg_mask, region_mode, mix_in_out=transform.mix_in_out)
-    # One `isfinite(...).all()`, not `isnan().any() or isinf().any()`: each of those
-    # reads a reduction back to the host, and the `or` forces the second on the common
-    # path. Runs for every channel of every region-selecting transform.
-    if not bool(torch.isfinite(x).all()):
-        print(f"Warning nan: {type(transform).__name__}{note}", flush=True)
-        return None
-    return x
+    if not (isinstance(img, torch.Tensor)):
+        raise TypeError(f"img should be Tensor. Got {type(img)}")
 
-
-def _foreground(mask: torch.Tensor, dim: int) -> torch.Tensor:
-    """Which voxels the segmentation covers, reducing over the class axis.
-
-    This used to be `torch.argmax(mask, dim) > 0`, which is only "is anything labelled
-    here" if class 0 is background -- and it is not:
-
-    * For a single-channel `[B, 1, D, H, W]` mask (an ordinary nnU-Net target, and what
-      the tests build) `argmax` over a length-1 axis is always 0, so the result was
-      **all False**. `in_seg` then applied the transform nowhere and `out_seg` applied
-      it everywhere: the two knobs did nothing and the opposite of nothing.
-    * For a one-hot mask, this repository's convention (`collapse_onehot_to_index` in
-      gpu/fromSeg.py) is that channel `c` encodes label `c + 1` with background
-      implicit, so `argmax == 0` is a real foreground class and was being dropped.
-
-    `amax > 0` asks the question that was meant, and matches what
-    `collapse_onehot_to_index` already does with `seg_raw.any(dim=1)`.
-
-    That still leaves one layout it cannot read off the values alone: a one-hot
-    that *includes* a background channel, which is what `seg_region_masks` emits
-    for a single-channel label map and what `unit_tests/test_seg_layout.py`
-    builds. Every voxel then has some channel set, `amax > 0` is True everywhere,
-    and `in_seg` applies the transform to the whole patch while `out_seg` applies
-    it nowhere -- the exact failure this function was written to fix, in the one
-    layout it was not checked against.
-
-    A background-inclusive one-hot is recognisable: it is multi-channel and leaves
-    no voxel unset, because the background channel covers whatever the foreground
-    channels do not. A background-implicit one-hot always has all-zero background
-    voxels unless the patch is labelled edge to edge, which a real segmentation
-    patch is not. So full coverage plus more than one channel means channel 0 is
-    background, and the reduction skips it.
-    """
-    covered = mask.amax(dim=dim) > 0
-    if mask.shape[dim] == 1:
-        return covered
-    # `torch.where`, not `if bool(...)`: reading that test back to Python stalls the host
-    # on everything queued behind it. Both branches are a reduction over the class axis,
-    # so computing the unused one costs a fraction of what the stall does.
-    without_background = mask.narrow(dim, 1, mask.shape[dim] - 1).amax(dim=dim) > 0
-    return torch.where(covered.all(), without_background, covered)
-
-
-def _apply_region_mode(
-    orig: torch.Tensor,
-    transformed: torch.Tensor,
-    seg_mask: torch.Tensor | None,
-    mode: str,
-    normalize: bool = False,
-    mix_in_out: bool = False,
-) -> torch.Tensor:
-    """Blend transformed with orig based on region selection mode.
-
-    - mode 'all': return transformed
-    - mode 'in': apply transform inside seg, keep orig outside
-    - mode 'out': apply  transform outside seg, keep orig inside
-
-    mix_in_out: if True, randomly apply transform to some of the segmentation, not all.
-    """
-    if seg_mask is None or mode == "all":
-        return transformed
-
-    # Rescale transformed based on min max orig
-    # Needed due to the important change in the image
-    if orig.dim() == 4:
-        if normalize:
-            orig_min = torch.amin(orig, dim=tuple(range(1, orig.dim())), keepdim=True)
-            orig_max = torch.amax(orig, dim=tuple(range(1, orig.dim())), keepdim=True)
-            transformed_min = torch.amin(transformed, dim=tuple(range(1, transformed.dim())), keepdim=True)
-            transformed_max = torch.amax(transformed, dim=tuple(range(1, transformed.dim())), keepdim=True)
-            transformed = (transformed - transformed_min) / (transformed_max - transformed_min + 1e-8) * (orig_max - orig_min) + orig_min
-
-        # No `.clone()`: nothing below writes into `m`, and on a [B, C, D, H, W] mask
-        # that copy is the size of the batch.
-        m = seg_mask.to(transformed.dtype)
-        if mix_in_out:
-            # One keep/drop draw per (sample, class), in a single call rather than one
-            # `randint` per sample: the same draws in the same order, one kernel.
-            keep = torch.randint(0, 2, seg_mask.shape[:2], device=seg_mask.device, dtype=m.dtype)
-            m = m * keep.view(*seg_mask.shape[:2], *([1] * (m.dim() - 2)))
-
-        m = _foreground(m, dim=1)
-        m = m.to(transformed.dtype)
-        if mode == "out":
-            m = 1.0 - m
-
-    elif orig.dim() == 3:
-        if normalize:
-            orig_min = torch.amin(orig)
-            orig_max = torch.amax(orig)
-            transformed_min = torch.amin(transformed)
-            transformed_max = torch.amax(transformed)
-            transformed = (transformed - transformed_min) / (transformed_max - transformed_min + 1e-8) * (orig_max - orig_min) + orig_min
-
-        m = seg_mask.to(transformed.dtype)
-        if mix_in_out:
-            # Create a tensor with random one and zero
-            o = torch.randint(0, 2, (seg_mask.shape[0],), device=seg_mask.device, dtype=m.dtype)
-            m = m * o.view(-1, 1, 1, 1)  # Broadcasting o to match the dimensions of m
-        m = _foreground(m, dim=0)
-        m = m.to(transformed.dtype)
-        if mode == "out":
-            m = 1.0 - m
-
+    if dim == 2:
+        kernel = kernel.expand(img.shape[-(1 + dim)], 1, kernel.shape[0], kernel.shape[1])
+        padding = [kernel.shape[2] // 2, kernel.shape[2] // 2, kernel.shape[3] // 2, kernel.shape[3] // 2]
+    elif dim == 3:
+        kernel = kernel.expand(img.shape[-(1 + dim)], 1, kernel.shape[0], kernel.shape[1], kernel.shape[2])
+        padding = [
+            kernel.shape[2] // 2,
+            kernel.shape[2] // 2,
+            kernel.shape[3] // 2,
+            kernel.shape[3] // 2,
+            kernel.shape[4] // 2,
+            kernel.shape[4] // 2,
+        ]
     else:
-        raise ValueError(f"Only 4D and 3D images are supported. Got {orig.dim()}D.")
+        raise ValueError(f"Only 2D and 3D convolution are supported. Got {dim}D.")
 
-    return m * transformed + (1.0 - m) * orig
+    img, need_cast, need_squeeze, out_dtype = F_t._cast_squeeze_in(img, [kernel.dtype])
+
+    # padding = (left, right, top, bottom)
+    img = F.pad(img, padding, mode="reflect")
+    if dim == 2:  # noqa: SIM108 -- the 2d/3d split reads better spelled out than as a ternary
+        img = F.conv2d(img, kernel, groups=img.shape[-(1 + dim)])
+    else:  # dim == 3
+        # Via `depthwise_conv3d`, not `F.conv3d`: every row of `kernel` is the same
+        # filter (it came from an `expand` above), so one row is handed over and the
+        # helper broadcasts it back across the planes, which is also what lets it make
+        # `groups > 1` from a single-plane call. The bucketed pipelines hand over one
+        # sample at a time, precisely the case cuDNN serves 35x slower than depthwise.
+        leading = img.shape[:-3]
+        planes = int(torch.tensor(leading).prod()) if leading else 1
+        out = depthwise_conv3d(img.reshape(planes, 1, *img.shape[-3:]), kernel[:1, :1])
+        img = out.reshape(*leading, *out.shape[-3:])
+
+    img = F_t._cast_squeeze_out(img, need_cast, need_squeeze, out_dtype)
+    return img
+
+
+def apply_convolution_per_sample(channel_data: torch.Tensor, kernels: Sequence[Tensor]) -> torch.Tensor:
+    """Convolve `[N, D, H, W]` with one 3-D kernel per sample, in a single conv.
+
+    The alternative -- and what every caller here used to do -- is a Python loop
+    calling `apply_convolution` on `channel_data[b : b + 1]`. That is a
+    single-channel `F.conv3d`, which cuDNN serves from its implicit-GEMM path: 4.3 ms
+    per sample for a 3x3x3 kernel over a 128^3 patch on an A40, against 0.12 ms for
+    the whole batch here. See `kernels.depthwise_conv3d` for why the shape matters.
+
+    Kernels of different sizes are zero-padded up to the widest one. That is exact,
+    not an approximation: a zero tap contributes nothing, and `reflect` padding gives
+    the same value at a given offset however wide the pad is, so the extra taps read
+    real (if irrelevant) voxels and multiply them by zero. `RandConv` draws its kernel
+    size per sample, so without this the batch could not be convolved in one call.
+    """
+    sizes = [int(k.shape[-1]) for k in kernels]
+    widest = max(sizes)
+    stacked = []
+    for kernel, size in zip(kernels, sizes):
+        if size == widest:
+            stacked.append(kernel)
+        else:
+            lo = (widest - size) // 2
+            padded = torch.zeros((widest, widest, widest), device=kernel.device, dtype=kernel.dtype)
+            padded[lo : lo + size, lo : lo + size, lo : lo + size] = kernel
+            stacked.append(padded)
+    weight = torch.stack(stacked).unsqueeze(1)  # [N, 1, k, k, k]
+
+    pad = widest // 2
+    padded_img = F.pad(channel_data.unsqueeze(1), [pad] * 6, mode="reflect")
+    return depthwise_conv3d(padded_img, weight).squeeze(1)
 
 
 ## Convolution transform
@@ -262,7 +176,11 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
         retain_stats: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         # Kernel-specific, and explicit rather than read from **kwargs, where
         # `inspect.signature` could not see them and a config typo silently took the
         # default. Defaults are the historical kwargs.get() ones, so behaviour is unchanged.
@@ -285,9 +203,7 @@ class _RandomConvBaseGPU(ImageOnlyTransform):
         self.absolute = absolute
         self.sigma = sigma
         self.retain_stats = retain_stats
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        self.mix_in_out = mix_in_out
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
         self.unsharp_amount = unsharp_amount
         self.kernel_sizes = kernel_sizes
         configure_mix(self, mix_prob, mix_alpha)
@@ -443,7 +359,11 @@ class RandomLaplaceGPU(_RandomConvBaseGPU):
         retain_stats: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -458,7 +378,11 @@ class RandomLaplaceGPU(_RandomConvBaseGPU):
             retain_stats=retain_stats,
             in_seg=in_seg,
             out_seg=out_seg,
-            mix_in_out=mix_in_out,
+            seg_unit=seg_unit,
+            seg_unit_prob=seg_unit_prob,
+            bg_split=bg_split,
+            bg_em_clusters=bg_em_clusters,
+            seg_feather=seg_feather,
             p=p,
             p_batch=p_batch,
             keepdim=keepdim,
@@ -483,7 +407,11 @@ class RandomScharrGPU(_RandomConvBaseGPU):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -498,7 +426,11 @@ class RandomScharrGPU(_RandomConvBaseGPU):
             same_on_batch=same_on_batch,
             in_seg=in_seg,
             out_seg=out_seg,
-            mix_in_out=mix_in_out,
+            seg_unit=seg_unit,
+            seg_unit_prob=seg_unit_prob,
+            bg_split=bg_split,
+            bg_em_clusters=bg_em_clusters,
+            seg_feather=seg_feather,
             p=p,
             p_batch=p_batch,
             keepdim=keepdim,
@@ -521,7 +453,11 @@ class RandomGaussianBlurGPU(_RandomConvBaseGPU):
         retain_stats: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         mix_prob: float = 0.0,
         mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
@@ -536,7 +472,11 @@ class RandomGaussianBlurGPU(_RandomConvBaseGPU):
             retain_stats=retain_stats,
             in_seg=in_seg,
             out_seg=out_seg,
-            mix_in_out=mix_in_out,
+            seg_unit=seg_unit,
+            seg_unit_prob=seg_unit_prob,
+            bg_split=bg_split,
+            bg_em_clusters=bg_em_clusters,
+            seg_feather=seg_feather,
             mix_prob=mix_prob,
             mix_alpha=mix_alpha,
             p=p,
@@ -564,7 +504,11 @@ class RandomUnsharpMaskGPU(_RandomConvBaseGPU):
         retain_stats: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -580,7 +524,11 @@ class RandomUnsharpMaskGPU(_RandomConvBaseGPU):
             retain_stats=retain_stats,
             in_seg=in_seg,
             out_seg=out_seg,
-            mix_in_out=mix_in_out,
+            seg_unit=seg_unit,
+            seg_unit_prob=seg_unit_prob,
+            bg_split=bg_split,
+            bg_em_clusters=bg_em_clusters,
+            seg_feather=seg_feather,
             p=p,
             p_batch=p_batch,
             keepdim=keepdim,
@@ -605,7 +553,11 @@ class RandomRandConvGPU(_RandomConvBaseGPU):
         retain_stats: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -620,88 +572,15 @@ class RandomRandConvGPU(_RandomConvBaseGPU):
             retain_stats=retain_stats,
             in_seg=in_seg,
             out_seg=out_seg,
-            mix_in_out=mix_in_out,
+            seg_unit=seg_unit,
+            seg_unit_prob=seg_unit_prob,
+            bg_split=bg_split,
+            bg_em_clusters=bg_em_clusters,
+            seg_feather=seg_feather,
             p=p,
             p_batch=p_batch,
             keepdim=keepdim,
         )
-
-
-def apply_convolution(img: torch.Tensor, kernel: torch.Tensor, dim: int) -> torch.Tensor:
-    """
-    Based on https://github.com/pytorch/vision/blob/e3b5d3a8bf5e8636462fd8bce9897bccc690b2a0/torchvision/transforms/_functional_tensor.py#L746
-    """
-    if not (isinstance(img, torch.Tensor)):
-        raise TypeError(f"img should be Tensor. Got {type(img)}")
-
-    if dim == 2:
-        kernel = kernel.expand(img.shape[-(1 + dim)], 1, kernel.shape[0], kernel.shape[1])
-        padding = [kernel.shape[2] // 2, kernel.shape[2] // 2, kernel.shape[3] // 2, kernel.shape[3] // 2]
-    elif dim == 3:
-        kernel = kernel.expand(img.shape[-(1 + dim)], 1, kernel.shape[0], kernel.shape[1], kernel.shape[2])
-        padding = [
-            kernel.shape[2] // 2,
-            kernel.shape[2] // 2,
-            kernel.shape[3] // 2,
-            kernel.shape[3] // 2,
-            kernel.shape[4] // 2,
-            kernel.shape[4] // 2,
-        ]
-    else:
-        raise ValueError(f"Only 2D and 3D convolution are supported. Got {dim}D.")
-
-    img, need_cast, need_squeeze, out_dtype = F_t._cast_squeeze_in(img, [kernel.dtype])
-
-    # padding = (left, right, top, bottom)
-    img = F.pad(img, padding, mode="reflect")
-    if dim == 2:  # noqa: SIM108 -- the 2d/3d split reads better spelled out than as a ternary
-        img = F.conv2d(img, kernel, groups=img.shape[-(1 + dim)])
-    else:  # dim == 3
-        # Via `depthwise_conv3d`, not `F.conv3d`: every row of `kernel` is the same
-        # filter (it came from an `expand` above), so one row is handed over and the
-        # helper broadcasts it back across the planes, which is also what lets it make
-        # `groups > 1` from a single-plane call. The bucketed pipelines hand over one
-        # sample at a time, precisely the case cuDNN serves 35x slower than depthwise.
-        leading = img.shape[:-3]
-        planes = int(torch.tensor(leading).prod()) if leading else 1
-        out = depthwise_conv3d(img.reshape(planes, 1, *img.shape[-3:]), kernel[:1, :1])
-        img = out.reshape(*leading, *out.shape[-3:])
-
-    img = F_t._cast_squeeze_out(img, need_cast, need_squeeze, out_dtype)
-    return img
-
-
-def apply_convolution_per_sample(channel_data: torch.Tensor, kernels: Sequence[Tensor]) -> torch.Tensor:
-    """Convolve `[N, D, H, W]` with one 3-D kernel per sample, in a single conv.
-
-    The alternative -- and what every caller here used to do -- is a Python loop
-    calling `apply_convolution` on `channel_data[b : b + 1]`. That is a
-    single-channel `F.conv3d`, which cuDNN serves from its implicit-GEMM path: 4.3 ms
-    per sample for a 3x3x3 kernel over a 128^3 patch on an A40, against 0.12 ms for
-    the whole batch here. See `kernels.depthwise_conv3d` for why the shape matters.
-
-    Kernels of different sizes are zero-padded up to the widest one. That is exact,
-    not an approximation: a zero tap contributes nothing, and `reflect` padding gives
-    the same value at a given offset however wide the pad is, so the extra taps read
-    real (if irrelevant) voxels and multiply them by zero. `RandConv` draws its kernel
-    size per sample, so without this the batch could not be convolved in one call.
-    """
-    sizes = [int(k.shape[-1]) for k in kernels]
-    widest = max(sizes)
-    stacked = []
-    for kernel, size in zip(kernels, sizes):
-        if size == widest:
-            stacked.append(kernel)
-        else:
-            lo = (widest - size) // 2
-            padded = torch.zeros((widest, widest, widest), device=kernel.device, dtype=kernel.dtype)
-            padded[lo : lo + size, lo : lo + size, lo : lo + size] = kernel
-            stacked.append(padded)
-    weight = torch.stack(stacked).unsqueeze(1)  # [N, 1, k, k, k]
-
-    pad = widest // 2
-    padded_img = F.pad(channel_data.unsqueeze(1), [pad] * 6, mode="reflect")
-    return depthwise_conv3d(padded_img, weight).squeeze(1)
 
 
 ## Noise transform
@@ -733,7 +612,11 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -742,9 +625,7 @@ class RandomGaussianNoiseGPU(ImageOnlyTransform):
         self.apply_to_channel = apply_to_channel
         self.mean = mean
         self.std = std
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        self.mix_in_out = mix_in_out
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -801,7 +682,11 @@ class RandomBrightnessGPU(ImageOnlyTransform):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -809,9 +694,7 @@ class RandomBrightnessGPU(ImageOnlyTransform):
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.brightness_range = brightness_range
         self.apply_to_channel = apply_to_channel
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        self.mix_in_out = mix_in_out
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -870,7 +753,11 @@ class _RandomGammaBaseGPU(ImageOnlyTransform):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = False,
@@ -880,9 +767,7 @@ class _RandomGammaBaseGPU(ImageOnlyTransform):
         self.invert_image = invert_image
         self.retain_stats = retain_stats
         self.apply_to_channel = apply_to_channel
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        self.mix_in_out = mix_in_out
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -963,7 +848,11 @@ class RandomGammaGPU(_RandomGammaBaseGPU):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = False,
@@ -976,7 +865,11 @@ class RandomGammaGPU(_RandomGammaBaseGPU):
             same_on_batch=same_on_batch,
             in_seg=in_seg,
             out_seg=out_seg,
-            mix_in_out=mix_in_out,
+            seg_unit=seg_unit,
+            seg_unit_prob=seg_unit_prob,
+            bg_split=bg_split,
+            bg_em_clusters=bg_em_clusters,
+            seg_feather=seg_feather,
             p=p,
             p_batch=p_batch,
             keepdim=keepdim,
@@ -999,7 +892,11 @@ class RandomInvGammaGPU(_RandomGammaBaseGPU):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = False,
@@ -1012,7 +909,11 @@ class RandomInvGammaGPU(_RandomGammaBaseGPU):
             same_on_batch=same_on_batch,
             in_seg=in_seg,
             out_seg=out_seg,
-            mix_in_out=mix_in_out,
+            seg_unit=seg_unit,
+            seg_unit_prob=seg_unit_prob,
+            bg_split=bg_split,
+            bg_em_clusters=bg_em_clusters,
+            seg_feather=seg_feather,
             p=p,
             p_batch=p_batch,
             keepdim=keepdim,
@@ -1049,7 +950,11 @@ class RandomContrastGPU(ImageOnlyTransform):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -1058,9 +963,7 @@ class RandomContrastGPU(ImageOnlyTransform):
         self.contrast_range = contrast_range
         self.apply_to_channel = apply_to_channel
         self.retain_stats = retain_stats
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        self.mix_in_out = mix_in_out
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -1129,7 +1032,11 @@ class _RandomFunctionBaseGPU(ImageOnlyTransform):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         mix_prob: float = 0.0,
         mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
@@ -1140,9 +1047,7 @@ class _RandomFunctionBaseGPU(ImageOnlyTransform):
         self.func = func
         self.retain_stats = retain_stats
         self.apply_to_channel = apply_to_channel
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        self.mix_in_out = mix_in_out
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
         configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()  # disable gradients for efficiency
@@ -1211,7 +1116,11 @@ class _RandomNamedFunctionGPU(_RandomFunctionBaseGPU):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         mix_prob: float = 0.0,
         mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
@@ -1225,7 +1134,11 @@ class _RandomNamedFunctionGPU(_RandomFunctionBaseGPU):
             same_on_batch=same_on_batch,
             in_seg=in_seg,
             out_seg=out_seg,
-            mix_in_out=mix_in_out,
+            seg_unit=seg_unit,
+            seg_unit_prob=seg_unit_prob,
+            bg_split=bg_split,
+            bg_em_clusters=bg_em_clusters,
+            seg_feather=seg_feather,
             mix_prob=mix_prob,
             mix_alpha=mix_alpha,
             p=p,
@@ -1316,7 +1229,11 @@ class RandomInverseGPU(ImageOnlyTransform):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         mix_prob: float = 0.0,
         mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
@@ -1326,9 +1243,7 @@ class RandomInverseGPU(ImageOnlyTransform):
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.apply_to_channel = apply_to_channel
         self.retain_stats = retain_stats
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        self.mix_in_out = mix_in_out
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
         configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()  # disable gradients for efficiency
@@ -1340,9 +1255,15 @@ class RandomInverseGPU(ImageOnlyTransform):
         for c in self.apply_to_channel:
             # The per-sample reductions -- max, and the two retain_stats passes -- are the
             # expensive part and are independent across samples, so they run once for the
-            # whole channel. Only the region selection stays in the loop:
-            # `_choose_region_mode` picks `in` / `out` / `all` per sample, and hoisting it
-            # would make that one decision for the batch.
+            # whole channel. The region selection used to be the one thing left in a
+            # per-sample loop, because the mode draw was batch-wide everywhere else and
+            # hoisting it here would have made one decision for the batch. It is per
+            # sample everywhere now (see `choose_region_modes`), so the loop is gone.
+            #
+            # What that costs: the non-finite guard was per sample and is now per channel,
+            # so one bad sample withholds the whole channel rather than just itself. This
+            # transform is `max - x`, which is finite whenever its input is, so the guard
+            # only fires on an input that was already broken.
             channel = input[:, c]
             reduce_dims = tuple(range(1, channel.dim()))
             keep_shape = (-1, *([1] * (channel.dim() - 1)))
@@ -1368,14 +1289,10 @@ class RandomInverseGPU(ImageOnlyTransform):
                 new_std = inverted.std(dim=reduce_dims).view(keep_shape)
                 inverted = (inverted - new_mean) / (new_std + eps) * orig_stds + orig_means
 
-            for i in range(input.shape[0]):
-                orig = channel[i]
-                x = inverted[i]
-
-                checked = _select_and_check(self, orig, x, None if seg_mask is None else seg_mask[i])
-                if checked is None:
-                    continue
-                input[i, c] = checked
+            checked = _select_and_check(self, channel, inverted, seg_mask)
+            if checked is None:
+                continue
+            input[:, c] = checked
 
         return input
 
@@ -1413,7 +1330,11 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         mix_prob: float = 0.0,
         mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
@@ -1423,9 +1344,7 @@ class RandomHistogramEqualizationGPU(ImageOnlyTransform):
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.retain_stats = retain_stats
         self.apply_to_channel = apply_to_channel
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        self.mix_in_out = mix_in_out
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
         configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()  # disable gradients for efficiency
@@ -1574,7 +1493,11 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
         retain_stats: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         mix_prob: float = 0.0,
         mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         same_on_batch: bool = False,
@@ -1595,9 +1518,7 @@ class RandomBiasFieldGPU(ImageOnlyTransform):
         self.apply_to_channel = apply_to_channel
         self.invert = invert
         self.retain_stats = retain_stats
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        self.mix_in_out = mix_in_out
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
         configure_mix(self, mix_prob, mix_alpha)
 
     def _num_coeffs(self, dim: int) -> int:
@@ -1795,7 +1716,11 @@ class RandomClampGPU(ImageOnlyTransform):
         same_on_batch: bool = False,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
-        mix_in_out: bool = False,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
         keepdim: bool = True,
@@ -1804,9 +1729,7 @@ class RandomClampGPU(ImageOnlyTransform):
         self.max_clamp_amount = max_clamp_amount
         self.apply_to_channel = apply_to_channel
         self.retain_stats = retain_stats
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        self.mix_in_out = mix_in_out
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
 
     @torch.no_grad()  # disable gradients for efficiency
     def apply_transform(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any], transform: Tensor | None = None) -> Tensor:
@@ -1865,17 +1788,17 @@ class ZscoreNormalizationGPU(ImageOnlyTransform):
         keepdim: bool = True,
         in_seg: float = 0.0,
         out_seg: float = 0.0,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         p: float = 1.0,
         p_batch: float = 1.0,
     ) -> None:
         super().__init__(p=p, p_batch=p_batch, same_on_batch=False, keepdim=keepdim)
         self.apply_to_channel = apply_to_channel
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        # Not a constructor parameter: this transform has no mix_in_out knob and the
-        # registry derives a config's accepted keys from __init__, so adding one there
-        # would invent a setting. Set here so the region-selection helper's contract holds.
-        self.mix_in_out = False
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
 
     @torch.no_grad()
     def apply_transform(
@@ -1909,8 +1832,10 @@ class ZscoreNormalizationGPU(ImageOnlyTransform):
             flat = channel.reshape(channel.shape[0], -1)
             spread = (flat.amax(dim=1) - flat.amin(dim=1)).view(-1, *([1] * (channel.dim() - 1)))
             channel = torch.where(spread == 0, channel, (channel - mean) / std)
-            # No mix_in_out here: z-scoring is applied whole, never to a random subset
-            # of the mask channels.
+            # `seg_unit` and `bg_split` are accepted here like everywhere else, but a
+            # z-score applied to a random subset of the units is a strange thing to ask
+            # for: the point of this transform is to put the whole channel on one scale.
+            # Left configurable rather than refused, since the surface is uniform.
             checked = _select_and_check(self, orig, channel, seg_mask)
             if checked is None:
                 continue

@@ -41,6 +41,11 @@
             "apply_resolution": true,
             "apply_to_channel": null,
             "atlas_res": 1.0,
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "bias_field_std": 0.7,
             "bias_scale": 0.025,
             "blur_range": 1.03,
@@ -61,6 +66,7 @@
             "gamma_std": 0.5,
             "generation_classes": null,
             "generation_labels": null,
+            "in_seg": 0.0,
             "keepdim": true,
             "max_res_aniso": 8.0,
             "max_res_iso": 4.0,
@@ -74,6 +80,7 @@
             "nonlin_scale": 0.04,
             "nonlin_std": 4.0,
             "normalise": true,
+            "out_seg": 0.0,
             "output_labels": null,
             "p": 0.5,
             "p_batch": 1.0,
@@ -84,6 +91,9 @@
             "rotation_bounds": 15.0,
             "same_on_batch": false,
             "scaling_bounds": 0.2,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5,
             "shearing_bounds": 0.012,
             "svf_integration_steps": 7,
             "thickness": null,
@@ -94,6 +104,11 @@
                 0.5,
                 2.0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "blur_sigmas": [
                 0.0,
                 0.0,
@@ -110,6 +125,7 @@
                 6
             ],
             "dark_threshold": 0.01,
+            "in_seg": 0.0,
             "keepdim": false,
             "label_classes": null,
             "label_remap_prob": 0.5,
@@ -120,6 +136,7 @@
             ],
             "mix_prob": 0.0,
             "n_kmeans_subsample": 10000,
+            "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "s_choices": [
@@ -134,6 +151,9 @@
                 10
             ],
             "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5,
             "skip_parcellation_prob": 0.1,
             "skip_sub_parc_prob": 0.4
         },
@@ -142,6 +162,11 @@
                 0.5,
                 2.0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "blur_sigmas_post": [
                 0.0,
                 0.0,
@@ -159,6 +184,7 @@
                 0.8
             ],
             "dark_threshold": 0.01,
+            "in_seg": 0.0,
             "initial_partitioner": null,
             "keepdim": false,
             "mix_alpha": [
@@ -166,20 +192,30 @@
                 1.0
             ],
             "mix_prob": 0.0,
+            "out_seg": 0.0,
             "overlay": null,
             "p": 1.0,
             "p_batch": 1.0,
             "refinement_partitioners": null,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomDomainTransferGPU": {
             "any_source": false,
             "apply_to_channel": null,
             "bank_path": null,
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "bias_field_std": 0.0,
             "bias_scale": 0.03,
             "blend_concentration": 1.0,
             "blend_targets": 1,
+            "in_seg": 0.0,
             "include_self": true,
             "keepdim": true,
             "mix_alpha": [
@@ -187,12 +223,16 @@
                 1.0
             ],
             "mix_prob": 0.0,
+            "out_seg": 0.0,
             "p": 0.2,
             "p_batch": 1.0,
             "p_class_mix": 0.0,
             "p_spatial_mix": 0.0,
             "pct": 1.0,
             "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5,
             "sigma": 2.0,
             "source_label": null,
             "spatial_mix_gain": 3.0,
@@ -204,47 +244,66 @@
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "mix_alpha": [
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomHistogramEqualizationGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "mix_alpha": [
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomRedistributeSegGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
+            "confine_prob": 0.2,
             "dilation_iterations_range": [
                 1,
                 3
             ],
-            "in_seg": 0.2,
             "keepdim": true,
             "mix_alpha": [
                 0.0,
@@ -255,6 +314,9 @@
             "p_batch": 1.0,
             "retain_stats": true,
             "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 1.0,
             "std_noise_range": [
                 0.1,
                 0.3
@@ -265,56 +327,77 @@
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "mix_alpha": [
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": true,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomLaplaceGPU": {
             "absolute": false,
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "mix_alpha": [
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
-            "mix_prob": 0.0,
-            "out_seg": 0.0,
-            "p": 1.0,
-            "p_batch": 1.0,
-            "retain_stats": false,
-            "same_on_batch": false
-        },
-        "RandomUnsharpMaskGPU": {
-            "apply_to_channel": [
-                0
-            ],
-            "in_seg": 0.0,
-            "keepdim": true,
-            "mix_alpha": [
-                0.0,
-                1.0
-            ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
             "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
+        },
+        "RandomUnsharpMaskGPU": {
+            "apply_to_channel": [
+                0
+            ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
+            "in_seg": 0.0,
+            "keepdim": true,
+            "mix_alpha": [
+                0.0,
+                1.0
+            ],
+            "mix_prob": 0.0,
+            "out_seg": 0.0,
+            "p": 1.0,
+            "p_batch": 1.0,
+            "retain_stats": false,
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5,
             "sigma": 1.0,
             "unsharp_amount": 1.5
         },
@@ -322,6 +405,11 @@
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "kernel_sizes": [
@@ -334,217 +422,303 @@
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomClampGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "max_clamp_amount": 0.0,
-            "mix_in_out": false,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomGaussianNoiseGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "mean": 0.0,
-            "mix_in_out": false,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5,
             "std": 1.0
         },
         "RandomGaussianBlurGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "mix_alpha": [
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
             "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5,
             "sigma": 1.0
         },
         "RandomBrightnessGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "brightness_range": [
                 0.5,
                 1.5
             ],
             "in_seg": 0.0,
             "keepdim": true,
-            "mix_in_out": false,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomGammaGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "gamma_range": [
                 0.7,
                 1.5
             ],
             "in_seg": 0.0,
             "keepdim": false,
-            "mix_in_out": false,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomInvGammaGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "gamma_range": [
                 0.7,
                 1.5
             ],
             "in_seg": 0.0,
             "keepdim": false,
-            "mix_in_out": false,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomContrastGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "contrast_range": [
                 0.75,
                 1.25
             ],
             "in_seg": 0.0,
             "keepdim": true,
-            "mix_in_out": false,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomLog1pGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "mix_alpha": [
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomSqrtGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "mix_alpha": [
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomSinGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "mix_alpha": [
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomExpGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "mix_alpha": [
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomSigmoidGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "mix_alpha": [
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "RandomLowResTransformGPU": {
             "keepdim": true,
@@ -588,6 +762,11 @@
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "coefficients": 0.5,
             "in_seg": 0.0,
             "invert": false,
@@ -596,24 +775,34 @@
                 0.0,
                 1.0
             ],
-            "mix_in_out": false,
             "mix_prob": 0.0,
             "order": 3,
             "out_seg": 0.0,
             "p": 1.0,
             "p_batch": 1.0,
             "retain_stats": false,
-            "same_on_batch": false
+            "same_on_batch": false,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         },
         "ZscoreNormalizationGPU": {
             "apply_to_channel": [
                 0
             ],
+            "bg_em_clusters": [
+                3,
+                10
+            ],
+            "bg_split": "none",
             "in_seg": 0.0,
             "keepdim": true,
             "out_seg": 0.0,
             "p": 1.0,
-            "p_batch": 1.0
+            "p_batch": 1.0,
+            "seg_feather": 0.0,
+            "seg_unit": "whole",
+            "seg_unit_prob": 0.5
         }
     },
     "CPU": {
@@ -653,7 +842,7 @@
         },
         "RedistributeTransform": {
             "classes": null,
-            "in_seg": 0.2,
+            "confine_prob": 0.2,
             "p": 1.0,
             "retain_stats": false
         },

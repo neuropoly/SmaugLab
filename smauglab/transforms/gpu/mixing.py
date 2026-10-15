@@ -83,8 +83,23 @@ class Mixing(Protocol):
 _MIX_ALPHA_HINT = "It is the weight on the original input: 0 is the transform's output, 1 is the input untouched."
 
 
-def normalise_blend_range(spec: MixAlphaSpec, key: str = "mix_alpha", owner: str = "", hint: str = _MIX_ALPHA_HINT) -> tuple[float, float]:
-    """A scalar or ``[lo, hi]`` as a validated pair inside ``[0, 1]``.
+def _bound_text(value: float | None) -> str:
+    """A bound as it appears in a message: ``0``, ``1``, ``inf``.
+
+    `%g` rather than `str`, so the default bounds still render as the ``[0, 1]`` the
+    error message has always said rather than as ``[0.0, 1.0]``.
+    """
+    return "inf" if value is None else f"{value:g}"
+
+
+def normalise_blend_range(
+    spec: MixAlphaSpec,
+    key: str = "mix_alpha",
+    owner: str = "",
+    hint: str = _MIX_ALPHA_HINT,
+    bounds: tuple[float, float | None] = (0.0, 1.0),
+) -> tuple[float, float]:
+    """A scalar or ``[lo, hi]`` as a validated pair inside `bounds`.
 
     Checked here rather than in `smauglab/config.py`, which only ever asks whether a key
     is accepted, never what its value is -- every value check in this package happens in
@@ -93,6 +108,11 @@ def normalise_blend_range(spec: MixAlphaSpec, key: str = "mix_alpha", owner: str
 
     `key` and `owner` are for the message alone. `AnatomicalLabelOverlay.blend_strength`
     is a different blend with the same shape of argument, and shares this.
+
+    `bounds` is what makes it shareable by a parameter that is *not* a weight: `gpu/regions.py`
+    passes ``(0.0, None)`` for `seg_feather`, a Gaussian sigma in voxels with no upper
+    limit. The default is the unit interval every blend weight here needs, so the three
+    existing callers are unaffected -- including the message, which still reads ``[0, 1]``.
     """
     where = f"{owner}: " if owner else ""
     if isinstance(spec, bool):  # an int subtype, and never a blend weight anyone meant
@@ -111,9 +131,10 @@ def normalise_blend_range(spec: MixAlphaSpec, key: str = "mix_alpha", owner: str
         lo, hi = values
     if lo > hi:
         raise ValueError(f"{where}{key} range must be non-decreasing, got [{lo}, {hi}]")
-    if lo < 0.0 or hi > 1.0:
+    low, high = bounds
+    if lo < low or (high is not None and hi > high):
         suffix = f" {hint}" if hint else ""
-        raise ValueError(f"{where}{key} must lie inside [0, 1], got [{lo}, {hi}].{suffix}")
+        raise ValueError(f"{where}{key} must lie inside [{_bound_text(low)}, {_bound_text(high)}], got [{lo}, {hi}].{suffix}")
     return (lo, hi)
 
 

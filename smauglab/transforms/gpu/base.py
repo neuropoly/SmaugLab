@@ -33,6 +33,13 @@ from torch.distributions import RelaxedBernoulli
 from torch.nn import Module
 
 from smauglab.transforms.gpu.mixing import DEFAULT_MIX_ALPHA
+from smauglab.transforms.gpu.regions import (
+    DEFAULT_BG_EM_CLUSTERS,
+    DEFAULT_BG_SPLIT,
+    DEFAULT_SEG_FEATHER,
+    DEFAULT_SEG_UNIT,
+    DEFAULT_SEG_UNIT_PROB,
+)
 
 try:  # private to kornia, and the only part of the faster parameter draw that needs it
     from kornia.augmentation.container.image import ImageSequentialBase, _get_new_batch_shape
@@ -94,6 +101,24 @@ class ImageOnlyTransform(RigidAffineAugmentationBase3D):
     #: constructor arguments can be configured, since the signature is the config schema.
     mix_prob: float = 0.0
     mix_alpha: tuple[float, float] = DEFAULT_MIX_ALPHA
+
+    #: Which part of the segmentation the transform applies to, and how sharply it stops;
+    #: see `gpu/regions.py`. Declared here for the same reason as the two above, and with
+    #: the values that mean "off": `in_seg = out_seg = 0` is "the whole patch", and then
+    #: none of the other five is read. `seg_feather` is the normalised pair
+    #: `configure_regions` assigns, not the scalar-or-range a config may write.
+    #:
+    #: These used to be assigned only in the constructors, with no class-level default, so
+    #: `ZscoreNormalizationGPU` had to set `mix_in_out` by hand outside its signature to
+    #: keep the helper's contract -- the registry derives a config's accepted keys from
+    #: `__init__`, so declaring it there would have invented a setting.
+    in_seg: float = 0.0
+    out_seg: float = 0.0
+    seg_unit: str = DEFAULT_SEG_UNIT
+    seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB
+    bg_split: str = DEFAULT_BG_SPLIT
+    bg_em_clusters: tuple[int, int] = DEFAULT_BG_EM_CLUSTERS
+    seg_feather: tuple[float, float] = (DEFAULT_SEG_FEATHER, DEFAULT_SEG_FEATHER)
 
     def compute_transformation(self, input: Tensor, params: dict[str, Tensor], flags: dict[str, Any]) -> Tensor:
         # These transforms never move anything, so the matrix is always the

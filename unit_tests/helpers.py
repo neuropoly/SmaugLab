@@ -49,6 +49,26 @@ class SmaugLabTestCase(unittest.TestCase):
         seg[:, :, 6:18, 6:18, 6:18] = 1.0
         return seg
 
+    def multi_label_seg(self) -> torch.Tensor:
+        """Three label values, one of them in two disconnected pieces.
+
+        `tiny_seg` cannot express either new granularity: a single binary cube has one
+        label value and one connected component, so `seg_unit="label"` and
+        `seg_unit="component"` are both indistinguishable from `"whole"` on it. Label 1
+        here is two separated blocks, which is the only way to tell "component" from
+        "label" apart, and the three values are what makes "label" more than one unit.
+
+        Blocks rather than noise, so a test can name the voxels it expects to change.
+        Laid out with background between them, so dilation and feathering have somewhere
+        to go and the components stay separate under a one-voxel structuring element.
+        """
+        seg = torch.zeros(*VOLUME_SHAPE, dtype=torch.float32)
+        seg[:, :, 2:6, 2:6, 2:6] = 1.0  # label 1, first component
+        seg[:, :, 2:6, 2:6, 16:20] = 1.0  # label 1, second component
+        seg[:, :, 10:14, 10:14, 10:14] = 2.0
+        seg[:, :, 16:20, 16:20, 4:8] = 3.0
+        return seg
+
     def empty_seg(self) -> torch.Tensor:
         """A mask with no foreground at all -- every voxel background.
 

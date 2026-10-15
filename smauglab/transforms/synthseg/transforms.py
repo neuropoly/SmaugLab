@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Sequence
 from typing import Any
 
 import torch
@@ -29,6 +30,16 @@ from torch import Tensor, nn
 from smauglab.registry import AugId, AugType, Backend, register
 from smauglab.transforms.gpu.base import ImageOnlyTransform, segmentation_from
 from smauglab.transforms.gpu.mixing import DEFAULT_MIX_ALPHA, MixAlphaSpec, configure_mix, mix_with_original
+from smauglab.transforms.gpu.regions import (
+    DEFAULT_BG_EM_CLUSTERS,
+    DEFAULT_BG_SPLIT,
+    DEFAULT_SEG_FEATHER,
+    DEFAULT_SEG_UNIT,
+    DEFAULT_SEG_UNIT_PROB,
+    SegFeatherSpec,
+    _select_and_check,
+    configure_regions,
+)
 from smauglab.transforms.synthseg.generator import SynthSegGenerator
 
 # Keys understood from the JSON config / kwargs, forwarded to SynthSegGenerator.
@@ -124,6 +135,13 @@ class RandomSynthSegGPU(ImageOnlyTransform):
         self,
         apply_to_channel: list[int] | None = None,
         same_on_batch: bool = False,
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         mix_prob: float = 0.0,
         mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 0.5,
@@ -134,8 +152,15 @@ class RandomSynthSegGPU(ImageOnlyTransform):
         super().__init__(p=p, p_batch=p_batch, same_on_batch=same_on_batch, keepdim=keepdim)
         self.apply_to_channel = apply_to_channel if apply_to_channel is not None else [0]
         # Named explicitly rather than left to **kwargs: those are filtered against
-        # `_GENERATOR_KEYS` on the way to SynthSegGenerator, so a mix parameter arriving
-        # that way would be dropped without a word.
+        # `_GENERATOR_KEYS` on the way to SynthSegGenerator, so a mix or region parameter
+        # arriving that way would be dropped without a word.
+        #
+        # `bg_em_clusters` and the generator's own `em_background_clusters_range` are
+        # different features one word apart. The generator's splits the *label map it
+        # synthesises from*, to cope with an incomplete segmentation; this one splits the
+        # background into units that `out_seg` can land on part of. Setting one does not
+        # set the other.
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
         configure_mix(self, mix_prob, mix_alpha)
         gen_kwargs = _filter_generator_kwargs(kwargs)
         # Intensity-only: never deform/flip internally (geometry comes from the
@@ -165,10 +190,16 @@ class RandomSynthSegGPU(ImageOnlyTransform):
             src = n if n < synth.shape[1] else synth.shape[1] - 1
             x = synth[:, src]
             x = mix_with_original(self, input[:, c], x)
-            if torch.isnan(x).any() or torch.isinf(x).any():
-                print(f"Warning nan: {self.__class__.__name__}", flush=True)
+            # `_select_and_check` subsumes the hand-written guard this replaces, and costs
+            # one reduction where `isnan().any() or isinf().any()` read two back to the
+            # host. `normalize=True` because the synthesis is a [0, 1] GMM render while the
+            # patch it is composited onto is z-scored; without it a confined synthesis would
+            # leave an intensity step on the mask boundary, which is a feature the network
+            # would happily learn.
+            checked = _select_and_check(self, input[:, c], x, seg, normalize=True)
+            if checked is None:
                 continue
-            input[:, c] = x
+            input[:, c] = checked
         return input
 
 

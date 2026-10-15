@@ -77,7 +77,7 @@ class TestRedistributeIsNotAnIdentityUnderAutocast(SmaugLabTestCase):
             with self.subTest(seed=seed):
                 torch.manual_seed(seed)
                 img, seg = pair()
-                transform = RandomRedistributeSegGPU(in_seg=1.0, p=1.0, p_batch=1.0)
+                transform = RandomRedistributeSegGPU(confine_prob=1.0, p=1.0, p_batch=1.0)
 
                 with torch.autocast("cpu", torch.float16):
                     out = transform.apply_transform(img.clone(), {"seg": seg}, {})
@@ -91,7 +91,7 @@ class TestRedistributeIsNotAnIdentityUnderAutocast(SmaugLabTestCase):
     def test_autocast_does_not_change_the_result(self):
         """The moments are the only thing autocast could touch here, and they are pinned."""
         img, seg = pair()
-        transform = RandomRedistributeSegGPU(in_seg=1.0, p=1.0, p_batch=1.0)
+        transform = RandomRedistributeSegGPU(confine_prob=1.0, p=1.0, p_batch=1.0)
 
         torch.manual_seed(0)
         plain = transform.apply_transform(img.clone(), {"seg": seg}, {})

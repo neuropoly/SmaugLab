@@ -18,6 +18,16 @@ from smauglab.transforms.gpu.palette.base import (
 )
 from smauglab.transforms.gpu.palette.factory import make_initial, make_overlay, make_refinement
 from smauglab.transforms.gpu.palette.overlay import AnatomicalLabelOverlay
+from smauglab.transforms.gpu.regions import (
+    DEFAULT_BG_EM_CLUSTERS,
+    DEFAULT_BG_SPLIT,
+    DEFAULT_SEG_FEATHER,
+    DEFAULT_SEG_UNIT,
+    DEFAULT_SEG_UNIT_PROB,
+    SegFeatherSpec,
+    _select_and_check,
+    configure_regions,
+)
 from smauglab.transforms.rng import shared_choice
 
 #: The composition `RandomPaletteGPU` hard-codes, which is what this defaults to.
@@ -87,6 +97,13 @@ class PaletteSynthesisGPU(ImageOnlyTransform):
         dark_threshold: float = 0.01,
         blur_sigmas_pre: Sequence[float] = (0.0, 0.0, 0.0, 0.3, 0.5, 0.8),
         blur_sigmas_post: Sequence[float] = (0.0, 0.0, 0.0, 0.3, 0.5, 0.8),
+        in_seg: float = 0.0,
+        out_seg: float = 0.0,
+        seg_unit: str = DEFAULT_SEG_UNIT,
+        seg_unit_prob: float = DEFAULT_SEG_UNIT_PROB,
+        bg_split: str = DEFAULT_BG_SPLIT,
+        bg_em_clusters: Sequence[int] = DEFAULT_BG_EM_CLUSTERS,
+        seg_feather: SegFeatherSpec = DEFAULT_SEG_FEATHER,
         mix_prob: float = 0.0,
         mix_alpha: MixAlphaSpec = DEFAULT_MIX_ALPHA,
         p: float = 1.0,
@@ -103,6 +120,7 @@ class PaletteSynthesisGPU(ImageOnlyTransform):
         self.dark_threshold = float(dark_threshold)
         self.blur_sigmas_pre = list(blur_sigmas_pre)
         self.blur_sigmas_post = list(blur_sigmas_post)
+        configure_regions(self, in_seg, out_seg, seg_unit, seg_unit_prob, bg_split, bg_em_clusters, seg_feather)
         configure_mix(self, mix_prob, mix_alpha)
 
     @torch.no_grad()
@@ -180,5 +198,10 @@ class PaletteSynthesisGPU(ImageOnlyTransform):
         synth_z = ((synth - b_mean) / b_std * flat_m_all).reshape(B, 1, D, H, W)
 
         out = input.clone()
-        out[:, 0:1] = synth_z.to(input.dtype)
+        # Region selection last, after the foreground z-score -- this transform's stats
+        # restore -- as everywhere else. `normalize=True` because the synthesis is masked
+        # to zero on the background while the input's background is z-scored air.
+        checked = _select_and_check(self, input[:, 0], synth_z[:, 0], seg_raw, normalize=True)
+        if checked is not None:
+            out[:, 0:1] = checked.unsqueeze(1).to(input.dtype)
         return out

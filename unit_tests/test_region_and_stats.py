@@ -21,8 +21,14 @@ from smauglab.transforms.gpu.contrast import (
     RandomHistogramEqualizationGPU,
     RandomScharrGPU,
     RandomSqrtGPU,
-    _apply_region_mode,
     _foreground,
+)
+from smauglab.transforms.gpu.regions import (
+    DEFAULT_BG_EM_CLUSTERS,
+    DEFAULT_BG_SPLIT,
+    DEFAULT_SEG_FEATHER,
+    DEFAULT_SEG_UNIT,
+    apply_region_selection,
 )
 from unit_tests.helpers import SmaugLabTestCase, first_output
 
@@ -62,7 +68,14 @@ class TestForegroundReduction(SmaugLabTestCase):
 
 
 class TestApplyRegionMode(SmaugLabTestCase):
-    """The behaviour a config actually asks for when it sets in_seg or out_seg."""
+    """The behaviour a config actually asks for when it sets in_seg or out_seg.
+
+    The mode is no longer passed in as a string: `in_seg` and `out_seg` are drawn per
+    sample, so 1.0/0.0 is how a test pins mode "in". `seg_unit_prob=1.0` keeps every unit,
+    which is what makes these assertions about *where* rather than about which units the
+    keep draw happened to pick, and `seg_feather=0` keeps the boundary a step so the
+    changed-voxel set is exactly the selected region.
+    """
 
     def setUp(self):
         super().setUp()
@@ -74,29 +87,43 @@ class TestApplyRegionMode(SmaugLabTestCase):
         self.mask[0, 0, :2, :2, :2] = 1.0
         self.inside = (slice(None), slice(0, 2), slice(0, 2), slice(0, 2))
 
+    def _select(self, **kwargs):
+        return apply_region_selection(_Stub(**kwargs), self.orig, self.transformed, self.mask)
+
     def test_mode_in_changes_only_the_masked_voxels(self):
-        out = _apply_region_mode(self.orig, self.transformed, self.mask, "in")
+        out = self._select(in_seg=1.0)
 
         self.assertTrue(bool((out[self.inside] == 1.0).all()), "'in' did not apply the transform inside the mask")
         self.assertEqual(int(out.sum()), 8, "'in' leaked outside the mask")
 
     def test_mode_out_changes_only_the_unmasked_voxels(self):
-        out = _apply_region_mode(self.orig, self.transformed, self.mask, "out")
+        out = self._select(out_seg=1.0)
 
         self.assertTrue(bool((out[self.inside] == 0.0).all()), "'out' applied the transform inside the mask")
         self.assertEqual(int(out.sum()), 64 - 8)
 
     def test_in_and_out_partition_the_volume(self):
-        inside = _apply_region_mode(self.orig, self.transformed, self.mask, "in")
-        outside = _apply_region_mode(self.orig, self.transformed, self.mask, "out")
+        inside = self._select(in_seg=1.0)
+        outside = self._select(out_seg=1.0)
         self.assertTrue(torch.equal(inside + outside, self.transformed))
 
+    def test_both_fired_is_a_mixture_and_not_the_whole_patch(self):
+        """The one semantic change: `in_seg` and `out_seg` both firing used to mean "all".
+
+        At `seg_unit_prob=1.0` every unit of both sides is kept, so "both" does cover the
+        whole patch -- the difference from "all" only shows up below that, where the two
+        sides are sampled independently.
+        """
+        covered = apply_region_selection(_Stub(in_seg=1.0, out_seg=1.0, seg_unit_prob=1.0), self.orig, self.transformed, self.mask)
+        self.assertTrue(torch.equal(covered, self.transformed))
+
     def test_mode_all_ignores_the_mask(self):
-        out = _apply_region_mode(self.orig, self.transformed, self.mask, "all")
+        """Neither probability firing. The mask is read but nothing is confined."""
+        out = self._select(in_seg=0.0, out_seg=0.0)
         self.assertTrue(torch.equal(out, self.transformed))
 
     def test_a_missing_mask_means_apply_everywhere(self):
-        out = _apply_region_mode(self.orig, self.transformed, None, "in")
+        out = apply_region_selection(_Stub(in_seg=1.0), self.orig, self.transformed, None)
         self.assertTrue(torch.equal(out, self.transformed))
 
     def test_the_unbatched_3d_path_behaves_the_same(self):
@@ -105,12 +132,28 @@ class TestApplyRegionMode(SmaugLabTestCase):
         mask = torch.zeros(2, 4, 4, 4)
         mask[0, :2, :2, :2] = 1.0
 
-        out = _apply_region_mode(orig, transformed, mask, "in")
+        out = apply_region_selection(_Stub(in_seg=1.0), orig, transformed, mask)
         self.assertEqual(int(out.sum()), 8)
 
     def test_an_unsupported_rank_is_rejected(self):
         with self.assertRaises(ValueError):
-            _apply_region_mode(torch.rand(2, 2), torch.rand(2, 2), torch.rand(1, 2, 2), "in")
+            apply_region_selection(_Stub(in_seg=1.0), torch.rand(2, 2), torch.rand(2, 2), torch.rand(1, 2, 2))
+
+    def test_a_feathered_boundary_is_a_ramp_not_a_step(self):
+        """`seg_feather` is the whole point of the alpha being a float and not a bool."""
+        step = self._select(in_seg=1.0)
+        ramp = apply_region_selection(_Stub(in_seg=1.0, seg_feather=(1.0, 1.0)), self.orig, self.transformed, self.mask)
+
+        self.assertEqual(sorted(set(step.flatten().tolist())), [0.0, 1.0], "the unfeathered composite is a step")
+        between = (ramp > 1e-6) & (ramp < 1.0 - 1e-6)
+        self.assertGreater(int(between.sum()), 0, "a feathered boundary must put voxels strictly between the two")
+        self.assertTrue(bool((ramp >= 0.0).all() and (ramp <= 1.0).all()), "the alpha left [0, 1]")
+
+    def test_feathered_in_and_out_still_sum_to_the_transform(self):
+        """blur(m) + blur(1 - m) == blur(1) == 1, for a normalised kernel and reflect padding."""
+        inside = apply_region_selection(_Stub(in_seg=1.0, seg_feather=(1.0, 1.0)), self.orig, self.transformed, self.mask)
+        outside = apply_region_selection(_Stub(out_seg=1.0, seg_feather=(1.0, 1.0)), self.orig, self.transformed, self.mask)
+        self.assertTrue(torch.allclose(inside + outside, self.transformed, atol=1e-5))
 
 
 class TestRegionModeReachesTheRealTransforms(SmaugLabTestCase):
@@ -237,7 +280,7 @@ class TestDilationRankFollowsTheData(SmaugLabTestCase):
         seg = torch.zeros(12, 12)
         seg[3:8, 3:8] = 1.0
 
-        out, _ = aug_redistribute_seg(image.clone(), seg, in_seg=1.0)
+        out, _ = aug_redistribute_seg(image.clone(), seg, confine_prob=1.0)
 
         self.assertEqual(tuple(out.shape), tuple(image.shape))
         self.assertTrue(bool(np.isfinite(out.numpy()).all()))
@@ -249,18 +292,31 @@ class TestDilationRankFollowsTheData(SmaugLabTestCase):
         seg = torch.zeros(10, 10, 10)
         seg[2:6, 2:6, 2:6] = 1.0
 
-        out, _ = aug_redistribute_seg(image.clone(), seg, in_seg=1.0)
+        out, _ = aug_redistribute_seg(image.clone(), seg, confine_prob=1.0)
 
         self.assertEqual(tuple(out.shape), tuple(image.shape))
 
 
 class _Stub:
-    """Stands in for a transform: _select_and_check only reads these three attributes."""
+    """Stands in for a transform: the region helpers only read these attributes.
 
-    def __init__(self, in_seg: float = 0.0, out_seg: float = 0.0, mix_in_out: bool = False):
-        self.in_seg = in_seg
-        self.out_seg = out_seg
-        self.mix_in_out = mix_in_out
+    Built from `gpu/regions.py`'s own "off" defaults rather than from literals, so this
+    also fails if one of those constants disappears.
+    """
+
+    def __init__(self, **overrides):
+        defaults = {
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": DEFAULT_SEG_UNIT,
+            "seg_unit_prob": 1.0,
+            "bg_split": DEFAULT_BG_SPLIT,
+            "bg_em_clusters": DEFAULT_BG_EM_CLUSTERS,
+            "seg_feather": (DEFAULT_SEG_FEATHER, DEFAULT_SEG_FEATHER),
+        }
+        defaults.update(overrides)
+        for name, value in defaults.items():
+            setattr(self, name, value)
 
 
 class TestExtractedTailHelpers(SmaugLabTestCase):
