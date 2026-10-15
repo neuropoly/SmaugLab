@@ -731,9 +731,10 @@ def record_applications(pipeline):
       -- which is this wrapper, since the patch is an instance attribute. One
       application per record; the identical `params` on the pair is the proof that
       image and mask moved together.
-    * `RandomChooseXTransformsGPU` appears twice in `random_order` mode because the
-      builder emits two of them, the transfer bucket and the general-enhancement one.
-      `label` tells them apart.
+    * `RandomChooseXTransformsGPU` appears more than once because the builder emits one
+      per bucket: the transfer bucket, the general-enhancement one in `random_order`
+      mode, and the normalization choice whenever a config names more than one
+      normalization scheme. `label` tells them apart ("ta", "ge", "norm").
     """
     fired: list[dict] = []
     patched = []
