@@ -234,13 +234,81 @@ Three things to know before turning this on:
   re-applies only that fixed preprocessing. Randomizing the final standardization is
   therefore a deliberate train/test difference in input scale, on the same logic as every
   other appearance augmentation here: the network is being asked to stop depending on one
-  scale. There is no compensating re-normalization at the end.
+  scale. There is no compensating re-normalization at the end -- if that is what you want,
+  it is the statistics bracket below, which runs *before* this stage.
 * The schemes act on preprocessed intensities, not on HU. A CT window in Hounsfield units
   means nothing after preprocessing unless its bounds are stated, which is why
   `PercentileNormalizationGPU` takes an explicit `clip_range`, `mean` and `std` -- given
   all three it reproduces nnU-Net's `CTNormalization` exactly, and
   `MinMaxNormalizationGPU` at its defaults reproduces `RescaleTo01Normalization`.
   `unit_tests/test_normalization.py` pins both against the installed nnU-Net.
+
+### Statistics restore (`pipeline.retain_stats`)
+
+The per-transform `retain_stats` flag puts a channel's mean and standard deviation back
+after one transform. This is the same idea for the whole pipeline, with two more
+statistics and a jitter: the profile is snapshotted once after the geometry and restored
+once at the end, so the augmentations are free to do what they like in between and the
+network still sees an intensity profile that is plausible -- but never exactly the one the
+patch arrived with.
+
+```json
+{
+  "pipeline": {
+    "retain_stats": {
+      "stats": ["mean", "std", "p1", "p99"],
+      "percentiles": [1.0, 99.0],
+      "std_scale": [0.9, 1.1],
+      "percentile_scale": [0.9, 1.1],
+      "stats_from": "all",
+      "p": 1.0
+    }
+  }
+}
+```
+
+An absent block is off and spends no random numbers. A block that is present but empty is
+on with every default, which restores the snapshot exactly.
+
+**Two of the four, drawn per batch.** The snapshot is the per-sample, per-channel mean,
+standard deviation, 1st and 99th percentile. An affine map `y = ax + b` has two degrees of
+freedom, so all four cannot be restored at once -- each pass therefore draws **two** of
+them and solves for the map that puts exactly those two on target, leaving the other two
+to fall where the augmentations left them. The six pairs span the two useful extremes:
+
+| drawn pair | what it pins | what it is |
+| --- | --- | --- |
+| mean, std | the moments | what per-transform `retain_stats` does |
+| p1, p99 | the robust dynamic range | immune to the outliers an edge filter or a random convolution manufactures, which are exactly what make the standard deviation a bad target |
+| mean, p1 / mean, p99 / std, p1 / std, p99 | one of each | the mixed cases in between |
+
+`stats` is the pool the pair is drawn from, so `["mean", "std"]` reproduces the old
+behaviour at pipeline level and the default draws from all six pairs.
+
+**The jitter.** `std_scale` multiplies the standard-deviation target; `percentile_scale`
+multiplies each percentile's distance from the mean, independently, so the span can widen,
+narrow or go asymmetric. Both are a scalar or a `[lo, hi]` range, and `1.0` restores the
+snapshot exactly. The mean target is never jittered -- it is the anchor every pair shares,
+and moving it as well would put two unrelated augmentations behind one knob. `p` is the
+per-sample probability that the restore applies at all.
+
+**Where it sits.** With the block on, the pipeline is
+
+```
+[geometry] [snapshot] [augmentations] [restore] [crop] [normalization]
+```
+
+in all three pipeline modes. Two groups move to the tail: the crop, because it occludes a
+random box with the volume's own minimum rather than changing intensities, so a restore
+measured before it would be undoing the occlusion; and the normalization stage, because
+deciding the scale the network sees is its entire job. In `random_order` mode the snapshot
+lands after the geometry but *before* the hoisted `RandomLowResTransformGPU`, which is a
+general enhancement that merely runs early.
+
+A config should pick one mechanism or the other: the two do not compose, and a transform
+that restores its own moments inside the bracket is doing work the restore will redo.
+`smauglab/configs/transform_params_gpu_stats-restore.json` is the paper's `Ours` setup with
+the bracket on and every per-transform `retain_stats` turned off.
 
 ### Paper configs
 

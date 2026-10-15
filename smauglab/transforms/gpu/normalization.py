@@ -32,7 +32,7 @@ families.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Protocol
 
 import torch
 from torch import Tensor
@@ -66,7 +66,23 @@ def _broadcast(values: Tensor, like: Tensor) -> Tensor:
     return values.view(-1, *([1] * (like.dim() - 1)))
 
 
-def _resolve_mask(transform: _NormalizationBaseGPU, channel: Tensor, seg_mask: Tensor | None) -> Tensor | None:
+class _MaskSource(Protocol):
+    """What `_resolve_mask` needs off the transform it is handed.
+
+    A Protocol rather than the base class below, for the same reason `Mixing` in
+    gpu/mixing.py is one: the pipeline-level statistics bracket in gpu/stats.py resolves
+    its mask with the same rules and the same two settings, and it is not a normalization.
+    Read-only members, so a plain attribute satisfies them.
+    """
+
+    @property
+    def stats_from(self) -> str: ...
+
+    @property
+    def nonzero_threshold(self) -> float: ...
+
+
+def _resolve_mask(transform: _MaskSource, channel: Tensor, seg_mask: Tensor | None) -> Tensor | None:
     """The voxels this transform's statistics come from, or None for all of them.
 
     A sample whose mask selects nothing has no statistics to read, and letting that

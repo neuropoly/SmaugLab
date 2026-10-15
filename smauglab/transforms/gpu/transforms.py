@@ -24,6 +24,7 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             options=config.pipeline_options("random_choose"),
             source=config.source,
             order_source=config.order_source(),
+            retain_stats=config.retain_stats_spec(),
         )
         # None, not False: kornia only overwrites a child's own `same_on_batch` when the
         # argument is not None, and every config sets the flag per transform. Passing True

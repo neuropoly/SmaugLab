@@ -1,0 +1,263 @@
+{
+    "_comment": "Ours, with the per-transform retain_stats replaced by the pipeline-level statistics bracket. The snapshot runs after the geometry and the restore before the trailing crop and normalization: each batch draws two of mean/std/p1/p99 per channel and solves for the affine map that puts those two back, with the std and the two percentile targets scaled by a factor drawn from [0.9, 1.1] so the profile the network sees is never exactly the one the patch arrived with. Every transform's own retain_stats is false here: the two mechanisms do not compose, and the pipeline-level one is the point of this config. Derived from transform_params_one-sequence-to-segment-them-all.json, which is unchanged.",
+    "GPU": {
+        "RandomFlipTransformGPU": {
+            "flip_axis": [
+                0
+            ],
+            "same_on_batch": false,
+            "keepdim": true,
+            "p": 0.5
+        },
+        "RandomAffineGPU": {
+            "degrees": 5,
+            "translate": [
+                0.1,
+                0.1,
+                0.1
+            ],
+            "scale": [
+                0.7,
+                1.4
+            ],
+            "shears": [
+                -5,
+                5,
+                -5,
+                5,
+                -5,
+                5
+            ],
+            "resample": "bilinear",
+            "p": 0.0
+        },
+        "RandomInverseGPU": {
+            "retain_stats": false,
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "mix_prob": 0.0,
+            "p": 0.25
+        },
+        "RandomHistogramEqualizationGPU": {
+            "retain_stats": false,
+            "in_seg": 0,
+            "out_seg": 0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "mix_prob": 0.6,
+            "p": 0.25
+        },
+        "RandomRedistributeSegGPU": {
+            "confine_prob": 0.25,
+            "retain_stats": false,
+            "p": 0.4
+        },
+        "RandomScharrGPU": {
+            "absolute": true,
+            "retain_stats": false,
+            "mix_prob": 0.5,
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "p": 0.25
+        },
+        "RandomUnsharpMaskGPU": {
+            "sigma": 1.0,
+            "unsharp_amount": 1.5,
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "mix_prob": 0.5,
+            "p": 0.25
+        },
+        "RandomRandConvGPU": {
+            "kernel_sizes": [
+                3,
+                5,
+                7
+            ],
+            "retain_stats": false,
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "mix_prob": 0.5,
+            "p": 0.2
+        },
+        "RandomClampGPU": {
+            "max_clamp_amount": 0.2,
+            "retain_stats": false,
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "p": 0.0
+        },
+        "RandomGaussianNoiseGPU": {
+            "mean": 0.0,
+            "std": 1.0,
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "p": 0.1
+        },
+        "RandomGaussianBlurGPU": {
+            "sigma": 1.0,
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "p": 0.2
+        },
+        "RandomBrightnessGPU": {
+            "brightness_range": [
+                0.75,
+                1.25
+            ],
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "p": 0.15
+        },
+        "RandomGammaGPU": {
+            "gamma_range": [
+                0.7,
+                1.5
+            ],
+            "retain_stats": false,
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "p": 0.3
+        },
+        "RandomInvGammaGPU": {
+            "gamma_range": [
+                0.7,
+                1.5
+            ],
+            "retain_stats": false,
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "p": 0.1
+        },
+        "RandomContrastGPU": {
+            "contrast_range": [
+                0.75,
+                1.25
+            ],
+            "retain_stats": false,
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "p": 0.15
+        },
+        "RandomLog1pGPU": {
+            "retain_stats": false,
+            "in_seg": 0,
+            "out_seg": 0,
+            "p": 0.1
+        },
+        "RandomSqrtGPU": {
+            "retain_stats": false,
+            "in_seg": 0,
+            "out_seg": 0,
+            "p": 0.1
+        },
+        "RandomSinGPU": {
+            "retain_stats": false,
+            "in_seg": 0,
+            "out_seg": 0,
+            "p": 0.1
+        },
+        "RandomExpGPU": {
+            "retain_stats": false,
+            "in_seg": 0,
+            "out_seg": 0,
+            "p": 0.1
+        },
+        "RandomSigmoidGPU": {
+            "retain_stats": false,
+            "in_seg": 0,
+            "out_seg": 0,
+            "p": 0.1
+        },
+        "RandomLowResTransformGPU": {
+            "scale": [
+                0.5,
+                1.0
+            ],
+            "same_on_batch": false,
+            "p": 0.25
+        },
+        "RandomAcqTransformGPU": {
+            "scale": [
+                0.6,
+                1.0
+            ],
+            "same_on_batch": false,
+            "p": 0.0
+        },
+        "RandomBiasFieldGPU": {
+            "retain_stats": false,
+            "coefficients": 0.2,
+            "in_seg": 0.0,
+            "out_seg": 0.0,
+            "seg_unit": "label",
+            "seg_unit_prob": 0.5,
+            "p": 0.15
+        },
+        "ZscoreNormalizationGPU": {
+            "p": 0.0
+        }
+    },
+    "CPU": {
+        "SpatialTransform": {
+            "patch_center_dist_from_border": 80,
+            "random_crop": false,
+            "p_elastic_deform": 0.0,
+            "p_rotation": 0.2,
+            "p_scaling": 0.2,
+            "scaling": [
+                0.7,
+                1.4
+            ],
+            "p_synchronize_scaling_across_axes": 1,
+            "bg_style_seg_sampling": false,
+            "mode_seg": "nearest"
+        }
+    },
+    "pipeline": {
+        "retain_stats": {
+            "stats": [
+                "mean",
+                "std",
+                "p1",
+                "p99"
+            ],
+            "percentiles": [
+                1.0,
+                99.0
+            ],
+            "std_scale": [
+                0.9,
+                1.1
+            ],
+            "percentile_scale": [
+                0.9,
+                1.1
+            ],
+            "stats_from": "all",
+            "p": 1.0
+        }
+    }
+}
