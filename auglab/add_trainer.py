@@ -12,10 +12,10 @@ def main():
     )
     parser.add_argument(
         "-t", "--trainer",
-        choices=["nnUNetTrainerDAExt", "nnUNetTrainerTest"],
+        choices=["nnUNetTrainerDAExt", "nnUNetTrainerTest", "nnUNetTrainerSRCSM"],
         type=str,
         required=True,
-        help="nnUNetTrainer to be copied. Choices are: nnUNetTrainerDAExt and nnUNetTrainerTest",
+        help="nnUNetTrainer to be copied. Choices are: nnUNetTrainerDAExt, nnUNetTrainerTest and nnUNetTrainerSRCSM",
     )
     parser.add_argument(
         '--overwrite', action='store_true',
@@ -38,6 +38,8 @@ def add_trainer(trainer_name: str, overwrite: bool = False):
         source_trainer = trainers_path / "nnUNetTrainerDAExt.py"
     elif trainer_name == "nnUNetTrainerTest":
         source_trainer = trainers_path / "nnUNetTrainerTest.py"
+    elif trainer_name == "nnUNetTrainerSRCSM":
+        source_trainer = trainers_path / "nnUNetTrainerSRCSM.py"
     else:
         raise ValueError(f"Trainer {trainer_name} not recognized.")
 

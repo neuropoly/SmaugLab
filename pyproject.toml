@@ -44,6 +44,7 @@ all = [
 
 [project.scripts]
 auglab_add_nnunettrainer = "auglab.add_trainer:main"
+auglab_srcsm_predict = "auglab.srcsm_predict:main"
 
 [project.urls]
 homepage = "https://github.com/neuropoly/AugLab"
@@ -56,5 +57,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 include-package-data = true
 
+[tool.setuptools.packages.find]
+include = ["auglab*", "srcsm_auglab_port*"]
+
 [tool.setuptools.package-data]
-'auglab' = ['data/**.json']
+'auglab' = ['data/**.json', 'configs/*.json']
