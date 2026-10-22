@@ -50,7 +50,8 @@ auglab_srcsm_predict -i <imagesTs> -o <predictions> -d <DATASET> -c 3d_fullres -
 - Source CDF: built from `$nnUNet_raw/<Dataset>/imagesTr/*_0000.nii.gz` on first use and cached as
   `srcsm_source_cdf.json` in the model folder. Use `--source-images <dir>` for another folder and
   `--exclude-cases cases.json` (a JSON list of case ids) if test cases sit inside `imagesTr`.
-- Modality (`mr` or `ct`) is read from the dataset's channel 0 name; override with `--modality`.
+- Modality (`mr` or `ct`) of the training images is read from the dataset's channel 0 name; override with
+  `--modality`. Inputs of the other modality (e.g. CT into an MR model) take `--input-modality ct`.
 - Defaults: `-chk checkpoint_best.pth`, `--disable_tta`. Any other flag is passed on to `nnUNetv2_predict`.
 - `--matched-dir <dir>` keeps the matched images; `--no-source-matching` predicts on the raw inputs
   (SRC only, the authors' ablation).

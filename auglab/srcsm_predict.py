@@ -42,7 +42,9 @@ def main():
     ap.add_argument("-chk", default="checkpoint_best.pth", help="checkpoint (default checkpoint_best.pth)")
     ap.add_argument("-device", default="cuda", help="cuda, cpu or mps (default cuda)")
     ap.add_argument("--modality", choices=("mr", "ct"), default=None,
-                    help="intensity branch of the source matching (default: ct if the dataset's channel 0 is CT, else mr)")
+                    help="intensity branch for the training images (default: ct if the dataset's channel 0 is CT, else mr)")
+    ap.add_argument("--input-modality", choices=("mr", "ct"), default=None,
+                    help="intensity branch for the inputs, if they differ from the training images (default: --modality)")
     ap.add_argument("--source-images", default=None,
                     help="training images for the source CDF (default $nnUNet_raw/<Dataset>/imagesTr)")
     ap.add_argument("--exclude-cases", default=None,
@@ -100,7 +102,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="srcsm_matched_") as tmp:
         matched = Path(args.matched_dir or tmp)
         _run([sys.executable, "-m", "srcsm_auglab_port.source_matching", "match", "--cdf", cdf,
-              "--in-dir", args.i, "--out-dir", matched, "--modality", modality, "--workers", args.workers,
+              "--in-dir", args.i, "--out-dir", matched, "--modality", args.input_modality or modality,
+              "--workers", args.workers,
               "--overwrite"])
         _run(predict + ["-i", matched])
 
