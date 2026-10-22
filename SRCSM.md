@@ -25,7 +25,9 @@ cd AugLab
 python3 -m pip install -e .[nnunetv2]
 auglab_add_nnunettrainer -t nnUNetTrainerSRCSM    # copies the trainer into nnU-Net (once per environment)
 ```
-Tested with nnunetv2 2.7.0 and torch 2.x on NVIDIA L40S / H100.
+Tested from a fresh clone and venv with nnunetv2 2.7.0, torch 2.14.1 (with triton) and kornia 0.7.2 (AugLab needs
+kornia < 0.8) on an NVIDIA H100. nnU-Net compiles the network by default, which needs a working `triton`
+(PyPI torch wheels include it); without one, set `nnUNet_compile=f`.
 
 ## Train
 
