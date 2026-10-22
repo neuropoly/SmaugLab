@@ -9,6 +9,7 @@ from kornia.core import Tensor
 import torch.distributed as dist
 
 from auglab.transforms.gpu.base import ImageOnlyTransform
+from auglab.transforms.synthseg.functional import _em_gmm_1d, _assign_gmm
 
 
 # ── V26_6 / V26_6_2 helpers ──────────────────────────────────────────────────
@@ -385,6 +386,12 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
         min_label_voxels: minimum voxels in a label to attempt the remap.
         label_classes: if set, restrict label remap to these class indices
             (None = all foreground classes present in the batch).
+        partition: "kmeans" (default, legacy) or "em": cluster the same intensity
+            subsample into the same C_k clusters with SynthSeg's 1-D Gaussian-mixture
+            EM (``_em_gmm_1d``) and hard max-posterior assignment (``_assign_gmm``)
+            instead of K-means + midpoint thresholds. Everything else is unchanged and
+            no extra random draws are made.
+        em_n_iters: EM iterations when partition="em" (SynthSeg-EM uses 20).
         p: probability of applying the transform.
     """
 
@@ -403,10 +410,22 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
         label_classes: Optional[List[int]] = None,
         pv_prob: float = 0.0,
         pv_levels: Optional[List[List[float]]] = None,
+        partition: str = "kmeans",
+        em_n_iters: int = 20,
         p: float = 1.0,
         **kwargs: Any,
     ) -> None:
         super().__init__(p=p, **kwargs)
+        if partition not in ("kmeans", "em"):
+            raise ValueError(f"partition must be 'kmeans' or 'em', got {partition!r}")
+        if partition == "em" and pv_prob > 0:
+            # The intensity-space PV branch blends across K-means midpoint thresholds,
+            # which an EM partition does not define.
+            raise ValueError("partition='em' does not support pv_prob > 0")
+        self.partition = partition
+        self.em_n_iters = int(em_n_iters)
+        if partition != "kmeans":
+            print(f"{type(self).__name__}: partition={partition} (em_n_iters={self.em_n_iters})")
         # Boundary partial-volume (PV) simulation, opt-in (pv_prob=0 -> exact legacy
         # behaviour, no extra RNG draws). With probability pv_prob a sample draws ONE
         # level [sigma, weight, tau] uniformly from pv_levels (repeat an entry to
@@ -519,11 +538,16 @@ class RandomV26_6_2ContrastGPU(ImageOnlyTransform):
                 if sub_fg.numel() < 4:
                     sub_fg = samp[:self.n_kmeans_subsample]
 
-                centroids = _kmeans_1d(sub_fg, C_k)
-                sorted_c, sort_idx = torch.sort(centroids)
-                boundaries = (sorted_c[:-1] + sorted_c[1:]) / 2.0
-                lbl_s = torch.bucketize(flat, boundaries)
-                lbl_l = sort_idx[lbl_s].long()
+                if self.partition == "em":
+                    fit = _em_gmm_1d(sub_fg, C_k, self.em_n_iters, 1e-6)
+                    C_k = fit[0].numel()
+                    lbl_l = _assign_gmm(flat, *fit, eps=1e-6)
+                else:
+                    centroids = _kmeans_1d(sub_fg, C_k)
+                    sorted_c, sort_idx = torch.sort(centroids)
+                    boundaries = (sorted_c[:-1] + sorted_c[1:]) / 2.0
+                    lbl_s = torch.bucketize(flat, boundaries)
+                    lbl_l = sort_idx[lbl_s].long()
 
                 lvl = pv_lvls[i]
                 vor = _voronoi_region_ids(
