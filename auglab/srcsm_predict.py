@@ -101,6 +101,9 @@ def main():
     # 2. match, 3. predict
     with tempfile.TemporaryDirectory(prefix="srcsm_matched_") as tmp:
         matched = Path(args.matched_dir or tmp)
+        stale = {f.name for f in matched.glob("*.nii.gz")} - {f.name for f in inputs}
+        if stale:   # nnUNetv2_predict would segment them too
+            sys.exit(f"{matched} holds {len(stale)} images that are not in {args.i}; use an empty --matched-dir")
         _run([sys.executable, "-m", "srcsm_auglab_port.source_matching", "match", "--cdf", cdf,
               "--in-dir", args.i, "--out-dir", matched, "--modality", args.input_modality or modality,
               "--workers", args.workers,
