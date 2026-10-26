@@ -99,9 +99,16 @@ def all_config_paths() -> list[Path]:
     return sorted(p for p in configs_dir().glob("*.json"))
 
 
+#: Prefixes of the configs that drive the GPU pipeline. `transform_params_paper-` is
+#: here because the published method arms use it and were covered only by the
+#: JSON-validity check: `transform_params_paper-synthseg.json` is the config the
+#: `SynthSeg (post)` benchmark arm trained on and nothing built it.
+GPU_CONFIG_PREFIXES = ("transform_params_gpu", "transform_params_paper-")
+
+
 def gpu_config_paths() -> list[Path]:
     """Configs that drive the GPU augmentation pipeline."""
-    paths = [p for p in all_config_paths() if p.name.startswith("transform_params_gpu")]
+    paths = [p for p in all_config_paths() if p.name.startswith(GPU_CONFIG_PREFIXES)]
     extra = configs_dir() / "transform_params_one-sequence-to-segment-them-all.json"
     if extra.is_file():
         paths.append(extra)
