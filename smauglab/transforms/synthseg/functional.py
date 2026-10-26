@@ -670,15 +670,28 @@ def distinct_values(volume: torch.Tensor) -> torch.Tensor:
 
 
 def _label_counts_per_sample(label_map: torch.Tensor) -> torch.Tensor:
-    """`(B, max_label + 1)` voxel counts per label, per sample."""
+    """`(B, max_label + 1)` voxel counts per label, per sample. Negative values are not counted.
+
+    A negative value is not a label. nnU-Net writes -1 for voxels outside the annotated
+    region, and `clamp_min(0)` counted every one of them as background -- while
+    `em_subdivide_labels`, the only caller, then selects that label's voxels with
+    `label_map == p`. The count exceeded the number of voxels selected, so the
+    `randint(0, count)` subsample indexed past the end of the gathered values. On CUDA
+    that is an asynchronous `index out of bounds` device-side assert, reported at
+    whichever kernel happens to run next, and it only fires when an oversized draw is
+    actually taken -- so it presented as an occasional, unattributable crash.
+    """
     batch = label_map.shape[0]
-    flat = label_map.reshape(batch, -1).clamp_min(0)
-    n_bins = int(flat.max()) + 1
+    flat = label_map.reshape(batch, -1)
+    keep = flat >= 0
+    # The clamp is on the offset only, so a negative label cannot reach another sample's
+    # bins; `keep` is what removes it from the histogram.
+    n_bins = int(flat.max().clamp_min(0)) + 1
     # One `bincount` over row-offset labels: a `scatter_add_` into a handful of bins
     # has every thread fighting for the same addresses, where bincount accumulates
     # in shared memory per block.
-    offset = flat + torch.arange(batch, device=flat.device).view(-1, 1) * n_bins
-    return torch.bincount(offset.reshape(-1), minlength=batch * n_bins).view(batch, n_bins)
+    offset = flat.clamp_min(0) + torch.arange(batch, device=flat.device).view(-1, 1) * n_bins
+    return torch.bincount(offset[keep], minlength=batch * n_bins).view(batch, n_bins)
 
 
 def _em_gmm_1d(x_fit: torch.Tensor, n_components: int, n_iters: int, eps: float) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
@@ -805,6 +818,13 @@ def em_subdivide_labels(
     label_counts = _label_counts_per_sample(label_map)
     totals = label_counts.sum(dim=0)
     parents = totals.nonzero().flatten().tolist()  # sorted, batch-wide
+    if not parents:
+        # No non-negative label anywhere: every voxel is outside the annotated region.
+        # One undivided region, no EM, and a merge map that resolves -- rather than
+        # indexing an empty `parents` in the return statement at the end of this
+        # function. Previously unreachable, because the histogram clamped the negative
+        # labels into the background bin.
+        return torch.zeros_like(label_map), [0], [int(background_label)]
     counts_per_sample = label_counts.tolist()
     parent_to_idx = {p: i for i, p in enumerate(parents)}
     lo, hi = int(background_clusters_range[0]), int(background_clusters_range[1])
@@ -814,7 +834,7 @@ def em_subdivide_labels(
     # decoding shifted every label by +1, so the real background is no longer 0), fall back
     # to the largest-area label, so it still receives the richer [min, max] background
     # split rather than the 2-cluster foreground split.
-    if background_label not in parents and len(parents) > 0:
+    if background_label not in parents:
         background_label = int(totals.argmax())
 
     bg_n_shared = int(torch.randint(lo, hi + 1, (1,), device=device)) if same_on_batch else None
