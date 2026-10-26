@@ -50,6 +50,10 @@ MANIFEST
 # configs beside it are tracked only because they predate the blanket rule above;
 # a new one has to say so.
 !smauglab/configs/transform_params_paper-synthseg.json
+# PALETTE, alone and on top of the paper `Ours` config. Same status as the
+# SynthSeg arm beside them: a method the tables compare against, not a sweep.
+!smauglab/configs/transform_params_paper-palette.json
+!smauglab/configs/transform_params_paper-palette-ours.json
 *.yaml
 *.nii
 *.nii.gz
