@@ -1,6 +1,6 @@
 from smauglab.config import PipelineMode, load_config
 from smauglab.registry import Backend
-from smauglab.transforms.build import build_gpu_pipeline
+from smauglab.transforms.build import build_gpu_pipeline, shuffle_slots
 from smauglab.transforms.gpu.base import AugmentationSequentialCustom
 
 
@@ -36,4 +36,5 @@ class AugTransformsGPU(AugmentationSequentialCustom):
             *transforms,
             data_keys=["input", "mask"],
             same_on_batch=True if config.same_on_batch() else None,
+            shuffle_slots=shuffle_slots(transforms, config.shuffle_groups()),
         )

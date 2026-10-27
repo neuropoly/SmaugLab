@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from smauglab import registry
-from smauglab.registry import Backend, InvalidConfigError
+from smauglab.registry import AugType, Backend, InvalidConfigError
 
 
 class PipelineMode(str, Enum):
@@ -96,7 +96,11 @@ def validate_section(section: dict, backend: Backend, *, source: str = "<config>
 RESERVED_SECTIONS = ("pipeline",)
 
 #: Keys the `pipeline` section may hold.
-PIPELINE_KEYS = ("mode", "order", "random_choose", "same_on_batch")
+PIPELINE_KEYS = ("mode", "order", "random_choose", "same_on_batch", "shuffle")
+
+#: Groups `pipeline.shuffle` may name. GEO is absent: geometry moves the mask, and the
+#: transforms after it read the segmentation it leaves behind.
+SHUFFLE_GROUPS = (AugType.TA, AugType.GE)
 
 #: What to do about a config that has no backend section. Quoted by both errors that
 #: can report it, so the two cannot drift apart.
@@ -176,6 +180,25 @@ class SmaugConfig:
         raw = self.payload.get("pipeline", {}).get("same_on_batch")
         return True if raw is None else bool(raw)
 
+    def shuffle_groups(self) -> tuple[AugType, ...]:
+        """The augmentation groups whose order is redrawn on every batch.
+
+        `"pipeline": {"shuffle": ["TA"]}` permutes the transfer augmentations among the
+        positions they already hold in the sequential pipeline, and leaves everything
+        else where it is: the general enhancements between them, geometry in front, and
+        each transform's own `p`. `["GE"]` does the same for the general enhancements,
+        and `["TA", "GE"]` shuffles both, each among its own positions. Transforms
+        marked `force_sequential` keep their place.
+
+        The `random_order` modes are not this. They also reorder, but they pull each
+        group into a `RandomChooseXTransformsGPU` bucket, which moves every TA ahead of
+        every GE and calls `apply_transform` directly instead of going through kornia.
+        A shuffled sequential pipeline differs from the unshuffled one in the order
+        alone. Empty by default, which is the pipeline every published run trained on.
+        """
+        raw = self.payload.get("pipeline", {}).get("shuffle") or []
+        return tuple(AugType(g) for g in raw)
+
     def names(self, backend: Backend) -> list[str]:
         return [k for k in self.section(backend) if not k.startswith("_")]
 
@@ -246,6 +269,17 @@ class SmaugConfig:
                 close = difflib.get_close_matches(str(mode), valid, n=2, cutoff=0.5)
                 hint = f" Did you mean: {', '.join(close)}?" if close else ""
                 problems.append(f"pipeline.mode: unknown mode {mode!r}. Accepted: {', '.join(valid)}.{hint}")
+
+        shuffle = pipeline.get("shuffle")
+        if shuffle is not None:
+            valid_groups = [g.value for g in SHUFFLE_GROUPS]
+            if not isinstance(shuffle, list) or any(g not in valid_groups for g in shuffle) or len(set(shuffle)) != len(shuffle):
+                problems.append(f"pipeline.shuffle: expected a list of distinct groups from {', '.join(valid_groups)}, got {shuffle!r}")
+            elif shuffle and mode not in (None, PipelineMode.SEQUENTIAL.value):
+                problems.append(
+                    f"pipeline.shuffle: only applies to the sequential mode; {mode!r} already orders its groups through "
+                    "random_choose (ta_random_order / ge_random_order)"
+                )
         return problems
 
 

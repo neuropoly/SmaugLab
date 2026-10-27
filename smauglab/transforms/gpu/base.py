@@ -2,7 +2,7 @@ import contextlib
 import copy
 import functools
 import warnings
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Any, Protocol, Union
 
 import kornia.augmentation as K
@@ -150,9 +150,13 @@ class AugmentationSequentialCustom(AugmentationSequential):
         random_apply_weights: list[float] | None = None,
         transformation_matrix_mode: str = "silent",
         extra_args: dict[DataKey, dict[str, Any]] | None = None,
+        shuffle_slots: Sequence[Sequence[int]] = (),
     ) -> None:
         self._transform_matrix: Tensor | None
         self._transform_matrices: list[Tensor | None] = []
+        # Positions whose occupants are permuted among themselves on each forward; see
+        # `get_forward_sequence`. A group of one has nothing to swap with.
+        self._shuffle_slots = tuple(tuple(slots) for slots in shuffle_slots if len(slots) > 1)
 
         super().__init__(
             *args,
@@ -197,6 +201,23 @@ class AugmentationSequentialCustom(AugmentationSequential):
                 self.contains_3d_augmentation = True
         self._transform_matrix = None
         self.extra_args = extra_args or {DataKey.MASK: {"resample": Resample.NEAREST, "align_corners": None}}
+
+    def get_forward_sequence(self, params: list[ParamItem] | None = None) -> Iterator[tuple[str, Module]]:
+        """kornia's sequence, with each `shuffle_slots` group permuted among its own positions.
+
+        Drawn once per call, which is once per batch, so every sample of a batch shares
+        one order even when `same_on_batch` is off. A replay (`params` given) follows the
+        recorded order, and the mask is carried through the same `params` as the image.
+        """
+        sequence = super().get_forward_sequence(params)
+        if params is not None or not self._shuffle_slots:
+            return sequence
+        children = list(sequence)
+        order = list(range(len(children)))
+        for slots in self._shuffle_slots:
+            for slot, k in zip(slots, torch.randperm(len(slots)).tolist()):
+                order[slot] = slots[k]
+        return iter([children[i] for i in order])
 
     def forward_parameters(self, batch_shape: torch.Size) -> list[ParamItem]:
         """kornia's own loop, with each leaf's draw routed through `_leaf_parameters`.
