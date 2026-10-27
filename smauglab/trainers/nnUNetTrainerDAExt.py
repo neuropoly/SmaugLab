@@ -40,7 +40,7 @@ from smauglab import configs
 from smauglab.config import load_config
 from smauglab.registry import Backend
 from smauglab.trainers.utils import DownsampleSegForDSTransformCustom, nnunet_tail_transforms
-from smauglab.transforms.build import build_cpu_pipeline, build_gpu_pipeline
+from smauglab.transforms.build import build_cpu_pipeline, build_gpu_pipeline, shuffle_slots
 from smauglab.transforms.gpu.base import AugmentationSequentialCustom
 
 #: Env var naming the config to train with.
@@ -187,23 +187,28 @@ class nnUNetTrainerDAExtGPU(nnUNetTrainer):
         # CPU-only config costs nothing per step and train_step stays a no-op.
         self.transforms: AugmentationSequentialCustom | None = None
         if _has_gpu_augmentations(config):
+            gpu_pipeline = build_gpu_pipeline(
+                config.section(Backend.GPU),
+                mode=config.pipeline_mode(),
+                options=config.pipeline_options("random_choose"),
+                source=config.source,
+                order_source=config.order_source(),
+            )
             self.transforms = AugmentationSequentialCustom(
-                *build_gpu_pipeline(
-                    config.section(Backend.GPU),
-                    mode=config.pipeline_mode(),
-                    options=config.pipeline_options("random_choose"),
-                    source=config.source,
-                    order_source=config.order_source(),
-                ),
+                *gpu_pipeline,
                 data_keys=["input", "mask"],
                 # See AugTransformsGPU: True forces the flag onto every child and
                 # spends each transform's `p` once for the whole batch.
                 same_on_batch=True if config.same_on_batch() else None,
+                shuffle_slots=shuffle_slots(gpu_pipeline, config.shuffle_groups()),
             ).to(self.device)
 
         print(f"Using SmaugLab transforms from: {json_path}")
+        groups = config.shuffle_groups()
+        shuffle = f", shuffle: {'+'.join(g.value for g in groups)}" if groups else ""
         print(
-            f"  CPU: {len(config.names(Backend.CPU))} augmentations, GPU: {len(config.names(Backend.GPU))}, mode: {config.pipeline_mode().value}"
+            f"  CPU: {len(config.names(Backend.CPU))} augmentations, GPU: {len(config.names(Backend.GPU))}, "
+            f"mode: {config.pipeline_mode().value}{shuffle}"
         )
 
         _record_config(json_path, os.path.join(self.output_folder, "transform_params_used_for_training.json"))

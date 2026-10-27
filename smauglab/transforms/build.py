@@ -14,6 +14,7 @@ fixed in one pass.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from smauglab import registry
@@ -140,6 +141,21 @@ def build_gpu_pipeline(
         # enhancements stay in pipeline order, as they always have.
         out.extend(enhancement)
     return out
+
+
+def shuffle_slots(pipeline: Sequence[Any], groups: Sequence[AugType]) -> list[list[int]]:
+    """Per group, the positions in a sequential GPU `pipeline` that `pipeline.shuffle` permutes.
+
+    Read back from the registry by class name, which the registry guarantees is the
+    config key. `force_sequential` transforms keep their place, as they do in the
+    `random_order` buckets.
+    """
+    if not groups:
+        # Returned before the lookup: a bucket-mode pipeline holds RandomChooseX
+        # containers, which are not registered.
+        return []
+    entries = [registry.get(type(t).__name__, Backend.GPU) for t in pipeline]
+    return [[i for i, e in enumerate(entries) if e.group is group and not e.force_sequential] for group in groups]
 
 
 def build_cpu_pipeline(
