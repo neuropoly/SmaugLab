@@ -50,6 +50,8 @@ MANIFEST
 # configs beside it are tracked only because they predate the blanket rule above;
 # a new one has to say so.
 !smauglab/configs/transform_params_paper-synthseg.json
+# The paper's Ours plus RandomFOVExtensionGPU (README "Field of view beyond the scan").
+!smauglab/configs/transform_params_one-sequence-to-segment-them-all-fov.json
 *.yaml
 *.nii
 *.nii.gz

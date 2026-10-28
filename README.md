@@ -208,6 +208,68 @@ transfer augmentations (`RandomScharrGPU`, `RandomUnsharpMaskGPU`, `RandomRandCo
 `p=0` and `RandomSynthSegGPU` at `p=1.0` in their place. The general-enhancement half is
 identical between the two.
 
+### Field of view beyond the scan
+
+A model trained on a narrow field of view has never been shown what lies outside it. A
+sagittal spine slab is about 8 cm wide, and nnU-Net centres it in a 128 mm patch and pads
+the rest with 0. So every training window contains spine, and beyond about ±4 cm there is
+only a flat slab labelled background. On a whole-body axial scan the model then finds
+vertebrae in muscle, gluteals, fat and bowel. For the Ours setup trained on SpineGAN in-phase,
+60% of the false-positive voxels on NAKO VIBE lie more than 5 cm from the spine. The contrast
+augmentations do not touch this, because the problem is context, not intensity.
+
+`RandomFOVExtensionGPU` shows the network windows it can only get right by rejecting
+context. For each selected sample it does six things:
+
+1. **Shift.** Image and segmentation move by the same whole-voxel shift, up to `shift` of
+   the patch per axis. At `shift: 1.0` the spine can leave the window entirely.
+2. **Find the fill region.** That is everything that is not scan: the padding (every
+   channel exactly `pad_value`) plus whatever the shift vacated.
+3. **Split the background with EM.** The patch's own background is split into a random 3
+   to 10 intensity regions, the same way SynthSeg's label completion splits its
+   background. Only background voxels count: label 0, more than `margin` voxels from any
+   label, and off the padding's interpolated edge.
+4. **Post-process the region map.** A 3×3×3 majority filter removes the EM speckle, and a
+   random diffeomorphic field (SynthSeg's) deforms the map.
+5. **Composite into the fill.** `layers` copies of the map, each randomly rotated, scaled,
+   mirrored and translated, are composited into the fill region.
+6. **Render.** Each fill voxel is drawn from its region's mean and standard deviation,
+   measured on the patch itself. The within-region variation is spatially correlated
+   (σ = 1 voxel), because iid draws read as grain next to the smooth scan. The result is
+   then blurred as SynthSeg blurs, and its label stays 0.
+
+| parameter | default | meaning |
+| --- | --- | --- |
+| `shift` | `0.5` | maximum shift as a fraction of the patch, one value or one per axis; `0` only fills the existing padding |
+| `regions` | `[3, 10]` | range for the number of EM regions, drawn per sample |
+| `margin` | `4` | voxels between a label and the background used to build the fill |
+| `layers` | `6` | warped copies of the region map composited into the fill |
+| `pad_value` | `0.0` | the intensity that marks padding; nnU-Net pads with 0 |
+| `p` | `0.5` | probability per sample |
+
+Things to know before using it:
+
+* **Selection is always per sample.** The transform keeps this even when the pipeline sets
+  `same_on_batch`. Without a `pipeline` section a config runs with `same_on_batch: true`,
+  which would make `p` one coin per batch and could take the spine out of both samples of
+  a step.
+* **The logged training loss rises.** A window the shift has emptied of spine has no
+  foreground, so its Dice term is about 0 and cross-entropy does the work. The loss curve
+  is therefore not comparable with a run without the transform.
+* **Pipeline position matters.** The transform runs right after `RandomAffineGPU` and
+  before every intensity transform, so the synthesised background is augmented like real
+  tissue. A label-to-image generator later in the pipeline (SynthSeg, PALETTE synthesis)
+  regenerates the fill from label 0, which overwrites it.
+* **Padding is found by exact value.** Two cases follow from that:
+  * Background that the scanner itself zeroed (the masked air of a Dixon reconstruction)
+    normalises to a constant other than 0. It counts as scan. It stays where it is, and
+    it can become one of the EM regions.
+  * With `use_mask_for_norm`, everything outside the body is 0, so it gets filled.
+
+`smauglab/configs/transform_params_one-sequence-to-segment-them-all-fov.json` (`ae065824`)
+is the paper's Ours config (`c69b9872`) plus this transform at the defaults above. Nothing
+else changes.
+
 ## Available augmentations
 
 Which augmentations exist, and which of the two backends implements each one. An empty
@@ -222,6 +284,7 @@ column -- see "Run Monai training with SmaugLab augmentations" above. Regenerate
 | affine | GEO | `RandomAffineGPU` | — |
 | crop | GEO | `RandomCropTransformGPU` | — |
 | spatial | GEO | — | `SpatialTransform` |
+| fov_extension | GEO | `RandomFOVExtensionGPU` | — |
 | gaussian_noise | GE | `RandomGaussianNoiseGPU` | `GaussianNoiseTransform` |
 | gaussian_blur | GE | `RandomGaussianBlurGPU` | `GaussianBlurTransform` |
 | brightness | GE | `RandomBrightnessGPU` | `MultiplicativeBrightnessTransform` |

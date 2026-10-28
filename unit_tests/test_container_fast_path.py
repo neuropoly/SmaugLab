@@ -194,7 +194,7 @@ class TestMaskShortCircuit(SmaugLabTestCase):
 
     def test_a_geometric_transform_is_not_short_circuited(self):
         """The ones that do move a mask have to keep going through kornia."""
-        for name in ("RandomFlipTransformGPU", "RandomAffineGPU", "RandomCropTransformGPU"):
+        for name in ("RandomFlipTransformGPU", "RandomAffineGPU", "RandomCropTransformGPU", "RandomFOVExtensionGPU"):
             with self.subTest(transform=name):
                 module = registry.get(name, Backend.GPU).cls()
                 self.assertFalse(_leaves_masks_untouched(module))
