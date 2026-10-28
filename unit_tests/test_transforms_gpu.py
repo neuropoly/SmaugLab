@@ -22,6 +22,7 @@ from smauglab.transforms.gpu.base import AugmentationSequentialCustom
 from unit_tests.helpers import SmaugLabTestCase, first_output
 
 TRANSFORM_MODULES = [
+    "smauglab.transforms.gpu.context",
     "smauglab.transforms.gpu.contrast",
     "smauglab.transforms.gpu.spatial",
     "smauglab.transforms.gpu.fromSeg",

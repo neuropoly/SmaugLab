@@ -96,6 +96,7 @@ class AugId(str, Enum):
     AFFINE = "affine"
     CROP = "crop"
     SPATIAL = "spatial"  # nnU-Net's own SpatialTransform
+    FOV_EXTENSION = "fov_extension"
     # -- general enhancement
     GAUSSIAN_NOISE = "gaussian_noise"
     GAUSSIAN_BLUR = "gaussian_blur"
@@ -200,6 +201,10 @@ PIPELINE_ORDER: Mapping[Backend, tuple[str, ...]] = MappingProxyType(
         Backend.GPU: (
             "RandomFlipTransformGPU",  # FlipTransform
             "RandomAffineGPU",  # AffineTransform
+            # No ladder key. After the last transform that can open padding (the affine's zero
+            # fill) and before everything that rewrites intensities, so the synthesised
+            # background is augmented exactly like the anatomy around it.
+            "RandomFOVExtensionGPU",
             "RandomSynthSegGPU",  # SynthSeg
             "RandomPaletteGPU",  # RandomPALETTETransform
             "PaletteSynthesisGPU",  # same slot: it is the same augmentation, composed
