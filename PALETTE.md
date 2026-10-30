@@ -21,11 +21,13 @@ trainer (flips come from the config).
 ```bash
 python3 -m venv venv && source venv/bin/activate
 # install PyTorch for your CUDA first (https://pytorch.org)
-git clone -b palette https://github.com/neuropoly/AugLab.git
+git clone -b palette https://github.com/neuropoly/SmaugLab.git AugLab   # the repository was renamed from AugLab
 cd AugLab
 python3 -m pip install -e .[nnunetv2]
 auglab_add_nnunettrainer -t nnUNetTrainerPA    # copies the trainer into nnU-Net (once per environment)
 ```
+Tested from a fresh clone and venv (non-editable `pip install .`, so with the packaged configs) with
+nnunetv2 2.7.0, torch 2.14.1, kornia 0.7.2 and `nnUNet_compile=f` on an NVIDIA L40S.
 AugLab needs kornia < 0.8 (0.8 removed `kornia.core.Tensor`; the pin is in `pyproject.toml`).
 nnU-Net compiles the network by default, which needs a working `triton` (PyPI torch wheels include it);
 without one, set `nnUNet_compile=f`.
