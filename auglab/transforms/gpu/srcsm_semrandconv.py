@@ -65,12 +65,20 @@ from kornia.core import Tensor
 
 from auglab.transforms.gpu.base import ImageOnlyTransform
 
-# The ported SRCSM operator. Installed as an editable package `srcsm_auglab_port`
-# (see SRCSM_PORT_README.md); a sys.path fallback keeps it importable if the
-# package is only present as a sibling sub-workspace directory.
-try:
-    from srcsm_auglab_port.sem_rand_conv_3d import SemRandConv3D
-except Exception:  # pragma: no cover - fallback for non-installed layouts
+def _import_sem_rand_conv_3d():
+    """Import the ported SRCSM operator (``srcsm_auglab_port``).
+
+    Imported when a SemRandConvGPU is built rather than at module import, so every
+    other GPU transform works in an AugLab install that does not ship the operator.
+    It is found as an installed package `srcsm_auglab_port` (see SRCSM_PORT_README.md)
+    or, as a fallback, in a sibling sub-workspace directory or ``$SRCSM_PORT_DIR``.
+    """
+    try:
+        from srcsm_auglab_port.sem_rand_conv_3d import SemRandConv3D
+        return SemRandConv3D
+    except Exception:
+        pass
+
     import os
     import sys
 
@@ -85,7 +93,15 @@ except Exception:  # pragma: no cover - fallback for non-installed layouts
     try:
         from srcsm_auglab_port.sem_rand_conv_3d import SemRandConv3D
     except Exception:
-        from sem_rand_conv_3d import SemRandConv3D  # last resort: flat module
+        try:
+            from sem_rand_conv_3d import SemRandConv3D  # last resort: flat module
+        except ImportError as err:
+            raise ImportError(
+                "This config uses the SRCSM transform (SemRandConvGPU), which needs the "
+                "srcsm_auglab_port package. Use the AugLab branch 'srcsm-standalone' (it ships "
+                "the operator, see SRCSM.md) or set SRCSM_PORT_DIR to its directory."
+            ) from err
+    return SemRandConv3D
 
 
 def _collapse_onehot_to_index(seg_raw: torch.Tensor) -> torch.Tensor:
@@ -163,6 +179,7 @@ class SemRandConvGPU(ImageOnlyTransform):
         self.kernel_candidates = tuple(kernel_candidates)
         self.leaky_slope = leaky_slope
         self.zscore_output = zscore_output
+        self._sem_rand_conv_3d = _import_sem_rand_conv_3d()
 
     # -- SRCSM intensity primitives -------------------------------------- #
     def _normalize_robust(self, x: Tensor) -> Tensor:
@@ -256,7 +273,7 @@ class SemRandConvGPU(ImageOnlyTransform):
         x = self._shift_scale_clamp(x)
 
         # Step 3: per-label (or global) RCNet, fresh weights this call.
-        op = SemRandConv3D(
+        op = self._sem_rand_conv_3d(
             num_labels=num_labels if per_label else 2,
             per_label=per_label,
             smoothing=self.smoothing,
