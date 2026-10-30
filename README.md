@@ -8,6 +8,8 @@ This repository contains:
 - A basic Monai segmentation [script](https://github.com/neuropoly/AugLab/blob/bed6c1b5cf8ec3dbe6165daca507bf431cad65e5/scripts/train_monai.py) incorporating data augmentations
 - A [script](https://github.com/neuropoly/AugLab/blob/bed6c1b5cf8ec3dbe6165daca507bf431cad65e5/scripts/generate_augmentations.py) generating augmentations from input images and segmentations
 
+**Palette Augmentation (PA)**: train nnU-Net with PA or PA+Auglab, see [PALETTE.md](PALETTE.md).
+
 ## How to install ?
 
 1. Open a `bash` terminal in the directory where you want to work.
